@@ -23,6 +23,8 @@ import { syncLearn } from './learn';
 import { PortfolioService } from '../portfolio/service';
 import { pruneJournal } from '../replay/journal';
 import { nativeTracker } from './tracker';
+import { ensureSample } from '../study/library';
+import { resumeParses } from '../study/importer';
 
 export interface AppCore {
   db: Db;
@@ -81,6 +83,8 @@ async function doBoot(): Promise<AppCore> {
     beijingNow,
   );
   const core: AppCore = { db, client, sim, refresher };
+  // QuantWise：内置示例教材（第一次启动写入，内容变了才重写）
+  await ensureSample(db, beijingIso()).catch(() => undefined);
 
   sim.subscribe(events => {
     useApp.setState(s => ({ version: s.version + 1, lastEvents: events }));
@@ -123,6 +127,8 @@ async function doBoot(): Promise<AppCore> {
     refresher.setForeground(st === 'active');
   });
   refresher.start();
+  // 上次没解析完的 PDF：接着轮询（不重复上传）
+  resumeParses(core).catch(() => undefined);
   useApp.setState(s => ({ core, version: s.version + 1 }));
   return core;
 }

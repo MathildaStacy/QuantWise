@@ -117,3 +117,49 @@ export function plainStudyText(text: string): string {
     .replace(/\s+\n/g, '\n')
     .trim();
 }
+
+// ---------- 原书正文（读书模式）----------
+
+export type Inline = { t: 'text' | 'bold' | 'math'; v: string };
+
+/** 原书段落里的 **加粗** 和 $行内公式$；行内公式转成文字，转不了的保留原文（界面用等宽显示）。 */
+export function inlineParts(text: string): Inline[] {
+  const out: Inline[] = [];
+  const re = /\*\*([^*]+)\*\*|(^|[^$\\])\$([^$\s](?:[^$]*[^$\s])?)\$(?!\d)/g;
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const start = m.index! + (m[2]?.length ?? 0);
+    if (start > last) {
+      out.push({ t: 'text', v: text.slice(last, start) });
+    }
+    if (m[1] != null) {
+      out.push({ t: 'bold', v: m[1] });
+    } else {
+      const t = texToText(m[3]);
+      out.push(t != null ? { t: 'text', v: t } : { t: 'math', v: m[3] });
+    }
+    last = m.index! + m[0].length;
+  }
+  if (last < text.length) {
+    out.push({ t: 'text', v: text.slice(last) });
+  }
+  return out;
+}
+
+const decode = (s: string) =>
+  s.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+
+/** MinerU / EPUB 的 HTML 表格 → Markdown 表格（交给 Markdown 组件画）。合并单元格按普通格子处理。 */
+export function htmlTableToMarkdown(html: string): string | null {
+  const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)].map(r =>
+    [...r[1].matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(c =>
+      decode(c[1].replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '')).replace(/\|/g, '/').replace(/\s+/g, ' ').trim(),
+    ),
+  ).filter(r => r.length);
+  if (!rows.length) {
+    return null;
+  }
+  const n = Math.max(...rows.map(r => r.length));
+  const line = (r: string[]) => '| ' + Array.from({ length: n }, (_, i) => r[i] ?? '').join(' | ') + ' |';
+  return [line(rows[0]), '|' + ' --- |'.repeat(n), ...rows.slice(1).map(line)].join('\n');
+}

@@ -59,6 +59,20 @@ import {
 } from '../screens/LearnScreens';
 import { LessonScreen, LessonsScreen } from '../screens/LessonScreens';
 import { MeScreen, TradeScreen } from '../screens/TabScreens';
+import { BookMapScreen, NotesScreen } from '../screens/BookScreens';
+import { ChartFullScreen, FactorLabScreen } from '../screens/FactorScreens';
+import {
+  ImportBookScreen,
+  MineruSettingsScreen,
+  ParseProgressScreen,
+  StudyPrefsScreen,
+} from '../screens/ImportScreens';
+import {
+  ReviewRunScreen,
+  ReviewScreen,
+  SectionDoneScreen,
+} from '../screens/ReviewScreens';
+import { StudyScreen } from '../screens/StudyScreen';
 import { WatchEditScreen } from '../screens/WatchEditScreen';
 import { WatchScreen } from '../screens/WatchScreen';
 import { color } from '../theme';
@@ -84,6 +98,8 @@ const MeIcon = ({ color: c }: IconProps) => <UserRound color={c} {...ICON} />;
 function Tabs() {
   return (
     <Tab.Navigator
+      // QuantWise：读书是主用途，打开 App 先到学习 Tab 的「读书」
+      initialRouteName="Learn"
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: color.up,
@@ -191,6 +207,18 @@ export function RootStack() {
       <Stack.Screen name="AiContext" component={AiContextScreen} />
       <Stack.Screen name="AiFlows" component={AiFlowsScreen} />
       <Stack.Screen name="Proposals" component={ProposalsScreen} />
+      <Stack.Screen name="ImportBook" component={ImportBookScreen} />
+      <Stack.Screen name="ParseProgress" component={ParseProgressScreen} />
+      <Stack.Screen name="BookMap" component={BookMapScreen} />
+      <Stack.Screen name="Study" component={StudyScreen} />
+      <Stack.Screen name="SectionDone" component={SectionDoneScreen} />
+      <Stack.Screen name="Review" component={ReviewScreen} />
+      <Stack.Screen name="ReviewRun" component={ReviewRunScreen} />
+      <Stack.Screen name="Notes" component={NotesScreen} />
+      <Stack.Screen name="FactorLab" component={FactorLabScreen} />
+      <Stack.Screen name="ChartFull" component={ChartFullScreen} />
+      <Stack.Screen name="MineruSettings" component={MineruSettingsScreen} />
+      <Stack.Screen name="StudyPrefs" component={StudyPrefsScreen} />
     </Stack.Navigator>
   );
 }

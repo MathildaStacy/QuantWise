@@ -468,6 +468,23 @@ export function MeScreen() {
         </View>
         <View style={s.card}>
           <Entry
+            title="解析服务（MinerU）"
+            sub="导入 PDF 用的 Token、额度"
+            onPress={() => nav.navigate('MineruSettings')}
+          />
+          <Entry
+            title="讲解偏好"
+            sub="举例优先用真实行情、检查题、术语中英对照"
+            onPress={() => nav.navigate('StudyPrefs')}
+          />
+          <Entry
+            title="因子实验室"
+            sub="示例池 / 自选 / 沪深 300 的分组回测和 IC"
+            onPress={() => nav.navigate('FactorLab')}
+          />
+        </View>
+        <View style={s.card}>
+          <Entry
             title="供应商与模型"
             sub={aiSvc ?? '还没有配置：添加服务（Base URL、API Key、模型）'}
             onPress={() => nav.navigate('AiServices')}

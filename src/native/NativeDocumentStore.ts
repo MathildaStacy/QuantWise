@@ -11,6 +11,8 @@ export interface Spec extends TurboModule {
   pickText(): Promise<string | null>;
   /** 清理上一次 App 进程留下的导出文件。 */
   cleanupExports(): Promise<void>;
+  /** QuantWise：用系统 PdfRenderer 读 PDF 页数（决定怎么给 MinerU 分片）；path 是 App 私有目录里的文件。 */
+  pdfPageCount(path: string): Promise<number>;
 }
 
 export default TurboModuleRegistry.get<Spec>('DocumentStore');

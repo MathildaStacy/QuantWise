@@ -34,7 +34,7 @@ export function quickQuestions(
   if (page) {
     out.push('解释这个页面');
     if (page.name.startsWith('个股')) {
-      out.push('介绍一下这家公司', '最近走势怎么样？');
+      out.push('介绍一下这家公司', '最近走势怎么样？', '画出它的 20 日动量，在示例池里排第几？');
     } else if (/买入|卖出/.test(page.name)) {
       out.push('这笔要交多少费用？');
     } else if (page.name.includes('持仓')) {

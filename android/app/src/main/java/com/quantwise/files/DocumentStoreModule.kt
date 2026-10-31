@@ -3,7 +3,9 @@ package com.quantwise.files
 import android.app.Activity
 import android.content.ClipData
 import android.content.Intent
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -147,6 +149,29 @@ class DocumentStoreModule(context: ReactApplicationContext) : NativeDocumentStor
     val sessions = root.listFiles() ?: throw IOException("Could not inspect export cache")
     sessions.filter { it.name != EXPORT_SESSION }.forEach {
       if (!it.deleteRecursively()) throw IOException("Could not clean export cache")
+    }
+  }
+
+  /** 只读 App 私有目录里的文件（选书时已经复制进来），不接受 content:// 或别的应用的路径。 */
+  override fun pdfPageCount(path: String, promise: Promise) {
+    val file = File(path.removePrefix("file://"))
+    val base = reactApplicationContext.filesDir.canonicalPath
+    val cache = reactApplicationContext.cacheDir.canonicalPath
+    val real = try { file.canonicalPath } catch (_: IOException) { "" }
+    if (!real.startsWith(base) && !real.startsWith(cache)) {
+      promise.reject("PDF_PATH", "只能读 App 私有目录里的 PDF")
+      return
+    }
+    dispatch(promise) {
+      try {
+        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+          PdfRenderer(fd).use { promise.resolve(it.pageCount.toDouble()) }
+        }
+      } catch (e: SecurityException) {
+        promise.reject("PDF_ENCRYPTED", "PDF 有密码保护，读不了页数")
+      } catch (e: Exception) {
+        promise.reject("PDF_INVALID", "读不了这个 PDF：" + (e.message ?: e.javaClass.simpleName))
+      }
     }
   }
 

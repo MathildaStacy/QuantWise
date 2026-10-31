@@ -21,7 +21,15 @@ import {
   type StageItem,
 } from '../../learn/roadmap';
 import { ConfirmDialog } from '../components/Dialog';
-import { AiFab, Button, NavBar, Note, SectionTitle } from '../components/ui';
+import {
+  AiFab,
+  Button,
+  NavBar,
+  Note,
+  SectionTitle,
+  Segmented,
+} from '../components/ui';
+import { ShelfView } from './ShelfView';
 import { useAiContext, useCore, useViewLog } from '../hooks';
 import type { RootScreenProps, RootStackParamList } from '../navigation/types';
 import { color, num, PAD } from '../theme';
@@ -91,7 +99,33 @@ const TOOLS: Tool[] = [
   },
 ];
 
+/** 学习 Tab 顶部两段：读书（QuantWise 的书架，默认）和路线（AShareSim 原来的学习 Tab）。 */
+let lastSeg: 'read' | 'route' = 'read';
+
 export function LearnScreen() {
+  const [seg, setSeg] = useState(lastSeg);
+  const pick = (k: 'read' | 'route') => {
+    lastSeg = k;
+    setSeg(k);
+  };
+  return (
+    <View style={s.page}>
+      <NavBar title="学习" />
+      <Segmented
+        items={[
+          ['read', '读书'],
+          ['route', '路线'],
+        ]}
+        value={seg}
+        onChange={pick}
+      />
+      {seg === 'read' ? <ShelfView /> : <RouteView />}
+      <AiFab />
+    </View>
+  );
+}
+
+function RouteView() {
   const nav = useNavigation<Nav>();
   const { checks, recent } = useLearn();
   const [full, setFull] = useState(false);
@@ -118,8 +152,7 @@ export function LearnScreen() {
     tip: 'App 覆盖量化路线图的阶段 0–3 和阶段 7；阶段 4–6（单因子、回测、机器学习）在电脑上写代码。',
   }));
   return (
-    <View style={s.page}>
-      <NavBar title="学习" />
+    <>
       <ScrollView contentContainerStyle={s.pad}>
         <Pressable
           onPress={() => nav.navigate('Stage', { no: cur.no })}
@@ -217,8 +250,7 @@ export function LearnScreen() {
           机器学习需要在电脑上写代码，App 负责给它们提供数据和成交记录。
         </Text>
       </ConfirmDialog>
-      <AiFab />
-    </View>
+    </>
   );
 }
 

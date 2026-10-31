@@ -102,6 +102,7 @@ import {
   markBriefing,
   type BriefDue,
 } from '../../ai/flows';
+import { ChartCard } from '../charts/ChartCard';
 import { ChatProcess, conversationTurns } from '../components/ChatProcess';
 import { Button } from '../components/ui';
 import { useCore } from '../hooks';
@@ -712,6 +713,13 @@ export function AiScreen() {
                   {turn.answer.map((m, i) => (
                     <View key={i}>{renderMessage(m)}</View>
                   ))}
+                  {/* QuantWise 行情与因子工具画的图，放在这一轮回答后面 */}
+                  {turn.answer
+                    .flatMap(m => m.ui?.tools ?? [])
+                    .flatMap(t => t.charts ?? [])
+                    .map((chart, i) => (
+                      <ChartCard key={'chart' + i} data={chart} />
+                    ))}
                 </>
               );
             })()}

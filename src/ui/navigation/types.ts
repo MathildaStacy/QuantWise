@@ -1,6 +1,7 @@
 import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { OrderKind } from '../../engine/types';
+import type { ChartData } from '../../quant/charts';
 
 export type TabParamList = {
   Watch: undefined;
@@ -84,6 +85,21 @@ export type RootStackParamList = {
   ReplayNew: { date: string; blind?: boolean };
   ReplayRun: { id: number };
   ReplayVerify: { date: string };
+  // QuantWise 读书伴学（QUANTWISE_DESIGN.md §3）
+  /** 选好 PDF 之后的解析设置；uri 是复制到 App 私有目录后的路径。 */
+  ImportBook: { path: string; name: string; size: number };
+  ParseProgress: { bookId: string };
+  BookMap: { bookId: string };
+  /** mode：进来时的模式；blockSeq：读书模式定位到这一块；ask：进来就问这个问题（复习页「让 AI 重讲」）。 */
+  Study: { bookId: string; sectionId?: string; mode?: 'lecture' | 'read'; blockSeq?: number; ask?: string };
+  SectionDone: { bookId: string };
+  Review: undefined;
+  ReviewRun: undefined;
+  Notes: { bookId: string };
+  FactorLab: { factor?: string; universe?: string } | undefined;
+  ChartFull: { chart: ChartData };
+  MineruSettings: undefined;
+  StudyPrefs: undefined;
 };
 
 export type RootScreenProps<K extends keyof RootStackParamList> =

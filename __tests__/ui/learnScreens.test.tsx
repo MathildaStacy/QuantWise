@@ -168,6 +168,16 @@ beforeAll(async () => {
 
 test('学习 Tab：当前阶段、工具格、阶段卡片', async () => {
   const r = await render('Tabs', LearnScreen);
+  // QuantWise 的学习 Tab 默认是「读书」，原来的内容在「路线」
+  const [seg] = r.tree.root.findAll(
+    n =>
+      n.props.accessibilityRole === 'tab' &&
+      typeof n.props.onPress === 'function' &&
+      n.findAll(c => c.props.children === '路线').length > 0,
+  );
+  await act(async () => {
+    seg.props.onPress();
+  });
   for (const t of [
     '当前阶段',
     '规则课',

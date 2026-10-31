@@ -109,6 +109,8 @@ export interface BookBody {
   dir?: string;
   /** PDF：MinerU 解析模型。 */
   model?: 'vlm' | 'pipeline';
+  /** PDF：扫描版，打开 OCR。 */
+  ocr?: boolean;
   warnings?: string[];
   sections?: number;
   leaves?: number;

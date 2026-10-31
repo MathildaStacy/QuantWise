@@ -234,3 +234,54 @@ export async function searchBlocks(
 }
 
 export const today = (iso: string): DateStr => iso.slice(0, 10);
+
+// ---------- PDF 分片（MinerU 任务） ----------
+
+export type PartState = 'pending' | 'uploading' | 'parsing' | 'done' | 'failed';
+
+export interface BookPart {
+  partNo: number;
+  pageFrom: number;
+  pageTo: number;
+  dataId: string;
+  batchId: string | null;
+  state: PartState;
+  error: string | null;
+  updatedAt: string;
+}
+
+export async function parts(db: Db, bookId: string): Promise<BookPart[]> {
+  const rows = await db.all<{ part_no: number; page_from: number; page_to: number; data_id: string; batch_id: string | null; state: PartState; error: string | null; updated_at: string }>(
+    'SELECT * FROM book_part WHERE book_id = ? ORDER BY part_no',
+    [bookId],
+  );
+  return rows.map(r => ({
+    partNo: Number(r.part_no),
+    pageFrom: Number(r.page_from),
+    pageTo: Number(r.page_to),
+    dataId: r.data_id,
+    batchId: r.batch_id,
+    state: r.state,
+    error: r.error,
+    updatedAt: r.updated_at,
+  }));
+}
+
+export async function savePart(db: Db, bookId: string, p: BookPart): Promise<void> {
+  await db.run(
+    `INSERT INTO book_part (book_id, part_no, page_from, page_to, data_id, batch_id, state, error, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(book_id, part_no) DO UPDATE SET batch_id = excluded.batch_id, state = excluded.state, error = excluded.error, updated_at = excluded.updated_at`,
+    [bookId, p.partNo, p.pageFrom, p.pageTo, p.dataId, p.batchId, p.state, p.error, p.updatedAt],
+  );
+}
+
+export async function blocksBySeq(db: Db, bookId: string, seqs: number[]): Promise<BookBlock[]> {
+  if (!seqs.length) {
+    return [];
+  }
+  const rows = await db.all<BlockRow>(
+    'SELECT * FROM book_block WHERE book_id = ? AND seq IN (' + seqs.map(() => '?').join(',') + ') ORDER BY seq',
+    [bookId, ...seqs],
+  );
+  return rows.map(toBlock);
+}

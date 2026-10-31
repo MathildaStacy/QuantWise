@@ -3,9 +3,12 @@
  */
 import { assemble, cnNumber, parseHeading } from '../../src/book/assemble';
 import { citeLabel, nextLeaf, sampleBook, secLabel } from '../../src/book/book';
+import { ankiCsv, notesMarkdown } from '../../src/book/export';
 import { parseMarkdownBook } from '../../src/book/markdown';
 import {
   citationsOf,
+  htmlTableToMarkdown,
+  inlineParts,
   parseStudyText,
   plainStudyText,
   type CiteCheck,
@@ -180,5 +183,39 @@ describe('行内公式和复习', () => {
     ];
     expect(dueToday(cards, '2026-11-01').map(c => c.id)).toEqual([2, 3, 1]);
     expect(dueToday(cards, '2026-11-01', 2)).toHaveLength(2);
+  });
+});
+
+describe('原书正文', () => {
+  it('行内：加粗、公式转文字、转不了的保留原文', () => {
+    expect(inlineParts('**动量**是 $P_t$，矩阵 $\\begin{matrix}a\\end{matrix}$。')).toEqual([
+      { t: 'bold', v: '动量' }, { t: 'text', v: '是 ' }, { t: 'text', v: 'Pₜ' }, { t: 'text', v: '，矩阵 ' },
+      { t: 'math', v: '\\begin{matrix}a\\end{matrix}' }, { t: 'text', v: '。' },
+    ]);
+  });
+
+  it('HTML 表格转 Markdown 表格', () => {
+    expect(htmlTableToMarkdown('<table><tr><th>因子</th><th>IC</th></tr><tr><td>动量 &amp; 反转</td><td>0.03<br/>（月）</td></tr><tr><td>x</td></tr></table>')).toBe(
+      '| 因子 | IC |\n| --- | --- |\n| 动量 & 反转 | 0.03 （月） |\n| x |  |',
+    );
+    expect(htmlTableToMarkdown('<p>没有表</p>')).toBeNull();
+  });
+});
+
+describe('笔记导出', () => {
+  it('Markdown 按章节，跳过空小节，长引用只留第一句；Anki CSV 转义', () => {
+    const bk = sampleBook();
+    const md = notesMarkdown({
+      title: bk.title,
+      author: bk.author,
+      sections: bk.sections,
+      notes: [{ sectionId: '3.1', summary: '动量 = 累计收益', qa: [{ q: 'IC 是什么', a: '相关系数', from: '3.1' }] }],
+      stuck: [{ sectionId: '2.2', text: '1.4826', resolved: true }],
+      highlights: [{ sectionId: '3.1', label: '3.1 ¶3', text: '第一句。第二句。第三句。' }],
+    });
+    expect(md).toBe(
+      '# 因子投资入门\n\nQuantWise 示例教材\n\n### 2.2 因子暴露与标准化\n\n- 卡点：1.4826（已解决）\n\n### 3.1 动量因子\n\n动量 = 累计收益\n\n**问：IC 是什么**（从 3.1 问的）\n\n相关系数\n\n> 第一句。……（3.1 ¶3）\n',
+    );
+    expect(ankiCsv([{ front: 'a, "b"', back: 'c\nd', sectionId: '3.1' }], '因子 投资')).toBe('"a, ""b""","c\nd",因子_投资::3_1\n');
   });
 });

@@ -58,6 +58,21 @@ function Inline({
           <Text key={i} style={s.icode}>
             {x.text}
           </Text>
+        ) : x.t === 'link' && x.href === 'unv:' ? (
+          // 伴读：引用不到本轮读过的原文（QUANTWISE_DESIGN.md §6.5）
+          <Text key={i} style={s.unverified} accessibilityLabel="未核实的说法">
+            {' 未核实'}
+          </Text>
+        ) : x.t === 'link' && x.href.startsWith('cite:') ? (
+          <Text
+            key={i}
+            style={s.cite}
+            onPress={() => onLink(x.href)}
+            accessibilityRole="link"
+            accessibilityLabel={'原文 ' + x.text}
+          >
+            {' ' + x.text + ' '}
+          </Text>
         ) : x.t === 'link' ? (
           <Text
             key={i}
@@ -236,6 +251,18 @@ export function Markdown({
 
 const mono = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
 const s = StyleSheet.create({
+  cite: {
+    fontSize: 12,
+    color: '#2D5BA8',
+    backgroundColor: '#EAF0FA',
+    fontVariant: ['tabular-nums'],
+  },
+  unverified: {
+    fontSize: 12,
+    color: c.muted,
+    textDecorationLine: 'underline',
+    textDecorationStyle: 'dashed',
+  },
   missing: {
     color: color.warnInk,
     textDecorationLine: 'underline',
