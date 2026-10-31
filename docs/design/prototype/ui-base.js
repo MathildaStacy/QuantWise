@@ -1,4 +1,4 @@
-/* AShareSim 原型 · UI 基础：路由、浮层、图表、时钟 */
+/* QuantWise 原型（基于 AShareSim）· UI 基础：路由、浮层、图表、时钟 */
 'use strict';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -20,7 +20,7 @@ const WD = ['日', '一', '二', '三', '四', '五', '六'];
 const dateLabel = d => { const x = new Date(d + 'T00:00:00'); return d.slice(5).replace('-', '/') + ' 周' + WD[x.getDay()]; };
 
 // ---------- 路由 ----------
-const R = { stack: [{ name: 'watch', p: {} }] };
+const R = { stack: [{ name: 'learn', p: {} }] };
 const SCREENS = {};
 const TABS = [
   ['watch', '自选', '<path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.9 6.7 19.6l1-5.8L3.5 9.7l5.9-.9z"/>'],

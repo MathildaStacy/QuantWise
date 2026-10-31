@@ -91,7 +91,7 @@ let aiCtx = null; // { entry: 打开 AI 时所在的页面 {name, p}, code }
 const aiTok = s => Math.round(String(s).length * 0.8); // 原型粗估：中文约 0.6–1 token / 字
 const kfmt = n => n >= 1000 ? fx(n / 1000, 1) + 'k' : String(n);
 const actLine = a => (a.di !== S.di ? CAL[a.di].slice(5).replace('-', '/') + ' ' : '') + hms(a.t).slice(0, 5) + ' [' + ACT_KIND[a.kind] + '] ' + a.text;
-const SYS_PROMPT = '你是 AShareSim 里的学习助手。用户用真实行情、真实规则和真实税费做 A 股模拟交易，目标是学会交易规则、为个人量化打基础。\n' +
+const SYS_PROMPT = '你是 QuantWise 里的学习助手。用户用真实行情、真实规则和真实税费做 A 股模拟交易，目标是学会交易规则、为个人量化打基础。\n' +
   '1. 只做分析和讲解，不推荐买卖，不预测涨跌，不能下单。\n' +
   '2. 行情、财务、持仓、成交、费率等数字只能来自工具结果或下面的上下文，不要凭记忆编造。\n' +
   '3. 用户说「这个」「这里」「刚才那笔」时，先看 <page_context> 和 <recent_actions>。\n' +
@@ -244,6 +244,7 @@ SCREENS.ai = {
     const old = $('#aicomp'); if (old) old.remove();
     const c = buildCtx(), x = ctxCost(c), est = cacheEstimate(c, ''), chips = aiChips(c);
     $('#tabbar').insertAdjacentHTML('beforebegin', '<div id="aicomp"><div class="chips">' + chips.map(([k, l]) => '<button onclick="aiAsk(\'' + k + '\',\'' + l.replace(/'/g, '') + '\')">' + esc(l) + '</button>').join('') + '</div><div class="composer"><input id="aiin" placeholder="问问题，或者告诉我「我打算……」" onkeydown="if(event.key===\'Enter\')aiFree()"><button class="btn buy sm" onclick="aiFree()">发送</button></div><div class="muted" style="font-size:10px;padding:0 12px 6px;background:#fff">本次约 ' + kfmt(x.total) + ' tokens，预计 ' + kfmt(est.read) + ' 走缓存' + (est.read ? '' : '（' + (aiSvc().cache === 'off' ? '缓存已关闭' : '缓存是冷的，这次写入') + '）') + ' · 原型为本地示例回复，不联网</div></div>');
+    paintCharts($('#view'));
     const v = $('#view'); v.scrollTop = v.scrollHeight;
     if (p.intent && !p.asked) { p.asked = true; const ch = chips.find(x => x[0] === p.intent); if (ch) aiAsk(ch[0], ch[1]); }
   }
@@ -253,6 +254,7 @@ function msgHTML(m, i) {
   if (m.role === 'steps') return '<div class="steps">' + m.items.map(x => '<span>' + esc(x) + '</span>').join('') + '</div>';
   if (m.role === 'u') return '<div class="msg u"><span class="tx">' + esc(m.text) + '</span></div>' + (m.ctx ? '<div class="uctx" onclick="go(\'aiCtx\')">附带：' + esc(m.ctx) + '</div>' : '');
   let h = '<div class="msg a"><span class="tx">' + esc(m.text) + '</span>';
+  if (m.done && m.chart) h += chartCard(m.chart, SEC[CHARTS[m.chart].code].name + ' · 20 日动量', legendDot(QC.main, '收盘（前复权）') + legendDot(QC.ma, 'MA20') + legendDot(QC.up, '20 日动量（下）'));
   if (m.done) {
     if (m.links && m.links.length) h += '<span class="mlinks">' + m.links.map((l, k) => '<button onclick="aiLink(' + i + ',' + k + ')">' + esc(l[0]) + '</button>').join('') + '</span>';
     (m.memIds || []).forEach(id => { const mm = S.ai.mem.find(x => x.id === id); h += mm ? '<span class="memnote">已记住：' + esc(mm.text) + '<button onclick="memUndo(' + id + ')">撤销</button></span>' : '<span class="memnote off">这条记忆已删除</span>'; });
@@ -276,6 +278,7 @@ function aiChips(c) {
   if (q) out.push(['recent', q]);
   if (c.page) out.push(['page', '解释这个页面']);
   if (c.code) out.push(['company', '介绍这家公司'], ['trend', '近 3 个月走势怎么看'], ['rule', '这只股票的交易规则']);
+  if (c.code && typeof QPOOL !== 'undefined' && QPOOL.includes(c.code)) out.splice(c.page ? 2 : 1, 0, ['mom', '画出它的 20 日动量']);
   out.push(['recall', '我们上次聊了什么？'], ['review', '复盘我今天的交易'], ['fee', '解释最近一笔交割单的费用'], ['analysis', '解释我的账户分析']);
   return out;
 }
@@ -300,7 +303,7 @@ function aiFree() {
   const el = $('#aiin'), v = el.value.trim(); if (!v) return;
   const fs = feeStmt(v), mm = fs ? null : memDetect(v);
   const k = fs ? 'feeset' : mm ? 'remember' : /刚才|刚刚|那笔|那一笔|为什么.*(废单|下不了|没成交|被拒|拦)/.test(v) ? 'recent' : /这个页面|这页|这些数|这里|这是什么|看不懂/.test(v) ? 'page' : /上次|之前.*(问|聊|说)|还记得|我说过/.test(v) ? 'recall' :
-    /费|佣金|印花/.test(v) ? 'fee' : /规则|涨停|T\+1|笼子/.test(v) ? 'rule' : /公司|介绍|主营/.test(v) ? 'company' : /走势|技术|均线/.test(v) ? 'trend' : /市盈率|PE/.test(v) ? 'pe' : 'general';
+    /费|佣金|印花/.test(v) ? 'fee' : /规则|涨停|T\+1|笼子/.test(v) ? 'rule' : /公司|介绍|主营/.test(v) ? 'company' : /动量|因子/.test(v) ? 'mom' : /走势|技术|均线/.test(v) ? 'trend' : /市盈率|PE/.test(v) ? 'pe' : 'general';
   aiAsk(k, v, fs || mm);
 }
 let aiBusy = false;
@@ -319,9 +322,9 @@ function aiAsk(kind, text, extra) {
   let i = 0;
   const finish = m => { m.text = r.answer; m.done = true; m.usage = usage; aiBusy = false; maybeCompact(th); if (cur().name === 'ai') refresh(); };
   const next = () => {
-    if (cur().name !== 'ai' || S.ai.cur !== th.id) { const m = { role: 'a', text: '', links: r.links, memIds: r.memIds, memAsk: r.memAsk, noDisc: r.noDisc }; st.items = r.steps.slice(); th.msgs.push(m); return finish(m); }
+    if (cur().name !== 'ai' || S.ai.cur !== th.id) { const m = { role: 'a', text: '', links: r.links, memIds: r.memIds, memAsk: r.memAsk, noDisc: r.noDisc, chart: r.chart }; st.items = r.steps.slice(); th.msgs.push(m); return finish(m); }
     if (i < r.steps.length) { st.items.push(r.steps[i++]); refresh(); setTimeout(next, 380); return; }
-    const m = { role: 'a', text: '', links: r.links, memIds: r.memIds, memAsk: r.memAsk, noDisc: r.noDisc }; th.msgs.push(m);
+    const m = { role: 'a', text: '', links: r.links, memIds: r.memIds, memAsk: r.memAsk, noDisc: r.noDisc, chart: r.chart }; th.msgs.push(m);
     let j = 0;
     const type = () => {
       if (cur().name !== 'ai' || j >= r.answer.length) return finish(m);
@@ -386,6 +389,12 @@ function aiAnswer(kind, c, text, extra) {
     return { steps: ['get_company_profile(' + s.sym + ')', 'get_quote(' + s.sym + ')', 'get_financials(' + s.sym + ', 最近 4 期)'],
       answer: (PROFILE[code] || s.fullName + '：原型没有内置这家公司的资料，真实 App 会读取 F10。') + '\n\n几个关键数字（' + hms(S.t) + '）：\n· 现价 ' + px(code, sn.price) + '，' + pctS(sn.pct) + '\n' + (s.board === 'etf' ? '· 这是基金，没有市盈率；关注跟踪误差、规模和管理费。\n' : '· 市盈率（动）约 ' + fx(q.pe, 1) + '，市净率 ' + fx(q.pb, 2) + '\n· 总市值约 ' + fx(q.totalCap, 0) + ' 亿元\n') + '· 52 周区间 ' + px(code, q.w52l) + ' – ' + px(code, q.w52h) + '\n· ' + posLine(code) + '\n\n要深入了解，建议按这个顺序看：主营构成（钱从哪来）→ 近 3 年营收和净利润增速 → 毛利率和现金流 → 估值和同行对比。' + memTail(memFor(c, code)) };
   }
+  if (kind === 'mom' && s && QPOOL.includes(code)) {
+    const cid = chartSpec({ kind: 'price', code, n: 250, ma: 20, sub: 'mom20' }), full = DATA.kline[code].map(r => r[2]), m20 = mom(full, 20), rk = factorRank('mom20', code);
+    return { steps: ['get_kline(' + s.sym + ', 日线, 前复权, 250 根)', 'plot_chart(价格 + MA20 + 20 日动量)', 'get_factor_values(mom20, 示例池 ' + rk.n + ' 只)'], chart: cid, noDisc: true,
+      answer: s.name + ' 今天的 20 日动量是 ' + sgn(m20[m20.length - 1] * 100, 1) + '%，在示例池 ' + rk.n + ' 只股票里排第 ' + rk.rank + '。\n\n动量 = 过去 20 个交易日的累计涨幅，用前复权价算。单看一只股票的动量说明不了什么，有意义的是同一天在一篮子股票里的排名（《因子投资入门》3.1、2.1）。',
+      links: [['在书里学动量因子', () => openStudy('sample', '3.1', { mode: 'lecture' })], ['在因子实验室检验', () => go('factorLab')]] };
+  }
   if (kind === 'trend' && s) {
     const k = liveBars(code), n = k.length, cl = k[n - 1][2];
     const ch = d => (cl / k[n - 1 - d][2] - 1) * 100, ma = d => k.slice(n - d).reduce((a, r) => a + r[2], 0) / d;
@@ -395,7 +404,7 @@ function aiAnswer(kind, c, text, extra) {
     return { steps: ['get_kline(' + s.sym + ', 日线, 前复权, 120 根)', '计算 MA20 / MA60、区间涨跌、量能'],
       answer: s.name + ' 近期表现（前复权）：\n· 近 20 日 ' + pctS(ch(20)) + '，近 60 日 ' + pctS(ch(60)) + '\n· 现价 ' + px(code, cl) + '，MA20 ' + px(code, ma(20)) + '，MA60 ' + px(code, ma(60)) + '，价格在 MA20 ' + (cl > ma(20) ? '上方' : '下方') + '、MA60 ' + (cl > ma(60) ? '上方' : '下方') + '\n· 近 60 日区间 ' + px(code, lo) + ' – ' + px(code, hi) + '，现价处在区间 ' + fx((cl - lo) / (hi - lo) * 100, 0) + '% 的位置\n· 近 5 日平均成交量是近 20 日的 ' + fx(v5 / v20, 2) + ' 倍\n\n均线和区间位置只描述「过去发生了什么」，不能预测未来。路线图阶段 4 会教你用 IC 检验这类信号有没有预测力，在那之前别把它当买卖依据。' + memTail(ms) +
         (stop && pos ? '\n\n你说过止损规则还没定。现在相对你的摊薄成本 ' + pctS(pos.pnlPct) + '，可以趁现在把规则写下来，比如「收盘价跌破成本 8% 卖出」，写进「模拟执行 → 交易纪律」。' : ''),
-      links: stop ? [['去写交易纪律', () => go('exec')]] : [] };
+      links: (stop ? [['去写交易纪律', () => go('exec')]] : []).concat([['在书里学 IC 怎么检验信号', () => openStudy('sample', '4.2', { mode: 'read' })]]) };
   }
   if (kind === 'rule' && s) {
     const m = MK[code], a = availableQty(code);
