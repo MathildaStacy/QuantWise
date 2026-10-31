@@ -76,7 +76,7 @@ function leaveDetour(id) {
   L.detour = null;
   const st = stepsOf(id, L.main);
   th.msgs.push({ r: 'sys', text: '回到 ' + secLabel(bookOf(id).book.sec(L.main)) + '：刚才讲到第 ' + (L.step + 1) + ' 步「' + st[L.step].t + '」' });
-  if (th.taught < 0) lecture(id, 0); else stRefresh();
+  stRefresh();
 }
 
 // ---------- 自由提问和快捷动作 ----------

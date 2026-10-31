@@ -3466,7 +3466,7 @@ function leaveDetour(id) {
   L.detour = null;
   const st = stepsOf(id, L.main);
   th.msgs.push({ r: 'sys', text: '回到 ' + secLabel(bookOf(id).book.sec(L.main)) + '：刚才讲到第 ' + (L.step + 1) + ' 步「' + st[L.step].t + '」' });
-  if (th.taught < 0) lecture(id, 0); else stRefresh();
+  stRefresh();
 }
 
 // ---------- 自由提问和快捷动作 ----------
@@ -3528,7 +3528,6 @@ function setMode(id, m) {
   const L = lsOf(id), th = threadOf(id), st = stepsOf(id, L.main);
   if (m === 'read') L.focus = bookOf(id).book.sec(L.main).blocks[st[Math.max(0, L.step)].b[0] - 1];
   L.mode = m; refresh(); if (m === 'lecture') { const v = $('#view'); v.scrollTop = v.scrollHeight; }
-  if (m === 'lecture' && th.taught < 0 && !L.away) lecture(id, L.step);
 }
 SCREENS.study = {
   fab: false,
@@ -3541,7 +3540,6 @@ SCREENS.study = {
     paintCharts(v);
     $('#tabbar').insertAdjacentHTML('beforebegin', '<div id="aicomp" class="stcomp"><div class="chips">' + chips(p.id).map(([l, f]) => '<button onclick="' + f + '">' + esc(l) + '</button>').join('') + '</div><div class="composer"><input id="stin" placeholder="不懂就问，比如「用茅台举例」" onkeydown="if(event.key===\'Enter\'&&this.value.trim()){askFree(\'' + p.id + '\',this.value.trim());this.value=\'\'}"><button class="btn lt sm" onclick="const i=$(\'#stin\');if(i.value.trim()){askFree(\'' + p.id + '\',i.value.trim());i.value=\'\'}">发送</button></div></div>');
     if (L.ask) { const q = L.ask; L.ask = null; setTimeout(() => askFree(p.id, q), 200); return; }
-    if (!th.msgs.length && th.taught < 0 && !L.away && !stBusy) { setTimeout(() => lecture(p.id, L.step), 250); }
   }
 };
 function lectureHTML(id) {
@@ -3554,6 +3552,7 @@ function lectureHTML(id) {
     const stuck = STUCK.find(x => !x.resolved);
     h += '<div class="recap"><div class="k">距上次 ' + L.away + ' 天</div><p>上次学完了第 2 章，2.3 节讲了常见的风格因子；现在从 3.1 动量因子开始。</p>' + (stuck ? '<p>你在 ' + stuck.sec + ' 卡过一个点：' + esc(stuck.text) + '。</p>' : '') + '<p>要先把卡点弄懂吗？</p><div class="racts"><button class="btn lt sm" onclick="lsOf(\'' + id + '\').away=null;lecture(\'' + id + '\',0)">直接继续</button>' + (stuck ? '<button class="btn sm" onclick="lsOf(\'' + id + '\').away=null;enterDetour(\'' + id + '\',\'' + stuck.sec + '\',\'先讲讲：' + esc(stuck.text) + '\')">先复习卡点</button>' : '') + '</div></div>';
   }
+  if (!L.away && !th.msgs.length) h += '<div class="recap"><div class="k">本节路线图 · ' + st.length + ' 步</div>' + st.map((x, i) => '<p>' + (i + 1) + '. ' + esc(x.t) + '</p>').join('') + '<p class="muted" style="font-size:12px">点「开始讲第 1 步」开始；熟悉的步骤可以跳过。只有你点了或提问时才会请求 AI。</p></div>';
   th.msgs.forEach((m, i) => { h += msgOf(id, m, i); });
   if (stBusy) h += '<div class="typing"><i></i><i></i><i></i></div>';
   return h + '</div>';

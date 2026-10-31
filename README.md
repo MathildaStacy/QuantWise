@@ -7,8 +7,15 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 ## QuantWise
 
-- 状态：M0 设计中（原型、技术方案）。
+- 状态：M0 设计完成（可交互原型、技术方案），进入实现。
 - Android 包名 `com.quantwise`，可以和 AShareSim 同时安装，数据互不影响。
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/QUANTWISE_DESIGN.md](docs/QUANTWISE_DESIGN.md) | 技术方案：范围、结构、数据模型、导入解析、伴读协议、因子口径、AI 工具、测试、实施顺序 |
+| [docs/design/prototype.html](docs/design/prototype.html) | 可交互原型（含 AShareSim 原有页面），浏览器直接打开；从「学习 → 读书 → 继续学习」开始 |
+
+在线看原型：<https://htmlpreview.github.io/?https://github.com/MathildaStacy/QuantWise/blob/main/docs/design/prototype.html>
 
 ---
 
