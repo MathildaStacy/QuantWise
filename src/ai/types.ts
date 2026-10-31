@@ -3,6 +3,8 @@
  * 请求怎么拼见 AI_ASSISTANT.md §1、§7。
  */
 
+import type { ChartData } from '../quant/charts';
+
 /** Anthropic Messages / OpenAI Responses / OpenAI Chat Completions。 */
 export type Protocol = 'anthropic' | 'openai' | 'chat';
 
@@ -223,6 +225,16 @@ export interface ToolUi {
   nav?: { route: string; params?: Record<string, unknown>; label: string };
   /** propose：提案卡（状态存在 ai_proposal 表，界面按 id 现读）。external 同操作卡（§13.3）。 */
   proposal?: { id: number; external?: string[] };
+  /** QuantWise 行情与因子工具画的图（数据随消息存下，历史对话打开时和当时一样）。 */
+  charts?: ChartData[];
+  /** 伴读：load_section 的小节和是不是岔路（QUANTWISE_DESIGN.md §6.5）。 */
+  section?: { id: string; detour: boolean };
+  /** 伴读：search_book 命中的块（「3.1#2」），这些块之后可以被引用。 */
+  cites?: string[];
+  /** 伴读：ask_quiz 出的选择题；picked 是用户选的（-1 没选）。 */
+  quiz?: { question: string; options: string[]; answer: number; explain: string; picked: number; reported?: boolean };
+  /** 伴读：propose_section_wrapup 的草稿；status 是用户确认的结果。 */
+  wrapup?: { summary: string; stuck: string[]; cards: { front: string; back: string }[]; status: 'pending' | 'saved' | 'dismissed'; reported?: boolean };
 }
 
 export interface MessageUi {

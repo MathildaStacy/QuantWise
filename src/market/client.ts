@@ -28,7 +28,13 @@ import {
   type NewsItem,
   type ResearchReport,
 } from './emNews';
-import { parseSinaEtfRank, sinaEtfRankUrl, parseSinaQuote } from './sina';
+import {
+  parseSinaEtfRank,
+  parseSinaNode,
+  parseSinaQuote,
+  sinaEtfRankUrl,
+  sinaIndexNodeUrl,
+} from './sina';
 import {
   minuteKlineUrl,
   parseKline,
@@ -244,6 +250,19 @@ export class MarketClient {
       await this.get('https://hq.sinajs.cn/list=' + code),
       code,
     );
+  }
+
+  /** 沪深 300 当前成分（新浪，见 sina.ts），3 页。 */
+  async hs300(): Promise<{ code: string; name: string }[]> {
+    const out: { code: string; name: string }[] = [];
+    for (let page = 1; page <= 4; page++) {
+      const rows = parseSinaNode(JSON.parse(await this.get(sinaIndexNodeUrl('hs300', page))));
+      out.push(...rows);
+      if (rows.length < 100) {
+        break;
+      }
+    }
+    return [...new Map(out.map(x => [x.code, x])).values()];
   }
 
   /** ETF 排行（新浪，见 sina.ts）。 */

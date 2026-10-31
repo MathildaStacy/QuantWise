@@ -20,11 +20,12 @@ import {
 const fx = (name: string) =>
   JSON.parse(readFileSync(join(__dirname, '../market/fixtures', name), 'utf8'));
 
-test('工具列表固定 36 个，按名字排序，名字不重复', () => {
+test('工具列表固定 39 个（含 3 个行情与因子工具），按名字排序，名字不重复', () => {
   const names = TOOL_DEFS.map(t => t.name);
-  expect(names).toHaveLength(36);
+  expect(names).toHaveLength(39);
+  expect(names).toEqual(expect.arrayContaining(['factor_test', 'get_factor_values', 'plot_chart']));
   expect(names).toEqual([...names].sort());
-  expect(new Set(names).size).toBe(36);
+  expect(new Set(names).size).toBe(39);
   expect(NAV_ROUTES.Ai).toBeUndefined(); // 不能从 AI 打开 AI 页
 });
 

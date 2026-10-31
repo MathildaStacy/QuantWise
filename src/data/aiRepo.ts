@@ -70,7 +70,7 @@ export interface ThreadListItem extends Thread {
 export async function threads(db: Db): Promise<ThreadListItem[]> {
   const rows = await db.all<ThreadRow & { n: number }>(
     `SELECT t.*, (SELECT COUNT(*) FROM ai_message m WHERE m.thread_id = t.id AND m.role = 'user') AS n
-     FROM ai_thread t ORDER BY t.updated_at DESC, t.id DESC`,
+     FROM ai_thread t WHERE t.kind = 'assistant' ORDER BY t.updated_at DESC, t.id DESC`,
   );
   return rows.map(r => ({ ...toThread(r), messages: Number(r.n) * 2 }));
 }
@@ -231,7 +231,7 @@ export async function searchConversations(
 ): Promise<ConversationHit[]> {
   const like = '%' + query.replace(/[%_]/g, '') + '%';
   const rows = await db.all<ThreadRow>(
-    `SELECT * FROM ai_thread t WHERE t.id != ? AND (t.title LIKE ? OR t.summary LIKE ? OR EXISTS (
+    `SELECT * FROM ai_thread t WHERE t.id != ? AND t.kind = 'assistant' AND (t.title LIKE ? OR t.summary LIKE ? OR EXISTS (
        SELECT 1 FROM ai_message m WHERE m.thread_id = t.id AND m.role IN ('user', 'assistant') AND m.parts LIKE ?))
      ORDER BY t.updated_at DESC LIMIT ?`,
     [excludeThread ?? -1, like, like, like, limit],

@@ -13,6 +13,7 @@ import { previewCard } from './actions';
 import { feeCalcSummary, parseFeeCalc } from '../../sim/feeCalc';
 import { CARD_TOOLS, NAV_ROUTES } from './defs';
 import { EXTERNAL_TOOLS, external } from '../external';
+import { QUANT_TOOLS, runQuantTool } from './quant';
 import { mcpCall, mcpSearch } from '../mcp';
 import {
   activityText,
@@ -145,6 +146,10 @@ async function dispatch(
     output,
     ui: { id, name, label },
   });
+  if (QUANT_TOOLS.has(name)) {
+    const q = await runQuantTool(core, name, args);
+    return { output: q.output, ui: { id, name, label: q.label, ...(q.charts ? { charts: q.charts } : {}) } };
+  }
   switch (name) {
     case 'get_quote': {
       const r = await needCode(env, args);

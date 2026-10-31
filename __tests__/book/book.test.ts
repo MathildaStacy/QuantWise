@@ -1,0 +1,184 @@
+/**
+ * 书的核心（QUANTWISE_DESIGN.md §5、§6）：示例教材切章节、Markdown 解析、标题编号、路线图、标记、行内公式、复习。
+ */
+import { assemble, cnNumber, parseHeading } from '../../src/book/assemble';
+import { citeLabel, nextLeaf, sampleBook, secLabel } from '../../src/book/book';
+import { parseMarkdownBook } from '../../src/book/markdown';
+import {
+  citationsOf,
+  parseStudyText,
+  plainStudyText,
+  type CiteCheck,
+} from '../../src/book/markup';
+import { addDays, dueToday, rateCard } from '../../src/book/review';
+import { planSteps, stepOfBlock } from '../../src/book/steps';
+import { texToText } from '../../src/book/tex';
+import type { RawDoc } from '../../src/book/types';
+
+describe('示例教材', () => {
+  const bk = sampleBook();
+  const blocksOf = (id: string) => bk.blocks.filter(b => b.sectionId === id);
+
+  it('切出 24 个标题、19 个能学的小节，和原型一致', () => {
+    expect(bk.title).toBe('因子投资入门');
+    expect(bk.author).toBe('QuantWise 示例教材');
+    expect(bk.sections).toHaveLength(24);
+    expect(bk.sections.filter(s => s.leaf)).toHaveLength(19);
+    expect(bk.sections.map(s => s.id).slice(0, 8)).toEqual([
+      'c1', '1', '1.1', '1.2', '1.3', '1.4', '2', '2.1',
+    ]);
+    const s31 = bk.sections.find(s => s.id === '3.1')!;
+    expect(s31).toMatchObject({ parentId: '3', level: 2, no: '3.1', title: '动量因子', leaf: true });
+    expect(bk.sections.find(s => s.id === '3')).toMatchObject({ no: '第 3 章', title: '动量与反转', leaf: false });
+  });
+
+  it('块的节内序号和类型对得上原文', () => {
+    const b = blocksOf('3.1');
+    expect(b.map(x => x.type)).toEqual(['p', 'eq', 'p', 'p', 'p']);
+    expect(b.map(x => x.no)).toEqual([1, 2, 3, 4, 5]);
+    expect(b[1].text).toBe('MOM_{i,t}(n) = \\frac{P_{i,t}}{P_{i,t-n}} - 1');
+    expect(blocksOf('2.3').filter(x => x.type === 'li')).toHaveLength(3);
+    expect(blocksOf('4.1').filter(x => x.type === 'li').map(x => x.mark)).toEqual(['1.', '2.', '3.']);
+    expect(bk.blocks.every((x, i) => x.seq === i)).toBe(true);
+  });
+
+  it('3.1 的路线图：4 步，公式跟着它前面的说明', () => {
+    const st = planSteps(blocksOf('3.1'));
+    expect(st.map(s => [s.from, s.to])).toEqual([[1, 2], [3, 3], [4, 4], [5, 5]]);
+    expect(st[0].title).toBe('动量是过去一段时间的累计收益');
+    expect(st[1].title).toBe('学术上最常见的是「12-1 月动量」');
+    expect(stepOfBlock(st, 2)).toBe(0);
+    expect(stepOfBlock(st, 4)).toBe(2);
+  });
+
+  it('列表跟着以冒号结尾的引导段，字数太少的一步讲完', () => {
+    const st = planSteps(blocksOf('2.3'));
+    expect(st[0]).toMatchObject({ from: 1, to: 4 });
+    expect(planSteps(blocksOf('c1'))).toHaveLength(1);
+  });
+
+  it('引用标签、小节名、下一节', () => {
+    const s = bk.sections.find(x => x.id === '3.1')!;
+    expect(citeLabel(s, { no: 2, page: null })).toBe('3.1 ¶2');
+    expect(citeLabel(s, { no: 2, page: 86 })).toBe('p.86');
+    expect(secLabel(s)).toBe('3.1 动量因子');
+    expect(nextLeaf(bk.sections, '2.3')?.id).toBe('3.1');
+    expect(nextLeaf(bk.sections, '5.2')).toBeNull();
+  });
+});
+
+describe('Markdown 和标题', () => {
+  it('front matter、表格、代码、图片、多行公式、引用块', () => {
+    const doc = parseMarkdownBook(
+      [
+        '---', 'title: "测试书"', 'author: 某人', '---', '',
+        '# Chapter 2: Risk', '', 'Line one', 'continues here.', '',
+        '| a | b |', '|---|---|', '| 1 | 2 |', '',
+        '```', 'x = 1', '```', '',
+        '![图 1](img/a.png)', '', '$$', 'a = b', '+ c', '$$', '', '> 引用一句',
+      ].join('\n'),
+    );
+    expect(doc.title).toBe('测试书');
+    expect(doc.items.map(i => (i.kind === 'heading' ? 'h' : i.type))).toEqual(['h', 'p', 'table', 'code', 'img', 'eq', 'p']);
+    expect(doc.items[1]).toMatchObject({ text: 'Line one continues here.' });
+    expect(doc.items[4]).toMatchObject({ image: 'img/a.png', text: '图 1' });
+    expect(doc.items[5]).toMatchObject({ text: 'a = b + c' });
+  });
+
+  it('认章节号：中文数字、Chapter、3.1.2、年份不算章', () => {
+    expect(cnNumber('十二')).toBe(12);
+    expect(cnNumber('二十三')).toBe(23);
+    expect(parseHeading({ kind: 'heading', text: '第三章　动量', level: 2 })).toMatchObject({ num: '3', no: '第 3 章', title: '动量', level: 1 });
+    expect(parseHeading({ kind: 'heading', text: 'Chapter 2: Risk', level: 1 })).toMatchObject({ num: '2', title: 'Risk' });
+    expect(parseHeading({ kind: 'heading', text: '3.1.2 细节', level: 1 })).toMatchObject({ num: '3.1.2', level: 3 });
+    expect(parseHeading({ kind: 'heading', text: '2023 年回顾', level: 1 }).num).toBeNull();
+    expect(parseHeading({ kind: 'heading', text: '3 动量', level: 2 }).num).toBeNull();
+  });
+
+  it('章里没编号的大标题挂到章下面，附录除外；重复编号加后缀；标题前的正文成 c0', () => {
+    const doc: RawDoc = {
+      title: 'T', author: '', warnings: [],
+      items: [
+        { kind: 'block', type: 'p', text: '引言' },
+        { kind: 'heading', text: '第 1 章 甲', level: 1 },
+        { kind: 'heading', text: '1.1 乙', level: 2 },
+        { kind: 'block', type: 'p', text: '正文', page: 12 },
+        { kind: 'heading', text: '本章小结', level: 1 },
+        { kind: 'block', type: 'p', text: '小结' },
+        { kind: 'heading', text: '1.1 乙', level: 2 },
+        { kind: 'block', type: 'p', text: '重复' },
+        { kind: 'heading', text: '附录 A', level: 1 },
+        { kind: 'block', type: 'p', text: '附录' },
+      ],
+    };
+    const bk = assemble(doc);
+    expect(bk.sections.map(s => [s.id, s.level, s.parentId])).toEqual([
+      ['c0', 1, null], ['1', 1, null], ['1.1', 2, '1'], ['c1', 2, '1'], ['1.1-2', 2, '1'], ['c2', 1, null],
+    ]);
+    expect(bk.sections[2]).toMatchObject({ pageFrom: 12, pageTo: 12, chars: 2 });
+  });
+});
+
+describe('AI 标记', () => {
+  const read = new Set(['3.1']);
+  const check: CiteCheck = (sec, no) => (read.has(sec) && no <= 5 ? sec + ' ¶' + no : null);
+
+  it('引用：读过的变按钮，没读过或块不存在的变「未核实」', () => {
+    const segs = parseStudyText('动量 [[b:3.1#2]]，反转 [[b:3.2#1]]，越界 [[b:3.1#9]]。', check);
+    expect(segs).toEqual([{ t: 'md', text: '动量 [3.1 ¶2](cite:3.1#2)，反转 [未核实](unv:)，越界 [未核实](unv:)。' }]);
+    expect(citationsOf('a [[b:3.1#2]] b [[b:3.1#2]] [[b:1.1#7]]')).toEqual([
+      { sectionId: '3.1', no: 2 }, { sectionId: '1.1', no: 7 },
+    ]);
+  });
+
+  it('来源标记、独立公式、行内公式', () => {
+    const segs = parseStudyText(
+      '先说 $r_t$。\n\n$$\\sigma = \\sqrt{252}$$\n\n[[derive]]推导 $\\frac{a}{b}$[[/derive]]尾巴',
+      check,
+    );
+    expect(segs).toEqual([
+      { t: 'md', text: '先说 rₜ。' },
+      { t: 'eq', tex: '\\sigma = \\sqrt{252}' },
+      { t: 'callout', kind: 'derive', segs: [{ t: 'md', text: '推导 a/b' }] },
+      { t: 'md', text: '尾巴' },
+    ]);
+    expect(parseStudyText('花了 $5 和 $10 元', check)).toEqual([{ t: 'md', text: '花了 $5 和 $10 元' }]);
+  });
+
+  it('流式：半截引用先藏起来，没收尾的公式和来源块照常显示', () => {
+    expect(parseStudyText('动量 [[b:3.', check, true)).toEqual([{ t: 'md', text: '动量' }]);
+    expect(parseStudyText('如下 $$a = ', check, true)).toEqual([
+      { t: 'md', text: '如下' }, { t: 'eq', tex: 'a =', open: true },
+    ]);
+    expect(parseStudyText('[[example]]比如', check, true)).toEqual([
+      { t: 'callout', kind: 'example', segs: [{ t: 'md', text: '比如' }] },
+    ]);
+    expect(plainStudyText('a [[b:3.1#2]] [[real]]b[[/real]]')).toBe('a  b');
+  });
+});
+
+describe('行内公式和复习', () => {
+  it('简单 TeX 转成 Unicode，转不了返回 null', () => {
+    expect(texToText('\\sigma_{year} = \\sigma_{day} \\times \\sqrt{252}')).toBe('σ_(year) = σ_(day) × √252');
+    expect(texToText('P_{t-1}')).toBe('Pₜ₋₁');
+    expect(texToText('\\frac{P_t}{P_{t-1}} - 1')).toBe('Pₜ/Pₜ₋₁ − 1');
+    expect(texToText('\\frac{1}{n-1}')).toBe('1/(n−1)');
+    expect(texToText('R^2')).toBe('R²');
+    expect(texToText('\\begin{matrix} a \\end{matrix}')).toBeNull();
+    expect(texToText('\\frac{a}')).toBeNull();
+  });
+
+  it('Leitner：升盒、留盒、回盒 1；到期排序和上限', () => {
+    expect(rateCard(2, 'good', '2026-11-01')).toEqual({ box: 3, due: '2026-11-08' });
+    expect(rateCard(2, 'hard', '2026-11-01')).toEqual({ box: 2, due: '2026-11-04' });
+    expect(rateCard(5, 'good', '2026-11-01')).toEqual({ box: 5, due: '2026-12-01' });
+    expect(rateCard(4, 'again', '2026-12-31')).toEqual({ box: 1, due: '2027-01-01' });
+    expect(addDays('2026-02-27', 2)).toBe('2026-03-01');
+    const cards = [
+      { id: 1, due: '2026-11-01', box: 3 }, { id: 2, due: '2026-10-30', box: 2 },
+      { id: 3, due: '2026-11-01', box: 1 }, { id: 4, due: '2026-11-02', box: 1 },
+    ];
+    expect(dueToday(cards, '2026-11-01').map(c => c.id)).toEqual([2, 3, 1]);
+    expect(dueToday(cards, '2026-11-01', 2)).toHaveLength(2);
+  });
+});

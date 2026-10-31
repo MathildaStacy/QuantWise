@@ -1,10 +1,12 @@
 /**
- * AI 的工具（AI_ASSISTANT.md §8、§13.2、§13.6–13.7）：36 个，按名字排序，任何设置下都不增减（工具列表变了缓存就失效）。
+ * AI 的工具（AI_ASSISTANT.md §8、§13.2、§13.6–13.7）：39 个（含 QuantWise 的 3 个行情与因子工具），按名字排序，
+ * 任何设置下都不增减（工具列表变了缓存就失效）。
  * 读取类直接执行；记忆类按记忆模式执行；操作 App 的除 navigate 外都只生成操作卡。
  * 外部工具（MCP）打开时另加 mcp_search / mcp_call 两个（mcp.ts），按对话开关。
  */
 import { ANN_TYPES } from '../../market/emNews';
 import type { ToolDef } from '../protocol';
+import { QUANT_TOOL_DEFS } from './quantDefs';
 
 const CODE = {
   type: 'string',
@@ -76,7 +78,7 @@ export const NAV_ROUTES: Record<string, { label: string; params: string }> = {
   DataCenter: { label: '数据中心', params: '' },
 };
 
-export const TOOL_DEFS: ToolDef[] = [
+const APP_TOOL_DEFS: ToolDef[] = [
   {
     name: 'cancel_order',
     description:
@@ -503,6 +505,10 @@ export const TOOL_DEFS: ToolDef[] = [
     ),
   },
 ];
+
+export const TOOL_DEFS: ToolDef[] = [...APP_TOOL_DEFS, ...QUANT_TOOL_DEFS].sort(
+  (a, b) => (a.name < b.name ? -1 : 1),
+);
 
 /** 生成操作卡的工具。 */
 export const CARD_TOOLS = new Set([

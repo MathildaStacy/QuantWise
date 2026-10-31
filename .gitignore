@@ -86,3 +86,6 @@ yarn-error.log
 
 # Generated native design review evidence
 /.impeccable/review/
+
+# 离线 MathJax 资源：postinstall 时从 node_modules/mathjax 复制（scripts/copy-mathjax.js）
+/android/app/src/main/assets/math/

@@ -44,6 +44,22 @@ export function parseSinaEtfRank(json: unknown): RankItem[] {
   return out;
 }
 
+/**
+ * 指数成分（QuantWise 因子的沪深 300 股票池）：同一个 Market_Center 接口的 hs300 节点，按代码排序分页，
+ * 一页最多 100 只。mktcap / nmc 是总市值 / 流通市值（万元），这里只取代码和名称，市值用腾讯快照。
+ */
+export const sinaIndexNodeUrl = (node: string, page: number) =>
+  `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page=${page}&num=100&sort=symbol&asc=1&node=${node}`;
+
+export function parseSinaNode(json: unknown): { code: string; name: string }[] {
+  if (!Array.isArray(json)) {
+    return [];
+  }
+  return json
+    .filter(r => typeof r?.symbol === 'string' && /^(sh|sz)\d{6}$/.test(r.symbol))
+    .map(r => ({ code: r.symbol as string, name: String(r.name ?? '').replace(/\s+/g, '') }));
+}
+
 export interface SinaQuote {
   code: string;
   date: string;
