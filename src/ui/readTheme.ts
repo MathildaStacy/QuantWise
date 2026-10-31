@@ -27,8 +27,8 @@ export const rc = {
 /** 原书正文：Android 的 serif 是思源宋体 / Noto Serif CJK（系统有就用）。 */
 export const serif = Platform.select({ ios: 'Songti SC', default: 'serif' });
 
-/** 分组净值从浅到深：Q1（因子最低）最浅，最高组最深。 */
-export const GROUP_COLORS = ['#C9D6EA', '#9DB4D8', '#6F90C4', '#456CAD', '#1F4A8F', '#0F3170', '#082356', '#041640', '#020E2D', '#01081C'];
+/** 分组净值从浅到深：Q1（因子最低）最浅，最高组最深；最深一档不到黑色，5 组时 Q4、Q5 还分得清。 */
+export const GROUP_COLORS = ['#C9D6EA', '#A9BFE0', '#89A7D5', '#6A90CA', '#4C78BE', '#3A64AA', '#2D5297', '#214183', '#17316E', '#0E2359'];
 
 export const groupColor = (g: number, n: number) =>
   GROUP_COLORS[Math.round((g * 9) / Math.max(1, n - 1))];
