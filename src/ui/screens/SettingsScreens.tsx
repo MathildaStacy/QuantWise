@@ -475,7 +475,7 @@ export function PowerGuideScreen() {
           {step(
             '4',
             '最近任务里锁定 App',
-            '从屏幕底部上滑停住打开最近任务，按住 AShareSim 的卡片（或下拉）选「锁定」，一键清理时就不会被关掉。',
+            '从屏幕底部上滑停住打开最近任务，按住 QuantWise 的卡片（或下拉）选「锁定」，一键清理时就不会被关掉。',
             manual.lock,
             undefined,
             'lock',

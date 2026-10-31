@@ -421,7 +421,7 @@ export class Refresher {
         this.tracking = true;
         try {
           const started = await this.tracker.start(
-            'AShareSim 正在后台跟踪',
+            'QuantWise 正在后台跟踪',
             this.notificationText(),
           );
           if (!started) {

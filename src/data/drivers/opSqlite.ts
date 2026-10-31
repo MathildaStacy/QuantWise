@@ -2,7 +2,7 @@ import { open } from '@op-engineering/op-sqlite';
 import { createDb, type Db, type Row, type SqlValue } from '../db';
 
 /** 打开手机上的 App 数据库。 */
-export function openDeviceDb(name = 'asharesim.db'): Db {
+export function openDeviceDb(name = 'quantwise.db'): Db {
   const conn = open({ name });
   return createDb({
     async query(sql: string, params: SqlValue[]) {

@@ -1,4 +1,4 @@
-package com.asharesim.tracker
+package com.quantwise.tracker
 
 import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.NativeModule

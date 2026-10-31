@@ -32,7 +32,7 @@ export interface KeyStore {
   remove(serviceId: string): Promise<void>;
 }
 
-const keychainService = (id: string) => 'asharesim.ai.' + id;
+const keychainService = (id: string) => 'quantwise.ai.' + id;
 
 export const keychainStore: KeyStore = {
   async get(id) {
@@ -246,7 +246,7 @@ export async function installId(db: Db): Promise<string> {
     id = Math.random().toString(36).slice(2, 10);
     await repo.setSetting(db, 'installId', id);
   }
-  return 'asharesim-' + id;
+  return 'quantwise-' + id;
 }
 
 // ---------- 表单 ----------

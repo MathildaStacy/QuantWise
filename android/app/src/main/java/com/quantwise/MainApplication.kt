@@ -1,4 +1,4 @@
-package com.asharesim
+package com.quantwise
 
 import android.app.Application
 import com.facebook.react.PackageList
@@ -6,8 +6,8 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
-import com.asharesim.files.DocumentStorePackage
-import com.asharesim.tracker.TrackerPackage
+import com.quantwise.files.DocumentStorePackage
+import com.quantwise.tracker.TrackerPackage
 
 class MainApplication : Application(), ReactApplication {
 

@@ -64,7 +64,7 @@ export interface McpTokenStore {
   remove(id: string): Promise<void>;
 }
 
-const keychainService = (id: string) => 'asharesim.mcp.' + id;
+const keychainService = (id: string) => 'quantwise.mcp.' + id;
 
 export const keychainTokens: McpTokenStore = {
   async get(id) {
@@ -408,7 +408,7 @@ async function initialize(
       params: {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: 'AShareSim', version: '0.4' },
+        clientInfo: { name: 'QuantWise', version: '0.1' },
       },
     },
     signal,

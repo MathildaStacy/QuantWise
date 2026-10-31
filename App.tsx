@@ -1,5 +1,5 @@
 /**
- * AShareSim：底部 5 个 Tab 的正式界面。本地库打开之前显示启动页；全局提示（Toast）盖在最上层。
+ * QuantWise：底部 5 个 Tab 的正式界面。本地库打开之前显示启动页；全局提示（Toast）盖在最上层。
  * M2 第 1 步的调试页挪到了「我的 → 调试页」。
  */
 import { NavigationContainer } from '@react-navigation/native';
@@ -34,7 +34,7 @@ function App() {
         </NavigationContainer>
       ) : (
         <View style={styles.splash}>
-          <Text style={styles.title}>AShareSim</Text>
+          <Text style={styles.title}>QuantWise</Text>
           <Text style={error ? styles.err : styles.sub}>
             {error ? '启动失败：' + error : '正在打开本地库…'}
           </Text>

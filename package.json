@@ -1,6 +1,6 @@
 {
-  "name": "AShareSim",
-  "version": "0.10.0",
+  "name": "QuantWise",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
@@ -53,11 +53,11 @@
   },
   "license": "GPL-3.0-only",
   "codegenConfig": {
-    "name": "AShareSimSpec",
+    "name": "QuantWiseSpec",
     "type": "modules",
     "jsSrcsDir": "src/native",
     "android": {
-      "javaPackageName": "com.asharesim.specs"
+      "javaPackageName": "com.quantwise.specs"
     },
     "ios": {
       "modulesProvider": {

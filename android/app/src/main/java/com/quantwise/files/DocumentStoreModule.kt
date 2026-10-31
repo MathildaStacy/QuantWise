@@ -1,4 +1,4 @@
-package com.asharesim.files
+package com.quantwise.files
 
 import android.app.Activity
 import android.content.ClipData
@@ -9,7 +9,7 @@ import android.system.Os
 import android.system.OsConstants
 import android.util.Base64
 import androidx.core.content.FileProvider
-import com.asharesim.specs.NativeDocumentStoreSpec
+import com.quantwise.specs.NativeDocumentStoreSpec
 import com.facebook.react.bridge.BaseActivityEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext

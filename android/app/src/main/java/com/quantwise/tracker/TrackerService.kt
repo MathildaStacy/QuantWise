@@ -1,4 +1,4 @@
-package com.asharesim.tracker
+package com.quantwise.tracker
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -8,8 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
-import com.asharesim.MainActivity
-import com.asharesim.R
+import com.quantwise.MainActivity
+import com.quantwise.R
 import com.facebook.react.HeadlessJsTaskService
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
@@ -26,13 +26,13 @@ import com.facebook.react.jstasks.HeadlessJsTaskContext
  */
 class TrackerService : HeadlessJsTaskService() {
   companion object {
-    const val TASK = "AShareSimTracker"
+    const val TASK = "QuantWiseTracker"
     const val CHANNEL = "tracker"
     const val NOTIFICATION_ID = 1530
-    const val ACTION_START = "com.asharesim.tracker.START"
-    const val ACTION_UPDATE = "com.asharesim.tracker.UPDATE"
-    const val ACTION_STOP = "com.asharesim.tracker.STOP"
-    const val ACTION_USER_STOP = "com.asharesim.tracker.USER_STOP"
+    const val ACTION_START = "com.quantwise.tracker.START"
+    const val ACTION_UPDATE = "com.quantwise.tracker.UPDATE"
+    const val ACTION_STOP = "com.quantwise.tracker.STOP"
+    const val ACTION_USER_STOP = "com.quantwise.tracker.USER_STOP"
     const val EXTRA_TITLE = "title"
     const val EXTRA_TEXT = "text"
     const val PREFS = "tracker"
@@ -42,7 +42,7 @@ class TrackerService : HeadlessJsTaskService() {
       private set
   }
 
-  private var title = "AShareSim"
+  private var title = "QuantWise"
   private var taskId: Int? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

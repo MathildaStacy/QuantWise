@@ -1,4 +1,18 @@
-# AShareSim · A 股模拟交易与量化入门
+# QuantWise · 量化与因子读书伴学
+
+读量化和因子投资的书时，AI 带着整本书一节一节讲；讲到概念时，用真实的 A 股行情画图、在本地算因子给你举例。
+QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座（保留它的全部提交历史和功能：真实行情、真实规则的模拟交易、学习路线、AI 助手），把 [Pagewise](https://github.com/MathildaStacy/Pagewise) 的伴读能力（导入解析、书的地图、按节讲解、引用跳回原文、闪卡复习）移植进来。
+
+设计和进度见下文「QuantWise」一节；后面是继承自 AShareSim 的说明。
+
+## QuantWise
+
+- 状态：M0 设计中（原型、技术方案）。
+- Android 包名 `com.quantwise`，可以和 AShareSim 同时安装，数据互不影响。
+
+---
+
+# 继承自 AShareSim · A 股模拟交易与量化入门
 
 用真实行情、按 A 股真实规则和真实税费做模拟交易的手机 App（先做 Android，iOS 后补）。
 除了「入金是模拟的」之外，交易时间、集合竞价、T+1、涨跌停、价格笼子、交易单位、佣金 / 印花税 / 过户费 / 红利税都按交易所和券商的现行规则执行。

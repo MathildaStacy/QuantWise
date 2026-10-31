@@ -1,4 +1,4 @@
-package com.asharesim.tracker
+package com.quantwise.tracker
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -6,7 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
-import com.asharesim.specs.NativeBackgroundTrackerSpec
+import com.quantwise.specs.NativeBackgroundTrackerSpec
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 

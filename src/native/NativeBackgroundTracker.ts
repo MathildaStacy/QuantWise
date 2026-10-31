@@ -3,7 +3,7 @@ import { TurboModuleRegistry } from 'react-native';
 
 /** 后台跟踪挂单的前台服务（Android）。iOS 后补，现在只有 Android 实现。 */
 export interface Spec extends TurboModule {
-  /** 启动前台服务和 Headless JS 任务 AShareSimTracker；已经在跑就只更新通知。 */
+  /** 启动前台服务和 Headless JS 任务 QuantWiseTracker；已经在跑就只更新通知。 */
   start(title: string, text: string): Promise<boolean>;
   update(text: string): void;
   stop(): void;

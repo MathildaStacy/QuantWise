@@ -9,4 +9,4 @@ import { trackerTask } from './src/app/boot';
 
 AppRegistry.registerComponent(appName, () => App);
 // 后台跟踪挂单（android/.../tracker/TrackerService.kt）
-AppRegistry.registerHeadlessTask('AShareSimTracker', () => trackerTask);
+AppRegistry.registerHeadlessTask('QuantWiseTracker', () => trackerTask);

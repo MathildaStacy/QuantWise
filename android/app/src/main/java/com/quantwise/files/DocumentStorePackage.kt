@@ -1,4 +1,4 @@
-package com.asharesim.files
+package com.quantwise.files
 
 import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.NativeModule
