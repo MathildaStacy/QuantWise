@@ -7,8 +7,22 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 ## QuantWise
 
-- 状态：M0 设计完成（可交互原型、技术方案），进入实现。
+v0.1.0：读书伴学的第一版。打开 App 默认是「学习 → 读书」。
+
+- **书架和导入**：内置示例教材《因子投资入门》（5 章 19 节，自己写的短教材）；导入 Markdown、EPUB（本机解析）和 PDF（MinerU 精准解析，超过 200 页按页码范围自动分片，App 被杀后接着轮询）。
+- **听讲**：每节在本机切成 2–5 步，点「开始讲」才请求 AI。讲解里的引用点开看原文；AI 自己补的推导、编的例子、工具算出的真实数据分别用不同底色标出；问到别的小节时走岔路，回到主线折叠成一行并记进那一节的笔记。
+- **真实行情举例**：AI 调用 `plot_chart`（前复权日 K、均线、布林带、动量 / 波动 / 回撤 / RSI 副图、对比图）、`get_factor_values`、`factor_test`（分组回测 + Rank IC），图存在消息里，能全屏看十字线读数。结论按 t 值和期数说。
+- **读书模式**：重排原文（宋体），讲过的段落和当前这一步有标记；点段落可以解释、从这里开始讲、用真实行情举例、高亮。
+- **小结、复习、笔记**：讲完一节 AI 起草摘要、卡点和闪卡，确认后保存；Leitner 5 盒复习、卡点清单；笔记导出 Markdown 和 Anki CSV。
+- **因子实验室**：示例池 / 自选 + 持仓 / 沪深 300 当前成分，7 个因子，调仓周期、分组和成本可调，和听讲里的 `factor_test` 同一套口径。
+- AShareSim 的全部功能保留；AI 助手多了上面 3 个行情与因子工具（共 39 个）。
 - Android 包名 `com.quantwise`，可以和 AShareSim 同时安装，数据互不影响。
+
+需要你自己的：AI 服务（「我的 → 供应商与模型」，和 AShareSim 一样）；导入 PDF 时的 MinerU Token（「我的 → 解析服务（MinerU）」）。
+
+安装：从 [Releases](https://github.com/MathildaStacy/QuantWise/releases) 下载 `QuantWise-v*-arm64.apk`。
+
+开发：和下面 AShareSim 的一样（`npm run check`、`npm run android`）。`npm install` 会把离线 MathJax 复制进 `android/app/src/main/assets/math/`。没有 AI Key 时可以在电脑上运行 `node scripts/mock-ai.cjs`，再在调试版「我的 → 调试页 → 接本地模拟 AI」，用固定脚本走听讲流程。
 
 | 文档 | 内容 |
 | --- | --- |

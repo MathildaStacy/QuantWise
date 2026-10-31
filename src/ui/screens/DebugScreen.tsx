@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { emptyProvider, keychainStore, loadPrefs, loadProviders, savePrefs, saveProviders } from '../../ai/services';
 import { useApp } from '../../app/boot';
 import { batterySettings } from '../../app/tracker';
 import * as repo from '../../data/repos';
@@ -26,6 +27,14 @@ const WINDOW_NAME = {
   lunch: '午间休市',
   closed: '休市',
 };
+
+/** 开发用：接 scripts/mock-ai.cjs（模拟器访问电脑的 10.0.2.2），只在调试版出现。 */
+async function connectMockAi(db: Parameters<typeof saveProviders>[0]) {
+  const p = { ...emptyProvider('custom'), name: '本地模拟', protocol: 'anthropic' as const, baseUrl: 'http://10.0.2.2:8787', auth: 'x-api-key' as const, keyTail: 'mock', models: [{ id: 'mock-sonnet', enabled: true, price: null }] };
+  await saveProviders(db, [...(await loadProviders(db)).filter(x => x.name !== '本地模拟'), p]);
+  await keychainStore.set(p.id, 'sk-mock-local');
+  await savePrefs(db, { ...(await loadPrefs(db)), activeService: p.id, lastConfig: { providerId: p.id, model: 'mock-sonnet', effort: 'off', search: false } });
+}
 
 export function DebugScreen() {
   const core = useCore();
@@ -66,6 +75,10 @@ export function DebugScreen() {
       return '已加入自选：' + code;
     });
 
+  const mockAi = () =>
+    connectMockAi(core.db)
+      .then(() => setMsg('已接本地模拟 AI：先在电脑上运行 node scripts/mock-ai.cjs'))
+      .catch(e => setMsg(String(e)));
   const deposit = () =>
     run(async () => {
       const r = await sim.deposit(10_000_000);
@@ -137,6 +150,7 @@ export function DebugScreen() {
           />
           <Btn title="加自选" onPress={addWatch} />
           <Btn title="转入 10 万" onPress={deposit} />
+          {__DEV__ ? <Btn title="接本地模拟 AI（10.0.2.2:8787）" onPress={mockAi} /> : null}
           <Btn title="按买一价买最小单位" onPress={buyAtBid} />
         </View>
         {msg ? <Text style={styles.msg}>{msg}</Text> : null}

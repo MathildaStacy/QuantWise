@@ -32,7 +32,7 @@ src/
 ├ quant/       纯 TS：指标（MA、动量、波动、回撤、RSI）、因子定义、分组回测和 IC、图表数据
 ├ study/       伴读运行时：系统提示、上下文组装、读书工具 + 行情与因子工具、工具循环、导入流水线、MinerU 客户端
 ├ data/        （已有）加 bookRepo.ts、quantRepo.ts 和迁移 0008
-├ native/      （已有）加 NativePdfInfo.ts（页数）
+├ native/      （已有）DocumentStore 加 pdfPageCount（系统 PdfRenderer 读页数）
 └ ui/          （已有）加读书和因子页面、图表卡片、公式组件
 ```
 
@@ -82,7 +82,7 @@ study_stuck   (id PK, book_id, section_id, text, resolved_at, created_at)
 study_card    (id PK, book_id, section_id, front, back, box 1–5, due_date, created_at, reviewed_at)
 book_mark     (book_id, block_seq, kind 'highlight'|'pin', text, created_at)
 kline_qfq     (code, date, open, close, high, low, volume, PRIMARY KEY (code, date)) WITHOUT ROWID  -- 前复权，厘 / 股
-kline_qfq_meta(code PK, fetched_at, last_date, bars)                                              -- 取到哪天
+kline_qfq_meta(code PK, name, fetched_at, last_date, bars, total_cap, float_cap, price)              -- 取到哪天、取数据时的市值和价格
 quant_universe(id 'hs300'|…, codes JSON, meta JSON（名称、总市值、流通市值，按代码）, as_of, fetched_at)
 ALTER TABLE ai_thread ADD kind TEXT NOT NULL DEFAULT 'assistant';   -- 'assistant' | 'study'
 ALTER TABLE ai_thread ADD book_id TEXT; ALTER TABLE ai_thread ADD section_id TEXT;
@@ -103,7 +103,7 @@ ALTER TABLE ai_thread ADD context_snapshot TEXT;                    -- 伴读的
    .md / .markdown / .txt  读文本 → parseMarkdown → assemble
    .epub                    解压 → container.xml → OPF（manifest、spine、nav / ncx）→ 每个 XHTML 转成「标题 / 段落 / 列表 / 公式 / 图 / 表」
                             → assemble（标题层级以 nav 目录为准，没有目录时用 h1–h3）
-   .pdf                     NativePdfInfo 读页数 → 分片（每片 ≤ 200 页）→ 用户确认上传
+   .pdf                     DocumentStore.pdfPageCount 读页数 → 分片（每片 ≤ 200 页）→ 用户确认上传
                             → MinerU：POST /file-urls/batch（每片一项：同一文件 + page_ranges）→ PUT 上传
                             → 轮询 GET /extract-results/batch/{id}（2 s 起，指数退避到 30 s）
                             → 下载结果包、解压 → *_content_list.json → 内容块（页码加片偏移）→ assemble
@@ -249,7 +249,7 @@ type ChartData =
 | `react-native-webview` | 14.0.1 | 只用于离线 MathJax |
 | `htmlparser2` | 10.0.0 | EPUB 的 XHTML / OPF / nav（纯 JS） |
 | `mathjax`（dev） | 3.2.2 | 复制 `tex-svg.js` 进 APK |
-| 原生 `PdfInfo`（Kotlin，TurboModule） | — | 用系统 `PdfRenderer` 读 PDF 页数，决定怎么分片 |
+| 原生 `DocumentStore.pdfPageCount`（Kotlin） | — | 加在 AShareSim 已有的 DocumentStore 模块里：用系统 `PdfRenderer` 读 PDF 页数，只读 App 私有目录里的文件 |
 
 版本和 Pagewise 在 RN 0.87.1 上验证过的一致。不加：PDF 渲染库、FTS5（全文搜索 V1 用 `LIKE`，一本书几万个块够快）。
 
@@ -274,7 +274,7 @@ type ChartData =
 | Q2 | 迁移 0008、`bookRepo`、`quantRepo`；第一次启动写入示例教材 | 单测 |
 | Q3 | `quant/`：指标、因子、回测、图表数据；股票池和数据准备 | 和原型对账 |
 | Q4 | `study/`：提示、上下文、工具、运行时；助手接入行情与因子工具 | 脚本化对话测试 |
-| Q5 | 导入：文件选择、哈希、Markdown、EPUB、MinerU、PdfInfo、解析进度 | 单测 + 模拟器导入 Markdown |
+| Q5 | 导入：文件选择、哈希、Markdown、EPUB、MinerU、PDF 页数、解析进度 | 单测 + 模拟器导入 Markdown |
 | Q6 | 公式：MathJax 资源、WebView 桥、`MathView` | 模拟器显示示例教材的公式 |
 | Q7 | 界面：学习 Tab 两段、书架、地图、听讲、读书、小结、复习、笔记、因子实验室、全屏图、设置 | 渲染测试 + 模拟器走查 |
 | Q8 | `npm run check`、release APK、模拟器走查、发布 v0.1.0 | 全绿；APK 能装能用 |
