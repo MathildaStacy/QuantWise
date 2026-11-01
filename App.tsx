@@ -6,6 +6,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { useEffect } from 'react';
 import { StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { displayName, name as appName } from './app.json';
 import { boot, useApp } from './src/app/boot';
 import { cleanupExports } from './src/app/exportFile';
 import { ToastHost } from './src/ui/components/ToastHost';
@@ -35,7 +36,7 @@ function App() {
         </NavigationContainer>
       ) : (
         <View style={styles.splash}>
-          <Text style={styles.title}>QuantWise</Text>
+          <Text style={styles.title}>{displayName} · {appName}</Text>
           <Text style={error ? styles.err : styles.sub}>
             {error ? '启动失败：' + error : '正在打开本地库…'}
           </Text>

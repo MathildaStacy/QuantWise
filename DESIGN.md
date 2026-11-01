@@ -1,5 +1,5 @@
 ---
-name: AShareSim · AI Conversation
+name: 因读 QuantWise · AI Conversation
 description: Claude Desktop reading layout adapted to the existing light Android app.
 colors:
   page: "#FAF9F6"
@@ -162,7 +162,7 @@ components:
     padding: "16px"
 ---
 
-# Design System: AShareSim · AI Conversation
+# Design System: 因读 QuantWise · AI Conversation
 
 ## Overview
 

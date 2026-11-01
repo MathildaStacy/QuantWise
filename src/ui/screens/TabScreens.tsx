@@ -5,6 +5,7 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ChevronRight } from 'lucide-react-native';
+import { displayName, name as appName } from '../../../app.json';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { activeService } from '../../ai/chat';
@@ -492,6 +493,7 @@ export function MeScreen() {
           <Entry title="AI 记忆" onPress={() => nav.navigate('AiMemory')} />
           <Entry title="调试页" onPress={() => nav.navigate('Debug')} />
         </View>
+        <Text style={s.brand}>{displayName} · {appName}</Text>
       </ScrollView>
       <ResetDialog visible={reset} onClose={() => setReset(false)} />
       <AiFab />
@@ -502,6 +504,7 @@ export function MeScreen() {
 const s = StyleSheet.create({
   page: { flex: 1, backgroundColor: color.bg },
   pad: { paddingBottom: 90 },
+  brand: { padding: 24, textAlign: 'center', fontSize: 13, color: color.ink3 },
   card: { backgroundColor: color.card, marginTop: 8 },
   cta: { paddingHorizontal: 10, marginTop: 4 },
   note: { margin: 10 },

@@ -4,6 +4,7 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Check } from 'lucide-react-native';
+import { displayName } from '../../../app.json';
 import { useCallback, useEffect, useState } from 'react';
 import {
   AppState,
@@ -475,7 +476,7 @@ export function PowerGuideScreen() {
           {step(
             '4',
             '最近任务里锁定 App',
-            '从屏幕底部上滑停住打开最近任务，按住 QuantWise 的卡片（或下拉）选「锁定」，一键清理时就不会被关掉。',
+            `从屏幕底部上滑停住打开最近任务，按住 ${displayName} 的卡片（或下拉）选「锁定」，一键清理时就不会被关掉。`,
             manual.lock,
             undefined,
             'lock',

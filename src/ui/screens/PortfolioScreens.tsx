@@ -791,7 +791,7 @@ export function RebalanceScreen({
                   onPress={() =>
                     task.run(async () => {
                       await exportText(
-                        'asharesim-targets-v1.csv',
+                        'quantwise-targets-v1.csv',
                         TARGET_CSV,
                         'text/csv',
                       );

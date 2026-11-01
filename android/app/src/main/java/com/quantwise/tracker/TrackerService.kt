@@ -42,7 +42,7 @@ class TrackerService : HeadlessJsTaskService() {
       private set
   }
 
-  private var title = "QuantWise"
+  private var title = ""
   private var taskId: Int? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -64,7 +64,7 @@ class TrackerService : HeadlessJsTaskService() {
         return START_NOT_STICKY
       }
     }
-    title = intent?.getStringExtra(EXTRA_TITLE) ?: title
+    title = intent?.getStringExtra(EXTRA_TITLE) ?: title.ifEmpty { getString(R.string.app_name) }
     val notification = build(intent?.getStringExtra(EXTRA_TEXT) ?: "")
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
       startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)

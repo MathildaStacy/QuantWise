@@ -1,4 +1,4 @@
-# QuantWise 技术方案
+# 因读 QuantWise 技术方案
 
 > 版本 0.1 · 2026-11-01 · 配套：[可交互原型](design/prototype.html)（源文件 `design/prototype/`）
 > QuantWise = AShareSim（底座，全部保留）+ Pagewise 的伴读（移植主要能力）+ 新增的行情图表与因子工具。
@@ -8,7 +8,7 @@
 | 问题 | 决定 |
 | --- | --- |
 | 仓库 | `MathildaStacy/QuantWise`，公开，GPL-3.0。带上 AShareSim 的全部提交历史（GitHub 不能把自己的仓库 fork 到同一账号，等价做法是克隆后推到新仓库）。不带 AShareSim 的 tag |
-| 安装 | Android 包名 `com.quantwise`、应用名 QuantWise，版本从 0.1.0 开始；和 AShareSim 能同时装，数据库、Keystore 条目互不影响 |
+| 安装 | Android 包名 `com.quantwise`、应用显示名「因读」，英文名 QuantWise，版本从 0.1.0 开始；和 AShareSim 能同时装，数据库、Keystore 条目互不影响 |
 | 书籍导入 | PDF（MinerU 精准解析）、EPUB（本机解析）、Markdown（本机解析）。阅读用**重排视图**，不做 PDF 原版页渲染和位置框高亮 |
 | 因子深度 | 图表 + 轻量因子计算：AI 能画带标注的走势和指标图；用本地前复权日线对一个股票池（示例池 / 自选 + 持仓 / 沪深 300）算因子值、分组回测、Rank IC |
 | 从 Pagewise 拿什么 | 伴读的产品逻辑（书的地图、本节路线图、听讲 ⇄ 读书、引用跳回原文、来源标记、岔路、本节小结、闪卡复习、续学回顾）和三块服务代码（MinerU 客户端、EPUB 解析、离线 MathJax）。不拿：五套皮肤、VM 分层、StudySession 编排、文本精修、语音、翻译、备份 |

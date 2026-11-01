@@ -1,4 +1,6 @@
-# QuantWise · 量化与因子读书伴学
+# 因读 QuantWise · 量化与因子读书伴学
+
+**因读**，取「读懂因子」之意。App 显示名为「因读」，英文名、仓库和原生工程名为 **QuantWise**；中文标语是「读懂因子，看懂市场」。
 
 读量化和因子投资的书时，AI 带着整本书一节一节讲；讲到概念时，用真实的 A 股行情画图、在本地算因子给你举例。
 QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座（保留它的全部提交历史和功能：真实行情、真实规则的模拟交易、学习路线、AI 助手），把 [Pagewise](https://github.com/MathildaStacy/Pagewise) 的伴读能力（导入解析、书的地图、按节讲解、引用跳回原文、闪卡复习）移植进来。
@@ -8,6 +10,8 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 ## QuantWise
 
 当前版本 v0.1.1：修复 MinerU 行内公式空格和图表标签遮挡，完成真实模型与 PDF 导入验收。打开 App 默认是「学习 → 读书」。见 [发布说明](docs/releases/v0.1.1.md)。
+
+当前开发分支补齐「因读」命名：桌面名称、启动页、通知、iOS 工程和原型同步更新。已发布的 v0.1.1 安装包仍显示 QuantWise。Android 包名 `com.quantwise`、数据库与服务配置保持兼容，覆盖安装即可保留已有数据。
 
 - **书架和导入**：内置示例教材《因子投资入门》（5 章 19 节，自己写的短教材）；导入 Markdown、EPUB（本机解析）和 PDF（MinerU 精准解析，超过 200 页按页码范围自动分片，App 被杀后接着轮询）。
 - **听讲**：每节在本机切成 1–5 步，点「开始讲」才请求 AI。讲解里的引用点开看原文；AI 自己补的推导、编的例子、工具算出的真实数据分别用不同底色标出；问到别的小节时走岔路，回到主线折叠成一行并记进那一节的笔记。
@@ -75,7 +79,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 ## 安装（Android）
 
-从 [Releases](https://github.com/MathildaStacy/AShareSim/releases) 下载 `AShareSim-v*-arm64.apk`，在手机上打开安装（第一次要允许浏览器或文件管理「安装未知应用」）。只打了 arm64-v8a，近几年的手机都是这个架构。
+从 [Releases](https://github.com/MathildaStacy/QuantWise/releases) 下载 `QuantWise-v*-arm64.apk`，在手机上打开安装（第一次要允许浏览器或文件管理「安装未知应用」）。只打了 arm64-v8a，近几年的手机都是这个架构。
 
 - 升级：直接安装新版本覆盖，账户、自选和设置都保留（每个版本用同一个签名）。
 - 小米 HyperOS：装好后按「我的 → 后台跟踪与省电」把省电策略设为无限制、打开自启动，否则挂单时后台跟踪会被系统停掉。

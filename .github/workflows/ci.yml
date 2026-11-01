@@ -91,7 +91,7 @@ jobs:
           retention-days: 7
       - name: Build for iOS Simulator
         run: >-
-          xcodebuild -workspace ios/AShareSim.xcworkspace
-          -scheme AShareSim -configuration Debug
+          xcodebuild -workspace ios/QuantWise.xcworkspace
+          -scheme QuantWise -configuration Debug
           -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
           -derivedDataPath build/ios CODE_SIGNING_ALLOWED=NO build

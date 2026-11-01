@@ -1,4 +1,4 @@
-# AShareSim
+# 因读 QuantWise
 
 <!-- impeccable:product-schema 1 -->
 
@@ -12,15 +12,17 @@ android
 
 ## Users
 
-个人使用；通过真实 A 股行情、规则和税费进行模拟交易，学习交易和个人量化。
+个人使用；阅读量化与因子投资书籍，借助 AI 逐节理解概念，并结合真实 A 股行情、因子实验和模拟交易学习个人量化。
 
 ## Product Purpose
 
-帮助用户理解交易与费用、记录模拟操作，并通过可追溯数据获得 AI 分析和明确的投资建议。
+把书中概念与真实行情连起来：AI 带着原文讲解、引用可回到书中，图表和因子结果来自实际数据；通过小结、闪卡和笔记巩固理解。保留 AShareSim 的模拟交易、费用规则和 AI 助手。
 
 ## Capabilities and Constraints
 
 - 入金和交易为模拟，不连接真实券商。AI 的写操作仍需用户确认。
+- 支持 Markdown、EPUB 和 PDF 导入；PDF 在用户确认后上传 MinerU，书籍采用重排阅读。
+- 伴读和全局 AI 助手分开；伴读使用读书与行情工具，小结和闪卡经用户确认后保存。
 - AI 直连用户配置的供应商，Key 保存在设备安全存储，不写入页面上下文、日志和记忆。
 - 供应商与模型分开管理；模型、思考和搜索随会话保存，新会话沿用最近选择。
 - 能力和引用必须来自明确标注或实际接口结果；原型中的模型列表、回答和耗时都是演示数据。
@@ -28,11 +30,14 @@ android
 
 ## Brand Commitments
 
-沿用 AShareSim 的中文术语和现有浅色界面。AI 功能按 docs/design/ai-redesign.html 的交互约束落地；对话阅读排版按用户后续选定的 Claude Desktop 截图重做，适配手机，详见 docs/design/ai-chat-layout.md。
+中文名「因读」，英文名与工程名 QuantWise，标语「读懂因子，看懂市场」。Android / iOS 的桌面显示名为「因读」，包标识为 `com.quantwise`。启动页和「我的」展示「因读 · QuantWise」。
+
+读书和听讲使用暖白纸色，原书用宋体，讲解用黑体；行情和交易保留原有中文术语与浅色界面。整体交互见 docs/design/prototype.html，技术方案见 docs/QUANTWISE_DESIGN.md；AI 对话排版约束见 docs/design/ai-chat-layout.md。
 
 ## Evidence on Hand
 
 - docs/PRODUCT_DESIGN.md、docs/AI_ASSISTANT.md：现有产品与协议约束。
+- docs/QUANTWISE_DESIGN.md、docs/design/prototype.html：读书伴学、导入、图表和因子工具的设计与实现约定。
 - docs/design/ai-redesign.html：用户选定的交互原型及说明。
 - src/ui/、src/ai/：现有原生实现。
 

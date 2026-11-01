@@ -8,6 +8,7 @@
  * - 前台服务只能在 App 在前台时启动（Android 12 起的限制），所以条件满足时在前台就先开着，通知同时显示流量。
  * - 回到前台时先补撮合（catchUp），再接着刷新。
  */
+import { displayName } from '../../app.json';
 import type { TradingCalendar } from '../engine/calendar';
 import type { Now } from '../engine/engine';
 import { T, type Sec } from '../engine/session';
@@ -421,7 +422,7 @@ export class Refresher {
         this.tracking = true;
         try {
           const started = await this.tracker.start(
-            'QuantWise 正在后台跟踪',
+            displayName + ' 正在后台跟踪',
             this.notificationText(),
           );
           if (!started) {
