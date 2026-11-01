@@ -1,6 +1,7 @@
 /**
  * 行内公式 → 文字（QUANTWISE_DESIGN.md §9）：把简单的 TeX 换成 Unicode（rₜ、√252、σ、×），
  * 放进普通 Text 里和正文一起排。转不了（分式套分式、矩阵）的返回 null，界面显示原文。
+ * 和 TeX 一样不管原文的空格（MinerU 在每个记号之间都加空格：0 . 8 \times 1 2），运算符两边的空格由这里加。
  */
 
 const SYM: Record<string, string> = {
@@ -28,6 +29,20 @@ const SUP: Record<string, string> = {
   t: 'ᵗ', x: 'ˣ', y: 'ʸ', ' ': '',
 };
 
+/** 两边加空格的运算符和关系符：a × b、IR ≈ IC × √BR。 */
+const BIN = new Set([
+  'times', 'cdot', 'approx', 'neq', 'ne', 'le', 'leq', 'ge', 'geq', 'pm', 'mp',
+  'in', 'to', 'rightarrow', 'leftarrow', 'Rightarrow', 'sim', 'propto',
+]);
+/** 函数名后面跟字母或数字时空一格：ln Pₜ，corr(…) 不空。 */
+const OPS = new Set(['ln', 'log', 'exp', 'max', 'min', 'corr', 'cov', 'var', 'median']);
+
+/** 前面是空的或者是运算符、左括号：这里的 − / + 是正负号，不加空格。 */
+const unary = (prev: string) => {
+  const t = prev.trimEnd();
+  return !t || /[([{=+−×·≈≠≤≥<>±,→∈]$/.test(t);
+};
+
 class Unsupported extends Error {}
 
 /** 分子、分母、根号里有运算符时加括号：Pₜ/Pₜ₋₁ 不加，(n − 1) 加。 */
@@ -44,9 +59,11 @@ function script(s: string, map: Record<string, string>, mark: string): string {
 
 export function texToText(tex: string): string | null {
   let i = 0;
+  let depth = 0;
+  let inText = false;
   const src = tex.trim();
   const skipSpace = () => {
-    while (src[i] === ' ') {
+    while (/\s/.test(src[i] ?? '')) {
       i++;
     }
   };
@@ -54,16 +71,24 @@ export function texToText(tex: string): string | null {
     skipSpace();
     if (src[i] === '{') {
       i++;
+      depth++;
       const out = seq('}');
+      depth--;
       if (src[i] !== '}') {
         throw new Unsupported();
       }
       i++;
       return out;
     }
-    return atom();
+    return atom('');
   };
-  const atom = (): string => {
+  /** 函数名后面：下一个记号是字母、数字或别的命令（\left 除外）就空一格。 */
+  const opGap = () => {
+    skipSpace();
+    const rest = src.slice(i);
+    return /^[A-Za-z0-9{]/.test(rest) || (/^\\[a-zA-Z]/.test(rest) && !/^\\(left|right)(?![a-zA-Z])/.test(rest)) ? ' ' : '';
+  };
+  const atom = (prev: string): string => {
     const c = src[i];
     if (c == null) {
       throw new Unsupported();
@@ -95,7 +120,17 @@ export function texToText(tex: string): string | null {
       if (name === 'tilde') {
         return group() + '̃';
       }
-      if (['mathrm', 'text', 'operatorname', 'mathbf', 'mathit', 'boldsymbol'].includes(name)) {
+      if (['text', 'textrm', 'textit', 'textbf', 'mbox'].includes(name)) {
+        const was = inText;
+        inText = true;
+        const out = group();
+        inText = was;
+        return out;
+      }
+      if (name === 'operatorname') {
+        return group() + opGap();
+      }
+      if (['mathrm', 'mathbf', 'mathit', 'boldsymbol'].includes(name)) {
         return group();
       }
       if (name === 'left' || name === 'right') {
@@ -109,6 +144,12 @@ export function texToText(tex: string): string | null {
       if (['begin', 'end', 'matrix', 'array', 'cases'].includes(name)) {
         throw new Unsupported();
       }
+      if (BIN.has(name)) {
+        return ' ' + SYM[name] + ' ';
+      }
+      if (OPS.has(name)) {
+        return SYM[name] + opGap();
+      }
       return SYM[name] ?? name;
     }
     i++;
@@ -119,26 +160,32 @@ export function texToText(tex: string): string | null {
       return script(group(), SUP, '^');
     }
     if (c === '{') {
+      depth++;
       const out = seq('}');
+      depth--;
       i++;
       return out;
     }
-    if (c === '-') {
-      return '−';
+    if (/\s/.test(c)) {
+      return inText ? ' ' : '';
     }
-    if (c === '=' || c === '+' || c === '<' || c === '>') {
+    // 括号里（下标、分子分母）紧凑写：Pₜ₋₁、(n−1)；外面的加减号两边空格，正负号不空
+    if (c === '-' || c === '+') {
+      const sign = c === '-' ? '−' : '+';
+      return depth === 0 && !unary(prev) ? ' ' + sign + ' ' : sign;
+    }
+    if (c === '=' || c === '<' || c === '>') {
       return ' ' + c + ' ';
     }
-    if (c === ' ') {
-      // 保留原文里的空格（a \times b → a × b，P_{t-1} 照样紧挨着），最后再合并连续空格
-      return ' ';
+    if (c === ',') {
+      return depth === 0 ? ', ' : ',';
     }
     return c;
   };
   function seq(end?: string): string {
     let out = '';
     while (i < src.length && src[i] !== end) {
-      out += atom();
+      out += atom(out);
     }
     return out;
   }

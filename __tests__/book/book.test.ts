@@ -167,6 +167,18 @@ describe('行内公式和复习', () => {
     expect(texToText('\\frac{P_t}{P_{t-1}} - 1')).toBe('Pₜ/Pₜ₋₁ − 1');
     expect(texToText('\\frac{1}{n-1}')).toBe('1/(n−1)');
     expect(texToText('R^2')).toBe('R²');
+    // MinerU 在每个记号之间加空格；TeX 不管这些空格
+    expect(texToText('0 . 8 \\times 1 2 = 9 . 6')).toBe('0.8 × 12 = 9.6');
+    expect(texToText('9 . 6 \\times 0 . 1 5 \\% \\approx 1 . 4 \\%')).toBe('9.6 × 0.15% ≈ 1.4%');
+    expect(texToText('I R \\approx I C \\times \\sqrt { B R }')).toBe('IR ≈ IC × √BR');
+    expect(texToText('\\sqrt { 1 2 }')).toBe('√12');
+    expect(texToText('V O L _ {i, t} = - \\sigma (r _ {i, t - n + 1}, \\dots , r _ {i, t})')).toBe('VOLᵢ,ₜ = −σ(rᵢ,ₜ₋ₙ₊₁, …, rᵢ,ₜ)');
+    expect(texToText('I C _ {t} = \\operatorname{corr} (f _ {i, t}, r _ {i, t + 1})')).toBe('ICₜ = corr(fᵢ,ₜ, rᵢ,ₜ₊₁)');
+    expect(texToText('\\ln P_t - \\ln P_{t-1}')).toBe('ln Pₜ − ln Pₜ₋₁');
+    expect(texToText('r = -0.05')).toBe('r = −0.05');
+    expect(texToText('a+b')).toBe('a + b');
+    expect(texToText('\\frac{a+b}{2}')).toBe('(a+b)/2');
+    expect(texToText('x \\text{ if } y')).toBe('x if y');
     expect(texToText('\\begin{matrix} a \\end{matrix}')).toBeNull();
     expect(texToText('\\frac{a}')).toBeNull();
   });
