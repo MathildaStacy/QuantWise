@@ -4,7 +4,7 @@
  */
 import { useState } from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
-import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, G as SvgG, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 import type { ChartData } from '../../quant/charts';
 import { groupColor, rc, SERIES_COLORS } from '../readTheme';
 import { color } from '../theme';
@@ -62,10 +62,16 @@ export function QuantChart({
   );
 }
 
+/** 文字先描一圈白底再写，压在柱子、折线上也读得清。 */
 const label = (x: number, y: number, t: string, anchor: 'start' | 'end' | 'middle' = 'start', fill: string = rc.muted) => (
-  <SvgText key={'t' + x + ':' + y + t} x={x} y={y} fontSize={FONT} fill={fill} textAnchor={anchor}>
-    {t}
-  </SvgText>
+  <SvgG key={'t' + x + ':' + y + t}>
+    <SvgText x={x} y={y} fontSize={FONT} fill={rc.paper} stroke={rc.paper} strokeWidth={3} strokeLinejoin="round" textAnchor={anchor}>
+      {t}
+    </SvgText>
+    <SvgText x={x} y={y} fontSize={FONT} fill={fill} textAnchor={anchor}>
+      {t}
+    </SvgText>
+  </SvgG>
 );
 
 function dateAxis(dates: string[], w: number, h: number) {
