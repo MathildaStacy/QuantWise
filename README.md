@@ -9,9 +9,9 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 ## QuantWise
 
-当前版本 v0.1.1：修复 MinerU 行内公式空格和图表标签遮挡，完成真实模型与 PDF 导入验收。打开 App 默认是「学习 → 读书」。见 [发布说明](docs/releases/v0.1.1.md)。
+当前正式版 **v1.0.0**：以「因读」为 App 名称发布，包含读书伴学、真实行情图表、因子检验和模拟交易。打开 App 默认是「学习 → 读书」。见 [发布说明](docs/releases/v1.0.0.md)。
 
-当前开发分支补齐「因读」命名：桌面名称、启动页、通知、iOS 工程和原型同步更新。已发布的 v0.1.1 安装包仍显示 QuantWise。Android 包名 `com.quantwise`、数据库与服务配置保持兼容，覆盖安装即可保留已有数据。
+桌面名称、启动页、通知、iOS 工程和原型已统一命名。Android 包名 `com.quantwise`、数据库与服务配置保持兼容，可直接覆盖 v0.1.0 / v0.1.1，保留已有数据。
 
 - **书架和导入**：内置示例教材《因子投资入门》（5 章 19 节，自己写的短教材）；导入 Markdown、EPUB（本机解析）和 PDF（MinerU 精准解析，超过 200 页按页码范围自动分片，App 被杀后接着轮询）。
 - **听讲**：每节在本机切成 1–5 步，点「开始讲」才请求 AI。讲解里的引用点开看原文；AI 自己补的推导、编的例子、工具算出的真实数据分别用不同底色标出；问到别的小节时走岔路，回到主线折叠成一行并记进那一节的笔记。
@@ -24,7 +24,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 需要你自己的：AI 服务（「我的 → 供应商与模型」，和 AShareSim 一样）；导入 PDF 时的 MinerU Token（「我的 → 解析服务（MinerU）」）。
 
-安装：从 [Releases](https://github.com/MathildaStacy/QuantWise/releases) 下载 `QuantWise-v*-arm64.apk`。
+安装：[下载 v1.0.0 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.0.0/QuantWise-v1.0.0-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
 
 开发：和下面 AShareSim 的一样（`npm run check`、`npm run android`）。`npm install` 会把离线 MathJax 复制进 `android/app/src/main/assets/math/`。没有 AI Key 时可以在电脑上运行 `node scripts/mock-ai.cjs`，再在调试版「我的 → 调试页 → 接本地模拟 AI」，用固定脚本走听讲流程。
 

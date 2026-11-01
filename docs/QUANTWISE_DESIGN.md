@@ -1,6 +1,6 @@
 # 因读 QuantWise 技术方案
 
-> 版本 0.1 · 2026-11-01 · 配套：[可交互原型](design/prototype.html)（源文件 `design/prototype/`）
+> 版本 1.0 · 2026-11-01 · 配套：[可交互原型](design/prototype.html)（源文件 `design/prototype/`）
 > QuantWise = AShareSim（底座，全部保留）+ Pagewise 的伴读（移植主要能力）+ 新增的行情图表与因子工具。
 
 ## 0. 范围（2026-11-01 确认）
@@ -279,6 +279,8 @@ type ChartData =
 | Q6 | 公式：MathJax 资源、WebView 桥、`MathView` | 模拟器显示示例教材的公式 |
 | Q7 | 界面：学习 Tab 两段、书架、地图、听讲、读书、小结、复习、笔记、因子实验室、全屏图、设置 | 渲染测试 + 模拟器走查 |
 | Q8 | `npm run check`、release APK、模拟器走查、发布 v0.1.0 | 全绿；APK 能装能用 |
+
+v1.0.0 为首个以「因读」命名的正式 Android 版本。名称、原生工程和升级兼容情况见 [v1.0.0 发布说明](releases/v1.0.0.md)。
 
 ## 13. 已知限制
 
