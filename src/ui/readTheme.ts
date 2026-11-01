@@ -21,14 +21,14 @@ export const rc = {
   real: '#E8F4F1',
   realInk: '#0F7B76',
   grid: '#ECEAE4',
-  bench: '#9A968D',
+  bench: '#77736A',
 } as const;
 
 /** 原书正文：Android 的 serif 是思源宋体 / Noto Serif CJK（系统有就用）。 */
 export const serif = Platform.select({ ios: 'Songti SC', default: 'serif' });
 
 /** 分组净值从浅到深：Q1（因子最低）最浅，最高组最深；最深一档不到黑色，5 组时 Q4、Q5 还分得清。 */
-export const GROUP_COLORS = ['#C9D6EA', '#A9BFE0', '#89A7D5', '#6A90CA', '#4C78BE', '#3A64AA', '#2D5297', '#214183', '#17316E', '#0E2359'];
+export const GROUP_COLORS = ['#6688B3', '#5E80AE', '#5578A8', '#4C70A3', '#43689D', '#3A6097', '#315790', '#284D85', '#1D3F75', '#102E63'];
 
 export const groupColor = (g: number, n: number) =>
   GROUP_COLORS[Math.round((g * 9) / Math.max(1, n - 1))];

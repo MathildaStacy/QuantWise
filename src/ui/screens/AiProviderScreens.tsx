@@ -52,6 +52,7 @@ import { ConfirmDialog } from '../components/Dialog';
 import { ChoiceRow, SwitchRow } from '../components/form';
 import {
   Button,
+  Details,
   Empty,
   IconButton,
   NavBar,
@@ -63,7 +64,8 @@ import { color, PAD } from '../theme';
 import { toast } from '../toast';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-export function AiServicesScreen() {
+export function AiServicesScreen({ route }: RootScreenProps<'AiServices'>) {
+  const returnToStudy = route.params?.returnToStudy;
   const core = useCore(),
     nav = useNavigation<Nav>(),
     [providers, setProviders] = useState<AiProvider[]>([]);
@@ -83,18 +85,19 @@ export function AiServicesScreen() {
         right={
           <IconButton
             label="添加供应商"
-            onPress={() => nav.navigate('AiService', {})}
+            onPress={() => nav.navigate('AiService', { returnToStudy })}
           >
             <Plus size={22} color={color.learn} />
           </IconButton>
         }
       />
       <ScrollView contentContainerStyle={s.pad}>
+        {returnToStudy ? <><Text style={s.sub}>问题草稿已保留。保存服务后返回原小节，再确认发送。</Text><Button title="返回刚才的问题" onPress={() => nav.popTo('Study', returnToStudy)} /></> : null}
         {providers.map(p => (
           <Pressable
             key={p.id}
             style={s.provider}
-            onPress={() => nav.navigate('AiService', { id: p.id })}
+            onPress={() => nav.navigate('AiService', { id: p.id, returnToStudy })}
             accessibilityRole="button"
             accessibilityLabel={'编辑供应商 ' + p.name}
           >
@@ -115,7 +118,7 @@ export function AiServicesScreen() {
         <Button
           title="添加供应商"
           tone="learn"
-          onPress={() => nav.navigate('AiService', {})}
+          onPress={() => nav.navigate('AiService', { returnToStudy })}
         />
       </ScrollView>
     </View>
@@ -241,7 +244,8 @@ export function AiServiceScreen({ route }: RootScreenProps<'AiService'>) {
           key: '已保存',
         },
       );
-      nav.goBack();
+      if (route.params?.returnToStudy) nav.popTo('Study', route.params.returnToStudy);
+      else nav.goBack();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -427,6 +431,16 @@ export function AiServiceScreen({ route }: RootScreenProps<'AiService'>) {
             v => patch({ name: v }),
             '例如：我的中转服务',
           )}
+          {input(
+            'API Key',
+            key,
+            setKey,
+            draft.keyTail
+              ? '已保存，末 4 位 ' + draft.keyTail + '；留空沿用'
+              : '填写 API Key',
+            true,
+          )}
+          <Details title="高级连接设置（地址、协议、缓存）" initialOpen={draft.kind === 'custom'}>
           <ChoiceRow
             label="协议"
             value={draft.protocol}
@@ -447,15 +461,6 @@ export function AiServiceScreen({ route }: RootScreenProps<'AiService'>) {
             v => patch({ baseUrl: v }),
             'https://api.example.com/v1',
           )}
-          {input(
-            'API Key',
-            key,
-            setKey,
-            draft.keyTail
-              ? '已保存，末 4 位 ' + draft.keyTail + '；留空沿用'
-              : '填写 API Key',
-            true,
-          )}
           {draft.protocol === 'anthropic' ? (
             <ChoiceRow
               label="鉴权方式"
@@ -473,6 +478,7 @@ export function AiServiceScreen({ route }: RootScreenProps<'AiService'>) {
             value={draft.cache === 'auto'}
             onChange={on => patch({ cache: on ? 'auto' : 'off' })}
           />
+          </Details>
         </View>
         <SectionTitle
           title={'模型 · 已启用 ' + draft.models.filter(m => m.enabled).length}

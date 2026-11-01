@@ -120,7 +120,6 @@ export function LearnScreen() {
         onChange={pick}
       />
       {seg === 'read' ? <ShelfView /> : <RouteView />}
-      <AiFab />
     </View>
   );
 }

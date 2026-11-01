@@ -44,7 +44,7 @@ export function NavBar({
           </Pressable>
         ) : null}
         <View style={[s.navTitle, !back && s.navTitleRoot]}>
-          <Text style={[s.navH1, !back && s.navH1Root]} numberOfLines={1}>
+          <Text style={[s.navH1, !back && s.navH1Root]} numberOfLines={2}>
             {title}
           </Text>
           {sub ? (
@@ -215,11 +215,13 @@ export function Note({
 export function Details({
   title,
   children,
+  initialOpen = false,
 }: {
   title: string;
   children: ReactNode;
+  initialOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   return (
     <View>
       <Pressable
@@ -304,10 +306,10 @@ export function AiFab({ lift = 0 }: { lift?: number }) {
         lift ? { bottom: 16 + lift } : null,
         pressed && { opacity: 0.85 },
       ]}
-      accessibilityLabel="问 AI"
+      accessibilityLabel="通用助手，独立会话"
       accessibilityRole="button"
     >
-      <Text style={s.fabText}>AI</Text>
+      <Text style={s.fabText}>助手</Text>
     </Pressable>
   );
 }
@@ -319,7 +321,8 @@ const s = StyleSheet.create({
     borderBottomColor: color.line,
   },
   navRow: {
-    height: 48,
+    minHeight: 56,
+    paddingVertical: 4,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 4,
@@ -355,7 +358,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
   },
-  segOn: { borderBottomColor: color.up },
+  segOn: { borderBottomColor: color.learn },
   segText: { fontSize: 14, color: color.ink2 },
   segTextOn: { color: color.ink, fontWeight: '600' },
   tag: {
@@ -403,13 +406,14 @@ const s = StyleSheet.create({
   detailsTitle: { fontSize: 12, color: color.ink2 },
   detailsBody: { paddingHorizontal: PAD, paddingBottom: 12 },
   btn: {
-    height: 40,
+    minHeight: 48,
+    paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  btnSm: { height: 32, paddingHorizontal: 10, borderRadius: 4 },
+  btnSm: { minHeight: 48, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 4 },
   btnGhost: { borderWidth: 1, borderColor: color.line },
   btnText: { fontSize: 15, fontWeight: '500' },
   btnTextSm: { fontSize: 13 },

@@ -62,6 +62,9 @@ export function readout(c: ChartData, i: number): string {
       if (ma != null) {
         parts.push('MA' + c.ma!.n + ' ' + ma.toFixed(2));
       }
+      if (c.band?.upper[i] != null && c.band.lower[i] != null) {
+        parts.push('布林带上轨 ' + c.band.upper[i]!.toFixed(2) + ' / 下轨 ' + c.band.lower[i]!.toFixed(2));
+      }
       const sub = c.sub?.values[i];
       if (sub != null && c.sub) {
         parts.push(SUB_NAME[c.sub.kind] + ' ' + (c.sub.kind === 'rsi14' ? sub.toFixed(1) : c.sub.kind === 'volume' ? (sub / 1e4).toFixed(0) + ' 万股' : pct(sub)));
@@ -71,9 +74,9 @@ export function readout(c: ChartData, i: number): string {
     case 'compare':
       return c.dates[i] + ' · ' + c.series.map(s => s.name + ' ' + s.values[i].toFixed(1)).join(' · ');
     case 'factor':
-      return c.dates[i] + ' · ' + c.groups.map((g, k) => 'Q' + (k + 1) + ' ' + g[i].toFixed(3)).join(' ') + ' · 基准 ' + c.bench[i].toFixed(3);
+      return c.dates[i] + ' · ' + c.groups.map((g, k) => 'Q' + (k + 1) + ' ' + g[i].toFixed(3)).join(' ') + ' · 基准 ' + c.bench[i].toFixed(3) + ' · 多空 ' + c.longShort[i].toFixed(3);
     case 'ic':
-      return c.dates[i] + ' · Rank IC ' + (c.ic[i] > 0 ? '+' : '') + c.ic[i].toFixed(3);
+      return c.dates[i] + ' · Rank IC ' + (c.ic[i] > 0 ? '+' : '') + c.ic[i].toFixed(3) + ' · 累计 IC ' + c.ic.slice(0, i + 1).reduce((sum, v) => sum + v, 0).toFixed(3);
     case 'groups':
       return 'Q' + (i + 1) + ' 每期平均 ' + pct(c.means[i], 2);
   }

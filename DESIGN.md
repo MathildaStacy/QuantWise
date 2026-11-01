@@ -293,3 +293,17 @@ An empty configured conversation centers a short prompt and at most three plain,
 - **Don't** center the model, add a large filled search tile, or restore the rejected taller composer.
 - **Don't** let a disclosure, streaming update, or model selector steal the reader's chosen scroll position.
 - **Don't** invent provider capabilities, execute a pending operation without confirmation, or replace interface icons with decorative imagery.
+
+## Learning flow and shared controls · 2026-11-01
+
+This extension governs the study shelf, offline introduction, section reader, study conversation, factor lab, wrap-up, and their shared native controls. The AI Conversation palette and composer described above keep their local scope.
+
+- Bottom navigation is 学习 / 自选 / 行情 / 模拟交易 / 我的. Learning settings precede simulated account information. The study conversation is AI 讲解; the independent general conversation is 通用助手.
+- Preserve the warm paper reader and serif source text. Learning actions use ink blue `#2D5BA8`; market movement retains red/green semantics. Shared supporting text uses `#666C75`; small rise/fall numbers use `#C92725` / `#087D46`.
+- The shelf emphasizes one starting or continuation action. Supporting study tools use simple icon/text rows. The study and factor surfaces have no floating general assistant; 我的 uses a list entry and 模拟交易 a header action.
+- The study composer, mode tabs, quick actions, shared buttons, choice chips, and confirmation actions have at least 48dp targets. Shared navigation allows two title lines. The study composer includes bottom safe-area padding and keyboard avoidance.
+- Reader paragraphs and conversation turns have separate stable anchors. Asynchronous formula layout must not overwrite the user's saved anchor. User scrolling suspends following; 回到最新 resumes it.
+- Factor results present the conclusion, sample/date context, evidence, and one main chart first. Parameter edits remain drafts until applied. Secondary charts and calculation details expand on demand. Labels scale with the system font; dense bars retain group labels and expose exact values in the full-screen data table. High/low groups can be isolated, and Q1 uses a dashed line as well as a distinct color.
+- Wrap-up starts in reading mode with optional editing. Flashcard selection and editing have separate targets. 保存，今天到这里 and 保存，继续下一节 name the resulting destination. Confirmation dialogs keep actions visible while long content scrolls.
+
+Native evidence: `.impeccable/critique/2026-11-01__implementation-acceptance.md`. Verified Android phone widths are approximately 411dp at normal type and 360dp at 1.3× type; these captures do not establish tablet, iOS, or full screen-reader coverage.

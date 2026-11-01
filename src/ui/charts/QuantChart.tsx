@@ -3,14 +3,14 @@
  * 对话里的卡片和全屏图用同一个组件；full 时按住或拖动出十字线，onPick 给出读数。
  */
 import { useState } from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { useWindowDimensions, View, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, G as SvgG, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
-import type { ChartData } from '../../quant/charts';
+import { chartTitle, type ChartData } from '../../quant/charts';
 import { groupColor, rc, SERIES_COLORS } from '../readTheme';
 import { color } from '../theme';
 import { bounds, indexAt, linePath, pointCount, xAt } from './quantDraw';
 
-const FONT = 10;
+const FONT = 12;
 const L = 4;
 
 export const chartHeight = (c: ChartData, full = false) =>
@@ -20,14 +20,17 @@ export function QuantChart({
   data,
   full = false,
   onPick,
+  extremes = false,
 }: {
   data: ChartData;
   full?: boolean;
+  extremes?: boolean;
   onPick?: (i: number | null) => void;
 }) {
   const [w, setW] = useState(0);
   const [pick, setPick] = useState<number | null>(null);
-  const h = chartHeight(data, full);
+  const { fontScale } = useWindowDimensions();
+  const h = chartHeight(data, full) * Math.max(1, fontScale);
   const n = pointCount(data);
   const R = w - 4;
   const move = (x: number) => {
@@ -47,12 +50,14 @@ export function QuantChart({
     <View
       style={{ height: h }}
       onLayout={(e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width)}
-      accessibilityLabel="图表"
+      accessible
+      accessibilityRole="image"
+      accessibilityLabel={chartTitle(data) + '，可打开全屏查看读数和数据表'}
       {...touch}
     >
       {w > 0 ? (
         <Svg width={w} height={h}>
-          {draw(data, w, h)}
+          {draw(data, w, h, extremes, fontScale)}
           {full && pick != null && data.kind !== 'groups' ? (
             <Line x1={xAt(pick, n, L, R)} x2={xAt(pick, n, L, R)} y1={0} y2={h - 16} stroke={rc.ink} strokeOpacity={0.5} strokeDasharray="3,3" />
           ) : null}
@@ -63,22 +68,20 @@ export function QuantChart({
 }
 
 /** 文字先描一圈白底再写，压在柱子、折线上也读得清。 */
-const label = (x: number, y: number, t: string, anchor: 'start' | 'end' | 'middle' = 'start', fill: string = rc.muted) => (
-  <SvgG key={'t' + x + ':' + y + t}>
-    <SvgText x={x} y={y} fontSize={FONT} fill={rc.paper} stroke={rc.paper} strokeWidth={3} strokeLinejoin="round" textAnchor={anchor}>
-      {t}
-    </SvgText>
-    <SvgText x={x} y={y} fontSize={FONT} fill={fill} textAnchor={anchor}>
-      {t}
-    </SvgText>
-  </SvgG>
-);
+function ChartLabel({ x, y, text, anchor, fill }: { x: number; y: number; text: string; anchor: 'start' | 'end' | 'middle'; fill: string }) {
+  const { fontScale } = useWindowDimensions();
+  const size = FONT * fontScale;
+  const top = Math.max(size, y);
+  return <SvgG><SvgText x={x} y={top} fontSize={size} fill={rc.paper} stroke={rc.paper} strokeWidth={3} strokeLinejoin="round" textAnchor={anchor}>{text}</SvgText><SvgText x={x} y={top} fontSize={size} fill={fill} textAnchor={anchor}>{text}</SvgText></SvgG>;
+}
+const label = (x: number, y: number, text: string, anchor: 'start' | 'end' | 'middle' = 'start', fill: string = rc.muted) =>
+  <ChartLabel key={'t' + x + ':' + y + text} x={x} y={y} text={text} anchor={anchor} fill={fill} />;
 
 function dateAxis(dates: string[], w: number, h: number) {
   return [label(L, h - 3, dates[0] ?? ''), label(w - 4, h - 3, dates[dates.length - 1] ?? '', 'end')];
 }
 
-function draw(c: ChartData, w: number, h: number) {
+function draw(c: ChartData, w: number, h: number, extremes: boolean, fontScale: number) {
   const R = w - 4;
   switch (c.kind) {
     case 'price':
@@ -102,7 +105,7 @@ function draw(c: ChartData, w: number, h: number) {
       const G = c.groups.length;
       return [
         <Line key="one" x1={0} x2={w} y1={Y(1)} y2={Y(1)} stroke={rc.grid} />,
-        ...c.groups.map((g, k) => <Path key={'g' + k} d={linePath(xs, g.map(Y))} stroke={groupColor(k, G)} strokeWidth={k === 0 || k === G - 1 ? 1.8 : 1.1} fill="none" />),
+        ...c.groups.map((g, k) => (!extremes || k === 0 || k === G - 1) ? <Path key={'g' + k} d={linePath(xs, g.map(Y))} stroke={groupColor(k, G)} strokeWidth={k === 0 || k === G - 1 ? 2 : 1.3} strokeDasharray={k === 0 ? '6,3' : undefined} fill="none" /> : null),
         <Path key="bench" d={linePath(xs, c.bench.map(Y))} stroke={rc.bench} strokeWidth={1} strokeDasharray="3,3" fill="none" />,
         <Path key="ls" d={linePath(xs, c.longShort.map(Y))} stroke={rc.accent} strokeWidth={1.2} strokeDasharray="5,2" fill="none" />,
         label(L, 9, hi.toFixed(2)),
@@ -137,7 +140,7 @@ function draw(c: ChartData, w: number, h: number) {
         <Line key="zero" x1={0} x2={w} y1={Y(0)} y2={Y(0)} stroke={rc.grid} />,
         ...v.flatMap((x, i) => [
           <Rect key={'r' + i} x={L + i * bw + bw * 0.2} y={Math.min(Y(0), Y(x))} width={bw * 0.6} height={Math.abs(Y(x) - Y(0))} fill={groupColor(i, v.length)} />,
-          label(L + i * bw + bw / 2, x >= 0 ? Y(x) - 3 : Y(x) + 11, (x > 0 ? '+' : '') + x.toFixed(2) + '%', 'middle', rc.ink),
+          bw >= 48 * fontScale ? label(L + i * bw + bw / 2, x >= 0 ? Y(x) - 3 : Y(x) + 11, (x > 0 ? '+' : '') + x.toFixed(2) + '%', 'middle', rc.ink) : null,
           label(L + i * bw + bw / 2, h - 4, 'Q' + (i + 1), 'middle'),
         ]),
       ];

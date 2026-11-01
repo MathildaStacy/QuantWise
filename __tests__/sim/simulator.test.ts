@@ -56,6 +56,17 @@ async function setup(clock: { date: string; t: number }) {
 }
 
 describe('Simulator：本地库', () => {
+  test('入金和出金提交后立即通知账户页面，不依赖行情或成交事件', async () => {
+    const { db, sim } = await setup({ date: '2026-10-26', t: T(10, 0) });
+    const balances: number[] = [];
+    const unsubscribe = sim.subscribe(() => balances.push(sim.engine.state.cash));
+    await sim.transfer('in', 1_000_000);
+    await sim.transfer('out', 200_000);
+    expect(balances).toEqual([1_000_000, 800_000]);
+    unsubscribe();
+    await db.close();
+  });
+
   test('第一次打开新建账户，入金后重新打开状态还在', async () => {
     const clock = { date: '2026-10-26', t: T(9, 0) };
     const { db, sim } = await setup(clock);

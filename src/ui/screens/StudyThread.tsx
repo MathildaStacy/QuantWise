@@ -2,7 +2,7 @@
  * 听讲的对话（QUANTWISE_DESIGN.md §6）：按「一次提问」分组画：你的问题 → 工具步骤 → 讲解 → 图表 → 检查题 / 小结草稿。
  * 回到主线后的岔路折叠成一行，正在进行的岔路左侧紫线。只画，不请求模型。
  */
-import { Fragment, useMemo, useState, type ReactElement } from 'react';
+import { useMemo, useState, type ReactElement } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StoredMessage, ToolUi } from '../../ai/types';
 import { secLabel } from '../../book/book';
@@ -54,38 +54,38 @@ export interface ThreadActions {
   onStuck: (text: string) => void;
 }
 
-export function StudyThread({ s, busy, a }: { s: StudySession; busy: string | null; a: ThreadActions }) {
+export function StudyThread({ s, busy, a, onTurnLayout }: { s: StudySession; busy: string | null; a: ThreadActions; onTurnLayout?: (id: number, box: { y: number; height: number }) => void }) {
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const p = progressNow(s);
   // 引用校验只在读过的小节变了时重建，StudyText 才不会每次重画都重新解析
   const check = useMemo(() => citeCheck(s), [s.loaded, s.extra, s.sections, s.section, s.blocks]); // eslint-disable-line react-hooks/exhaustive-deps
   const folds = p.folds ?? [];
   const turns = turnsOf(s.messages);
-  const out: ReactElement[] = [];
+  const out: { id: number; node: ReactElement }[] = [];
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
     const f = folds.find(x => x.fromMsg === t.first);
     if (f) {
       const inside = turns.filter(x => x.first >= f.fromMsg && x.first <= f.toMsg);
-      out.push(
-        <Fragment key={'f' + f.fromMsg}>
+      out.push({ id: f.fromMsg, node:
+        <View>
           <Pressable style={st.fold} onPress={() => setOpen(o => ({ ...o, [f.fromMsg]: !o[f.fromMsg] }))} accessibilityRole="button" accessibilityState={{ expanded: !!open[f.fromMsg] }}>
             <Text style={st.foldT} numberOfLines={1}>已解决：{f.title}（{inside.length} 问）</Text>
             <Text style={st.foldS}>岔路 · {f.sectionId} {open[f.fromMsg] ? '▴' : '▾'}</Text>
           </Pressable>
           {open[f.fromMsg] ? inside.map(x => <TurnView key={x.first} t={x} detour a={a} check={check} streaming={false} />) : null}
           <Text style={st.sys}>回到 {secLabel(s.section)}：刚才讲到第 {f.step + 1} 步「{s.steps[f.step]?.title ?? ''}」</Text>
-        </Fragment>,
-      );
+        </View>,
+      });
       i += inside.length - 1;
       continue;
     }
     const detour = !!p.detour && t.first >= p.detour.fromMsg;
-    out.push(<TurnView key={t.first} t={t} detour={detour} a={a} check={check} streaming={!!busy && i === turns.length - 1} />);
+    out.push({ id: t.first, node: <TurnView t={t} detour={detour} a={a} check={check} streaming={!!busy && i === turns.length - 1} /> });
   }
   return (
     <View>
-      {out}
+      {out.map(({ id, node }) => <View key={id} onLayout={e => onTurnLayout?.(id, e.nativeEvent.layout)}>{node}</View>)}
       {busy ? <Text style={st.busy}>{busy}</Text> : null}
     </View>
   );
@@ -121,12 +121,12 @@ function TurnView({ t, detour, a, check, streaming }: { t: Turn; detour: boolean
       {charts.map((c, k) => (
         <ChartCard key={k} data={c} />
       ))}
-      {t.cards.map(({ msgId, tool }) => (tool.quiz ? <Quiz key={tool.id} msgId={msgId} tool={tool} a={a} /> : <Wrap key={tool.id} tool={tool} a={a} />))}
+      {t.cards.map(({ msgId, tool }) => (tool.quiz ? <Quiz key={tool.id} msgId={msgId} tool={tool} a={a} check={check} /> : <Wrap key={tool.id} tool={tool} a={a} />))}
     </View>
   );
 }
 
-function Quiz({ msgId, tool, a }: { msgId: number; tool: ToolUi; a: ThreadActions }) {
+function Quiz({ msgId, tool, a, check }: { msgId: number; tool: ToolUi; a: ThreadActions; check: CiteCheck }) {
   const q = tool.quiz!;
   const picked = q.picked >= 0;
   return (
@@ -143,7 +143,10 @@ function Quiz({ msgId, tool, a }: { msgId: number; tool: ToolUi; a: ThreadAction
           <Text style={st.optT}>{o}</Text>
         </Pressable>
       ))}
-      {picked ? <Text style={st.explain}>{(q.picked === q.answer ? '答对了。' : '不对。') + q.explain}</Text> : null}
+      {picked ? <>
+        <Text style={st.explain}>{q.picked === q.answer ? '答对了。' : '不对。'}</Text>
+        <StudyText text={q.explain} check={check} onLink={a.onLink} />
+      </> : null}
       {picked && q.picked !== q.answer ? (
         <Pressable onPress={() => a.onStuck(q.question)} style={st.small} accessibilityRole="button">
           <Text style={st.smallT}>记成卡点</Text>
@@ -186,13 +189,13 @@ const st = StyleSheet.create({
   foldS: { fontSize: 11, color: rc.detour },
   card: { marginVertical: 10, padding: 12, borderRadius: 12, backgroundColor: rc.paper, borderWidth: StyleSheet.hairlineWidth, borderColor: rc.line, gap: 6 },
   q: { fontSize: 14, fontWeight: '600', color: rc.ink, lineHeight: 22 },
-  opt: { borderWidth: 1, borderColor: rc.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 9 },
+  opt: { minHeight: 48, justifyContent: 'center', borderWidth: 1, borderColor: rc.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 9 },
   optT: { fontSize: 14, color: rc.ink },
   right: { borderColor: '#0F7B76', backgroundColor: rc.real },
   wrong: { borderColor: rc.stuck, backgroundColor: rc.stuckBg },
   explain: { fontSize: 13, color: rc.secondary, lineHeight: 21 },
   meta: { fontSize: 12, color: rc.muted },
-  small: { alignSelf: 'flex-start', borderRadius: 14, borderWidth: 1, borderColor: rc.line, paddingHorizontal: 12, paddingVertical: 5 },
+  small: { minHeight: 48, justifyContent: 'center', alignSelf: 'flex-start', borderRadius: 14, borderWidth: 1, borderColor: rc.line, paddingHorizontal: 12, paddingVertical: 5 },
   smallT: { fontSize: 12, color: rc.secondary },
   primary: { backgroundColor: rc.main, borderColor: rc.main },
   white: { color: '#FFFFFF' },

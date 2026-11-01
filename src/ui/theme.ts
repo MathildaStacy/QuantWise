@@ -8,16 +8,18 @@ export const color = {
   down: '#0E9F5B',
   downBg: '#E6F6EE',
   flat: '#A3A8B0',
+  upText: '#C92725',
+  downText: '#087D46',
   sell: '#2468E0',
-  learn: '#0F7B76',
-  learnBg: '#E5F3F2',
-  learnLine: '#CFE6E4',
+  learn: '#2D5BA8',
+  learnBg: '#EAF0FA',
+  learnLine: '#CDDDF4',
   warn: '#E07800',
   warnBg: '#FFF3E0',
   warnInk: '#8A4B00',
   ink: '#1F2329',
   ink2: '#5C626B',
-  ink3: '#8A9099',
+  ink3: '#666C75',
   line: '#ECEDEF',
   bg: '#F3F4F6',
   card: '#FFFFFF',
@@ -40,8 +42,8 @@ export const color = {
 } as const;
 
 export const trendColor: Record<Trend, string> = {
-  up: color.up,
-  down: color.down,
+  up: color.upText,
+  down: color.downText,
   flat: color.ink2,
 };
 

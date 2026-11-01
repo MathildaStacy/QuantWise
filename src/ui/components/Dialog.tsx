@@ -1,6 +1,6 @@
 /** 确认弹窗（委托确认、撤单确认）：键值行 + 说明 + 确认 / 取消。 */
 import type { ReactNode } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { color, num } from '../theme';
 
 export interface DialogRow {
@@ -43,7 +43,7 @@ export function ConfirmDialog({
       <View style={s.mask}>
         <View style={s.box} accessibilityViewIsModal>
           <Text style={s.title}>{title}</Text>
-          <View style={s.rows}>
+          <ScrollView style={s.content} contentContainerStyle={s.rows}>
             {rows.map(r => (
               <View key={r.k} style={s.row}>
                 <Text style={s.k}>{r.k}</Text>
@@ -52,8 +52,8 @@ export function ConfirmDialog({
                 </Text>
               </View>
             ))}
-          </View>
           {children}
+          </ScrollView>
           <View style={s.btns}>
             <Pressable
               onPress={onCancel}
@@ -88,7 +88,8 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     padding: 28,
   },
-  box: { backgroundColor: color.card, borderRadius: 10, padding: 16 },
+  content: { flexShrink: 1 },
+  box: { maxHeight: '90%', backgroundColor: color.card, borderRadius: 10, padding: 16 },
   title: {
     fontSize: 17,
     fontWeight: '600',
@@ -107,7 +108,8 @@ const s = StyleSheet.create({
   btns: { flexDirection: 'row', gap: 10, marginTop: 16 },
   btn: {
     flex: 1,
-    height: 42,
+    minHeight: 48,
+    paddingVertical: 10,
     borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',

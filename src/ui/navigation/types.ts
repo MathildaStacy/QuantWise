@@ -69,9 +69,9 @@ export type RootStackParamList = {
   Ai: undefined;
   AiThreads: undefined;
   AiMemory: undefined;
-  AiServices: undefined;
+  AiServices: { returnToStudy?: { bookId: string; sectionId: string } } | undefined;
   /** 没有 id 是添加服务。 */
-  AiService: { id?: string } | undefined;
+  AiService: { id?: string; returnToStudy?: { bookId: string; sectionId: string } } | undefined;
   AiMcp: undefined;
   /** 没有 id 是添加外部工具。 */
   AiMcpServer: { id?: string } | undefined;
@@ -91,7 +91,7 @@ export type RootStackParamList = {
   ParseProgress: { bookId: string };
   BookMap: { bookId: string };
   /** mode：进来时的模式；blockSeq：读书模式定位到这一块；ask：进来就问这个问题（复习页「让 AI 重讲」）。 */
-  Study: { bookId: string; sectionId?: string; mode?: 'lecture' | 'read'; blockSeq?: number; ask?: string };
+  Study: { bookId: string; sectionId?: string; mode?: 'lecture' | 'read'; blockSeq?: number; ask?: string; askLabel?: string; askSnapshot?: boolean; wrapup?: boolean };
   SectionDone: { bookId: string };
   Review: undefined;
   ReviewRun: undefined;
@@ -100,6 +100,7 @@ export type RootStackParamList = {
   ChartFull: { chart: ChartData };
   MineruSettings: undefined;
   StudyPrefs: undefined;
+  StudyIntro: undefined;
 };
 
 export type RootScreenProps<K extends keyof RootStackParamList> =

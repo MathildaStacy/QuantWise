@@ -72,6 +72,7 @@ import {
   ReviewScreen,
   SectionDoneScreen,
 } from '../screens/ReviewScreens';
+import { StudyIntroScreen } from '../screens/StudyIntroScreen';
 import { StudyScreen } from '../screens/StudyScreen';
 import { WatchEditScreen } from '../screens/WatchEditScreen';
 import { WatchScreen } from '../screens/WatchScreen';
@@ -102,7 +103,7 @@ function Tabs() {
       initialRouteName="Learn"
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: color.up,
+        tabBarActiveTintColor: color.learn,
         tabBarInactiveTintColor: color.ink3,
         tabBarStyle: {
           backgroundColor: color.card,
@@ -112,6 +113,15 @@ function Tabs() {
         sceneStyle: { backgroundColor: color.bg },
       }}
     >
+      <Tab.Screen
+        name="Learn"
+        component={LearnScreen}
+        options={{
+          title: '学习',
+          tabBarIcon: LearnIcon,
+          tabBarActiveTintColor: color.learn,
+        }}
+      />
       <Tab.Screen
         name="Watch"
         component={WatchScreen}
@@ -125,16 +135,7 @@ function Tabs() {
       <Tab.Screen
         name="Trade"
         component={TradeScreen}
-        options={{ title: '交易', tabBarIcon: TradeIcon }}
-      />
-      <Tab.Screen
-        name="Learn"
-        component={LearnScreen}
-        options={{
-          title: '学习',
-          tabBarIcon: LearnIcon,
-          tabBarActiveTintColor: color.learn,
-        }}
+        options={{ title: '模拟交易', tabBarIcon: TradeIcon }}
       />
       <Tab.Screen
         name="Me"
@@ -155,6 +156,7 @@ export function RootStack() {
       }}
     >
       <Stack.Screen name="Tabs" component={Tabs} />
+      <Stack.Screen name="StudyIntro" component={StudyIntroScreen} />
       <Stack.Screen name="Stock" component={StockScreen} />
       <Stack.Screen
         name="Search"

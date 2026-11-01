@@ -19,7 +19,7 @@ import {
   PositionList,
   useAccount,
 } from '../components/tradeRows';
-import { AiFab, Button, NavBar, Note, SectionTitle } from '../components/ui';
+import { Button, NavBar, Note, SectionTitle } from '../components/ui';
 import { fmtQty, fmtSignedFen } from '../format';
 import {
   useAiContext,
@@ -249,8 +249,8 @@ export function TradeScreen() {
   return (
     <View style={s.page}>
       <NavBar
-        title="交易"
-        right={<Text style={s.navRight}>模拟 · 本地</Text>}
+        title="模拟交易"
+        right={<Button title="通用助手" small onPress={() => nav.navigate('Ai')} />}
       />
       <ScrollView contentContainerStyle={s.pad}>
         <PhaseBar />
@@ -316,7 +316,6 @@ export function TradeScreen() {
           </Pressable>
         ) : null}
       </ScrollView>
-      <AiFab />
     </View>
   );
 }
@@ -395,6 +394,17 @@ export function MeScreen() {
     <View style={s.page}>
       <NavBar title="我的" />
       <ScrollView contentContainerStyle={s.pad}>
+        <View style={s.card}>
+          <Entry title="讲解偏好" sub="举例、检查题、术语中英对照" onPress={() => nav.navigate('StudyPrefs')} />
+          <Entry title="供应商与模型" sub={aiSvc ?? '连接 AI 后可自由追问'} onPress={() => nav.navigate('AiServices')} />
+          <Entry title="解析服务（MinerU）" sub="导入 PDF 用的 Token、额度" onPress={() => nav.navigate('MineruSettings')} />
+        </View>
+        <View style={s.card}>
+          <Entry title="因子实验室" sub="分组回测和 IC" onPress={() => nav.navigate('FactorLab')} />
+          <Entry title="通用助手" sub="独立会话，可带入当前页面信息" onPress={() => nav.navigate('Ai')} />
+          <Entry title="AI 记忆" onPress={() => nav.navigate('AiMemory')} />
+          <Entry title="调试页" onPress={() => nav.navigate('Debug')} />
+        </View>
         <AccountCard />
         <Entry
           title="组合与调仓"
@@ -467,36 +477,9 @@ export function MeScreen() {
           />
           <Entry title="重置账户" onPress={() => setReset(true)} />
         </View>
-        <View style={s.card}>
-          <Entry
-            title="解析服务（MinerU）"
-            sub="导入 PDF 用的 Token、额度"
-            onPress={() => nav.navigate('MineruSettings')}
-          />
-          <Entry
-            title="讲解偏好"
-            sub="举例优先用真实行情、检查题、术语中英对照"
-            onPress={() => nav.navigate('StudyPrefs')}
-          />
-          <Entry
-            title="因子实验室"
-            sub="示例池 / 自选 / 沪深 300 的分组回测和 IC"
-            onPress={() => nav.navigate('FactorLab')}
-          />
-        </View>
-        <View style={s.card}>
-          <Entry
-            title="供应商与模型"
-            sub={aiSvc ?? '还没有配置：添加服务（Base URL、API Key、模型）'}
-            onPress={() => nav.navigate('AiServices')}
-          />
-          <Entry title="AI 记忆" onPress={() => nav.navigate('AiMemory')} />
-          <Entry title="调试页" onPress={() => nav.navigate('Debug')} />
-        </View>
         <Text style={s.brand}>{displayName} · {appName}</Text>
       </ScrollView>
       <ResetDialog visible={reset} onClose={() => setReset(false)} />
-      <AiFab />
     </View>
   );
 }

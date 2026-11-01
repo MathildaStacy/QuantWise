@@ -2,6 +2,7 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Maximize2 } from 'lucide-react-native';
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { chartTitle, SUB_NAME, type ChartData } from '../../quant/charts';
 import { FACTORS } from '../../quant/factors';
@@ -24,7 +25,7 @@ export function legendOf(c: ChartData): { color: string; label: string; dashed?:
       return c.series.map((s, k) => ({ color: SERIES_COLORS[k % SERIES_COLORS.length], label: s.name }));
     case 'factor':
       return [
-        ...c.groups.map((_, k) => ({ color: groupColor(k, c.groups.length), label: 'Q' + (k + 1) + (k === 0 ? ' 因子最低' : k === c.groups.length - 1 ? ' 因子最高' : '') })),
+        ...c.groups.map((_, k) => ({ color: groupColor(k, c.groups.length), dashed: k === 0, label: 'Q' + (k + 1) + (k === 0 ? ' 因子最低' : k === c.groups.length - 1 ? ' 因子最高' : '') })),
         { color: rc.bench, label: '等权基准', dashed: true },
         { color: rc.accent, label: '多空', dashed: true },
       ];
@@ -59,18 +60,20 @@ export function chartFoot(c: ChartData): string {
 const dotColor = (l: { color: string; dashed?: boolean }) => ({ backgroundColor: l.dashed ? 'transparent' : l.color, borderColor: l.color });
 
 export function ChartCard({ data }: { data: ChartData }) {
+  const [extremes, setExtremes] = useState(false);
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   return (
     <View style={s.card}>
       <View style={s.head}>
-        <Text style={s.title} numberOfLines={1}>
+        <Text style={s.title}>
           {chartTitle(data)}
         </Text>
         <Text style={s.tag}>真实行情</Text>
       </View>
-      <QuantChart data={data} />
+      <QuantChart data={data} extremes={extremes} />
+      {data.kind === 'factor' ? <Pressable style={s.focus} onPress={() => setExtremes(v => !v)} accessibilityRole="button" accessibilityState={{ selected: extremes }}><Text style={s.fullT}>{extremes ? '显示全部分组' : '只看最高与最低组'}</Text></Pressable> : null}
       <View style={s.legend}>
-        {legendOf(data).map(l => (
+        {legendOf(data).filter(l => !extremes || data.kind !== 'factor' || !/^Q\d/.test(l.label) || l.label.startsWith('Q1 ') || l.label.startsWith('Q' + data.groups.length + ' ')).map(l => (
           <View key={l.label} style={s.li}>
             <View style={[s.dot, dotColor(l), l.dashed && s.dash]} />
             <Text style={s.lt}>{l.label}</Text>
@@ -78,7 +81,7 @@ export function ChartCard({ data }: { data: ChartData }) {
         ))}
       </View>
       <View style={s.foot}>
-        <Text style={s.ft} numberOfLines={1}>
+        <Text style={s.ft}>
           {chartFoot(data)}
         </Text>
         <Pressable onPress={() => nav.navigate('ChartFull', { chart: data })} hitSlop={8} accessibilityRole="button" accessibilityLabel="全屏查看图表" style={s.full}>
@@ -99,9 +102,10 @@ const s = StyleSheet.create({
   li: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   dot: { width: 10, height: 3, borderRadius: 2, borderWidth: 0 },
   dash: { height: 0, borderTopWidth: 2, borderStyle: 'dashed' },
-  lt: { fontSize: 11, color: rc.secondary },
+  lt: { fontSize: 12, color: rc.secondary },
   foot: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 4, paddingBottom: 8, gap: 8 },
-  ft: { flex: 1, fontSize: 11, color: rc.muted },
-  full: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  ft: { flex: 1, fontSize: 12, color: rc.muted },
+  focus: { minHeight: 48, paddingHorizontal: 12, justifyContent: 'center' },
+  full: { minHeight: 48, minWidth: 48, flexDirection: 'row', alignItems: 'center', gap: 3 },
   fullT: { fontSize: 12, color: rc.main },
 });

@@ -3,9 +3,10 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { ChevronRight } from 'lucide-react-native';
+import { BookOpen, ChevronRight, FlaskConical, Layers, NotebookPen, Plus } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SAMPLE_BOOK_ID } from '../../book/sample';
 import { secLabel } from '../../book/book';
 import { beijingIso } from '../../market/clock';
 import { pickAndImport } from '../../study/importer';
@@ -61,11 +62,11 @@ export function ShelfView() {
     }
   };
   const r = shelf?.resume;
-  const tools: [string, string, string, () => void][] = [
-    ['复', '复习', '今日 ' + (shelf?.due ?? 0) + ' 张', () => nav.navigate('Review')],
-    ['IC', '因子实验', '7 个因子', () => nav.navigate('FactorLab')],
-    ['记', '笔记', r ? '按小节' : '—', () => r && nav.navigate('Notes', { bookId: r.book.id })],
-    ['+', busy ? '导入中…' : '导入', 'PDF/EPUB/MD', importBook],
+  const tools: [typeof Layers, string, string, () => void][] = [
+    [Layers, '复习', '今日 ' + (shelf?.due ?? 0) + ' 张', () => nav.navigate('Review')],
+    [FlaskConical, '因子实验', '7 个因子', () => nav.navigate('FactorLab')],
+    [NotebookPen, '笔记', '按书和小节', () => nav.navigate('Notes', { bookId: r?.book.id ?? SAMPLE_BOOK_ID })],
+    [Plus, busy ? '导入中…' : '导入', 'PDF/EPUB/MD', importBook],
   ];
   return (
     <ScrollView contentContainerStyle={s.pad}>
@@ -83,13 +84,16 @@ export function ShelfView() {
           </Text>
           <Text style={s.contGo}>继续 ›</Text>
         </Pressable>
-      ) : null}
+      ) : <View style={s.first}>
+        <Text style={s.firstTitle}>{shelf?.introCompleted ? '已经认识动量，接着读原文' : '用 3 分钟，学懂第一个因子'}</Text>
+        <Text style={s.firstBody}>涨过的股票，还会继续涨吗？先理解动量，再用数据检验。</Text>
+        <Text style={s.firstMeta}>内置体验 · 无需连接 AI</Text>
+        <Pressable accessibilityRole="button" style={s.start} onPress={() => shelf?.introCompleted ? nav.navigate('Study', { bookId: SAMPLE_BOOK_ID, sectionId: '3.1', mode: 'read' }) : nav.navigate('StudyIntro')}><BookOpen color="#FFFFFF" size={20} /><Text style={s.startText}>{shelf?.introCompleted ? '读动量原文' : '开始体验'}</Text></Pressable>
+      </View>}
       <View style={s.tools}>
-        {tools.map(([i, l, d, f]) => (
+        {tools.map(([Icon, l, d, f]) => (
           <Pressable key={l} style={({ pressed }) => [s.tool, pressed && s.pressed]} onPress={f} accessibilityRole="button" accessibilityLabel={l}>
-            <Text style={s.toolI}>{i}</Text>
-            <Text style={s.toolL} numberOfLines={1}>{l}</Text>
-            <Text style={s.toolD} numberOfLines={1}>{d}</Text>
+            <Icon size={22} color={rc.main} /><View style={s.grow}><Text style={s.toolL}>{l}</Text><Text style={s.toolD}>{d}</Text></View><ChevronRight color={color.ink3} size={18} />
           </Pressable>
         ))}
       </View>
@@ -125,18 +129,23 @@ export function ShelfView() {
 }
 
 const s = StyleSheet.create({
-  pad: { paddingBottom: 96 },
+  first: { padding: 20, gap: 12, backgroundColor: rc.page },
+  firstTitle: { fontSize: 24, lineHeight: 34, color: rc.ink, fontWeight: '600' },
+  firstBody: { fontSize: 16, lineHeight: 26, color: rc.secondary },
+  firstMeta: { fontSize: 13, color: rc.secondary },
+  start: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, minHeight: 48, marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: rc.main },
+  startText: { fontSize: 16, color: '#FFFFFF', fontWeight: '600' },
+  pad: { paddingBottom: 24 },
   pressed: { opacity: 0.8 },
   cont: { margin: 10, padding: 14, borderRadius: 12, backgroundColor: rc.main },
   contK: { fontSize: 12, color: '#FFFFFFCC' },
   contT: { fontSize: 18, fontWeight: '600', color: '#FFFFFF', marginTop: 2 },
   contS: { fontSize: 12, color: '#FFFFFFDD', marginTop: 2, lineHeight: 18 },
   contGo: { position: 'absolute', right: 14, top: 14, color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
-  tools: { flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingBottom: 10 },
-  tool: { flex: 1, backgroundColor: color.card, borderRadius: 10, paddingVertical: 10, alignItems: 'center', gap: 2 },
-  toolI: { width: 34, height: 34, borderRadius: 10, backgroundColor: rc.mainBg, color: rc.main, fontWeight: '700', textAlign: 'center', textAlignVertical: 'center', lineHeight: 34, overflow: 'hidden' },
+  tools: { paddingHorizontal: 16, backgroundColor: rc.page },
+  tool: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 64, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rc.line },
   toolL: { fontSize: 13, fontWeight: '600', color: color.ink },
-  toolD: { fontSize: 10, color: color.ink3 },
+  toolD: { fontSize: 12, color: color.ink3 },
   card: { backgroundColor: color.card, marginBottom: 8 },
   h: { fontSize: 15, fontWeight: '600', color: color.ink, paddingHorizontal: PAD, paddingTop: 12, paddingBottom: 4 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: PAD, paddingVertical: 11, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.line },

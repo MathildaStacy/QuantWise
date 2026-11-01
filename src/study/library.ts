@@ -11,6 +11,7 @@ import type { Db } from '../data/db';
 import * as studyRepo from '../data/studyRepo';
 import type { DateStr } from '../engine/calendar';
 import { dueToday } from '../book/review';
+import { getSetting } from '../data/repos';
 
 /** FNV-1a：只用来判断内置教材的内容变没变。 */
 /* eslint-disable no-bitwise */
@@ -118,6 +119,17 @@ export interface Shelf {
   resume: { book: Book; section: BookSection; step: number; steps: number | null; awayDays: number; stuck: string | null } | null;
   due: number;
   stuck: number;
+  introCompleted: boolean;
+}
+
+/** 两个续学入口使用同一规则：当前节完成后，接到后面的首个未完成小节。 */
+export function resumeSection(sections: BookSection[], state: studyRepo.StudyState | null): BookSection | undefined {
+  const leaves = leavesOf(sections);
+  const current = leaves.find(s => s.id === state?.main) ?? leaves[0];
+  if (current && state?.sections[current.id]?.done) {
+    return leaves.slice(leaves.indexOf(current) + 1).find(s => !state.sections[s.id]?.done) ?? current;
+  }
+  return current;
 }
 
 export async function loadShelf(db: Db, today: DateStr): Promise<Shelf> {
@@ -126,7 +138,6 @@ export async function loadShelf(db: Db, today: DateStr): Promise<Shelf> {
   const books: ShelfBook[] = [];
   let resume: Shelf['resume'] = null;
   let latest = '';
-  let first: Shelf['resume'] = null;
   for (const b of all) {
     if (b.status !== 'ready') {
       books.push({ book: b, leaves: b.body.leaves ?? 0, done: 0 });
@@ -136,23 +147,21 @@ export async function loadShelf(db: Db, today: DateStr): Promise<Shelf> {
     const secs = await bookRepo.sections(db, b.id);
     const leaves = leavesOf(secs);
     books.push({ book: b, leaves: leaves.length, done: leaves.filter(s => st?.sections[s.id]?.done).length });
-    if (!first && leaves[0]) {
-      // 还没打开过任何书时，继续学习指向书架第一本（示例教材）的第一节
-      first = { book: b, section: leaves[0], step: 0, steps: null, awayDays: 0, stuck: null };
-    }
     if (st && st.activeAt > latest) {
       latest = st.activeAt;
+      const section = resumeSection(secs, st);
+      if (!section) continue;
+      const moved = section.id !== st.main;
       resume = {
         book: b,
-        section: secs.find(s => s.id === st.main) ?? leaves[0],
-        step: st.step,
+        section,
+        step: moved ? Math.max(0, st.sections[section.id]?.taught ?? 0) : st.step,
         steps: null,
         awayDays: Math.max(0, Math.round((Date.parse(today) - Date.parse(st.activeAt.slice(0, 10))) / 86400000)),
         stuck: stuck.find(s => s.bookId === b.id)?.text ?? null,
       };
     }
   }
-  resume ??= first;
   const due = dueToday(await studyRepo.cards(db), today).length;
-  return { books, resume, due, stuck: stuck.length };
+  return { books, resume, due, stuck: stuck.length, introCompleted: await getSetting(db, 'studyIntroCompleted', false) };
 }

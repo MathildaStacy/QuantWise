@@ -55,7 +55,7 @@ export function quick(
     case 'quiz':
       return { kind, label: '考考我', question: '考考我' + name(o.step) + '：用 ask_quiz 出一道题。' };
     case 'finish':
-      return { kind, label: '懂了，下一节', question: '这一节我懂了，请起草本节小结（propose_section_wrapup）。' };
+      return { kind, label: '整理本节小结', question: '这一节我懂了，请起草本节小结（propose_section_wrapup）。' };
     case 'explainBlock':
       return { kind, label: '解释一下 ' + o.block!.label, question: '用 200 字以内解释这一段（' + o.block!.label + '）：' + o.block!.text.slice(0, 200) };
     case 'fromBlock':

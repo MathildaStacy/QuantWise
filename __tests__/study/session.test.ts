@@ -171,3 +171,116 @@ test('伴读里不能用交易工具；没配置服务时说明怎么配', async
   keys.set('s1', 'sk-test');
   await core.db.close();
 });
+
+test.each(['empty', 'refusal', 'max_tokens', 'network'])('失败 %s 不推进；同一步可重试', async kind => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  const a = quickAsk(s(), 'start');
+  if (kind === 'network') setAiDeps({ fetch: async () => { throw new Error('测试断网'); } });
+  else replies = [{ ...text(kind === 'empty' ? '' : '尚未讲完'), stop_reason: kind === 'empty' ? 'end_turn' : kind }];
+  expect(await askStudy(core, a)).toBe(false);
+  expect(progressNow(s()).taught).toBe(-1);
+  expect(s().state.step).toBe(0);
+  const { loadReadingState } = require('../../src/study/readingState');
+  expect((await loadReadingState(core.db, SAMPLE_BOOK_ID, '3.1')).pending).toEqual(a);
+  setAiDeps({ fetch: fetchMock });
+  replies = [text('完整讲解')];
+  expect(await askStudy(core, a)).toBe(true);
+  expect(progressNow(s()).taught).toBe(0);
+  expect((await loadReadingState(core.db, SAMPLE_BOOK_ID, '3.1')).pending).toBeNull();
+  await core.db.close();
+});
+
+test('正在请求时禁止重复发送；跨节回复只更新原章节进度', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  let release!: () => void;
+  let began!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  setAiDeps({ fetch: async () => { began(); await hold; return { status: 200, text: async () => JSON.stringify(text('原章节的回答')) }; } });
+  const a = { ...quickAsk(s(), 'start'), step: 2 };
+  const { loadReadingState, saveReadingState } = require('../../src/study/readingState');
+  await saveReadingState(core.db, SAMPLE_BOOK_ID, '3.1', { draft: a.question });
+  await saveReadingState(core.db, SAMPLE_BOOK_ID, '3.2', { draft: '下一节的新草稿' });
+  const request = askStudy(core, a);
+  expect(await askStudy(core, a)).toBe(false);
+  await started;
+  await openSection(core, SAMPLE_BOOK_ID, '3.2');
+  release();
+  expect(await request).toBe(true);
+  expect(s().section.id).toBe('3.2');
+  expect(s().threadId).toBeNull();
+  expect(s().state.main).toBe('3.2');
+  expect(s().state.step).toBe(0);
+  expect(s().state.sections['3.1'].taught).toBe(2);
+  expect(progressNow(s()).taught).toBe(-1);
+  expect((await loadReadingState(core.db, SAMPLE_BOOK_ID, '3.1')).draft).toBe('');
+  expect((await loadReadingState(core.db, SAMPLE_BOOK_ID, '3.2')).draft).toBe('下一节的新草稿');
+  await core.db.close();
+});
+
+test('停止生成保留问题且不推进步骤', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  let began!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  setAiDeps({ fetch: async (_url, init) => {
+    began();
+    await new Promise<void>((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(new Error('aborted'))));
+    return { status: 200, text: async () => '' };
+  } });
+  const request = askStudy(core, quickAsk(s(), 'start'));
+  await started;
+  const { stopStudy } = require('../../src/study/session');
+  stopStudy();
+  expect(await request).toBe(false);
+  expect(progressNow(s()).taught).toBe(-1);
+  expect(useStudy.getState().error).toContain('已停止');
+  await core.db.close();
+});
+
+test('保存小结是原子操作；失败可重试，重复确认不重复添卡', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  const d = { ...wrapDraft(s()), cards: [{ front: '测试问题', back: '测试答案', on: true }] };
+  const add = jest.spyOn(studyRepo, 'addCards').mockRejectedValueOnce(new Error('测试存储失败'));
+  await expect(saveWrapup(core, d)).rejects.toThrow('测试存储失败');
+  expect(await studyRepo.noteOf(core.db, SAMPLE_BOOK_ID, '3.1')).toBeNull();
+  expect(progressNow(s()).done).toBeUndefined();
+  add.mockRestore();
+  await Promise.all([saveWrapup(core, d), saveWrapup(core, d)]);
+  expect(await studyRepo.cards(core.db)).toHaveLength(1);
+  expect(progressNow(s()).taught).toBe(-1);
+  const { loadShelf } = require('../../src/study/library');
+  expect((await loadShelf(core.db, '2026-11-01')).resume.section.id).toBe('3.2');
+  await core.db.close();
+});
+
+test('实验解读禁用工具，拒绝模型重新计算；无 Key 问题也保留', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  const a = { label: '解释这次结果', question: '指定结果快照', snapshot: true };
+  replies = [tool('factor_test', { factor: 'mom20' })];
+  expect(await askStudy(core, a)).toBe(false);
+  expect(sent[0].tools ?? []).toHaveLength(0);
+  expect(toolUis()).toHaveLength(0);
+  keys.delete('s1');
+  await expect(askStudy(core, a)).rejects.toThrow('API Key');
+  const { loadReadingState } = require('../../src/study/readingState');
+  expect((await loadReadingState(core.db, SAMPLE_BOOK_ID, '3.1')).pending).toEqual(a);
+  keys.set('s1', 'sk-test');
+  await core.db.close();
+});
+
+test('准备阶段立即停止也不会发出模型请求', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  const request = askStudy(core, quickAsk(s(), 'start'));
+  const { stopStudy } = require('../../src/study/session');
+  stopStudy();
+  expect(await request).toBe(false);
+  expect(sent).toHaveLength(0);
+  expect(progressNow(s()).taught).toBe(-1);
+  await core.db.close();
+});

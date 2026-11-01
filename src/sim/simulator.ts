@@ -919,7 +919,8 @@ export class Simulator {
       // 只有排队量之类的变化：输入照样落库（状态按 15 秒节流），重启时以库里的状态为新起点
       await this.db.transaction(tx => this.journal.flush(tx, this.accountId));
     }
-    if (events.length) {
+    // 转账只有资金流水，没有撮合事件；强制提交后也要刷新已打开的账户页面。
+    if (events.length || force) {
       this.listeners.forEach(fn => fn(events));
     }
   }

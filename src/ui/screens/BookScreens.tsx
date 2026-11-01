@@ -10,6 +10,7 @@ import { ankiCsv, notesMarkdown } from '../../book/export';
 import type { Book, BookBlock, BookSection } from '../../book/types';
 import * as bookRepo from '../../data/bookRepo';
 import * as studyRepo from '../../data/studyRepo';
+import { resumeSection } from '../../study/library';
 import { exportText } from '../../app/exportFile';
 import { ConfirmDialog } from '../components/Dialog';
 import { AiFab, Button, NavBar, Note } from '../components/ui';
@@ -71,7 +72,7 @@ export function BookMapScreen({ route }: RootScreenProps<'BookMap'>) {
   }
   const leaves = leavesOf(d.sections);
   const done = leaves.filter(s => d.state?.sections[s.id]?.done).length;
-  const main = d.sections.find(s => s.id === d.state?.main) ?? leaves[0];
+  const main = resumeSection(d.sections, d.state);
   const search = async () => setHits(await bookRepo.searchBlocks(core.db, bookId, q, 20));
   const row = (s: BookSection) => {
     const status = studyRepo.sectionStatus(d.state, s.id, d.stuck);
@@ -94,7 +95,7 @@ export function BookMapScreen({ route }: RootScreenProps<'BookMap'>) {
         <View style={st.card}>
           <Text style={st.title}>{d.book.title}</Text>
           <Text style={st.meta}>{(d.book.author || '未知作者') + ' · ' + leaves.length + ' 节 · 已学 ' + done}</Text>
-          {main ? <Button title={'继续 ' + secLabel(main)} tone="learn" onPress={() => nav.navigate('Study', { bookId, sectionId: main.id })} style={st.btn} /> : null}
+          {main ? <Button title={(d.state?.sections[main.id]?.done ? '回看 ' : d.state ? '继续 ' : '开始阅读 ') + secLabel(main)} tone="learn" onPress={() => nav.navigate('Study', { bookId, sectionId: main.id })} style={st.btn} /> : null}
           {d.book.body.warnings?.length ? <Note tone="warn">{d.book.body.warnings.length + ' 条解析提示：' + d.book.body.warnings.slice(0, 3).join('；')}</Note> : null}
         </View>
         <View style={st.searchRow}>

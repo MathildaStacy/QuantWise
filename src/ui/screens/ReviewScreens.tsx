@@ -3,22 +3,22 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { secLabel } from '../../book/book';
-import { BOX_DAYS, dueToday, rateCard, type Rating } from '../../book/review';
+import { leavesOf, secLabel } from '../../book/book';
+import { addDays, BOX_DAYS, dueToday, rateCard, type Rating } from '../../book/review';
 import type { BookSection } from '../../book/types';
 import * as bookRepo from '../../data/bookRepo';
 import * as studyRepo from '../../data/studyRepo';
 import { beijingIso } from '../../market/clock';
-import { dismissWrapup, saveWrapup, useStudy, wrapDraft, type WrapDraft } from '../../study/session';
+import { saveWrapup, useStudy, wrapDraft, type WrapDraft } from '../../study/session';
 import { BlockInline } from '../components/BookBlock';
-import { Button, NavBar, Note } from '../components/ui';
+import { Button, Details, NavBar, Note } from '../components/ui';
 import { useCore } from '../hooks';
 import type { RootScreenProps, RootStackParamList } from '../navigation/types';
 import { rc } from '../readTheme';
 import { color, num, PAD } from '../theme';
-import { toast } from '../toast';
+import { loadReadingState, saveReadingState } from '../../study/readingState';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -27,37 +27,68 @@ export function SectionDoneScreen({ route }: RootScreenProps<'SectionDone'>) {
   const nav = useNavigation<Nav>();
   const s = useStudy(x => x.s);
   const [d, setD] = useState<WrapDraft | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const lock = useRef(false);
   useEffect(() => {
-    if (s && !d) {
-      setD(wrapDraft(s));
-    }
-  }, [s, d]);
+    if (!s) return;
+    let alive = true;
+    loadReadingState(core.db, s.book.id, s.section.id).then(ui => {
+      if (alive) setD(ui.wrap ?? wrapDraft(s));
+    }).catch(e => setSaveError(String(e)));
+    return () => { alive = false; };
+    // 当前小节固定；流式消息不会覆盖正在编辑的草稿。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [core, s?.book.id, s?.section.id]);
+  useEffect(() => {
+    if (d && s && !saved && !lock.current) saveReadingState(core.db, s.book.id, s.section.id, { wrap: d }).catch(e => setSaveError(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [core, d]);
   if (!s || !d || s.book.id !== route.params.bookId) {
     return (
       <View style={st.page}>
-        <NavBar title="本节小结" back />
+        <NavBar title="本节小结" back /><Text style={st.body}>{saveError || '加载小结…'}</Text>
       </View>
     );
   }
   const setCard = (i: number, patch: Partial<WrapDraft['cards'][number]>) => setD({ ...d, cards: d.cards.map((c, k) => (k === i ? { ...c, ...patch } : c)) });
-  const save = async () => {
-    const next = await saveWrapup(core, d);
-    toast.show('已保存：摘要 + ' + d.cards.filter(c => c.on && c.front.trim()).length + ' 张闪卡' + (next ? '，进度移到 ' + next.id : ''), 'learn');
-    if (next) {
-      nav.pop();
-      nav.replace('Study', { bookId: s.book.id, sectionId: next.id });
-    } else {
-      nav.goBack();
+  const save = async (continueReading: boolean) => {
+    if (lock.current || saved) return;
+    lock.current = true;
+    setSaving(true);
+    setSaveError('');
+    try {
+      const next = await saveWrapup(core, d);
+      setSaved(true);
+      if (continueReading && next) {
+        nav.pop();
+        nav.replace('Study', { bookId: s.book.id, sectionId: next.id });
+      }
+    } catch (e) {
+      lock.current = false;
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
     }
   };
+  if (saved) return <View style={st.page}><NavBar title="已保存" back /><View style={st.card}>
+    <Text style={st.h}>这一节，先学到这里</Text>
+    <Text style={st.body}>小结已保存在本机，学习进度已保留。</Text>
+    <Text style={st.body}>{d.cards.filter(c => c.on && c.front.trim()).length ? '首次复习：' + addDays(beijingIso().slice(0, 10), 1) + ' · ' + d.cards.filter(c => c.on && c.front.trim()).length + ' 张闪卡' : '本次仅保存小结，没有新增闪卡。'}</Text>
+    <Button title="返回书架" tone="learn" onPress={() => nav.popTo('Tabs', { screen: 'Learn' })} />
+    <Button title="查看复习安排" onPress={() => nav.replace('Review')} />
+  </View></View>;
   return (
     <View style={st.page}>
       <NavBar title="本节小结" sub={secLabel(s.section)} back />
       <ScrollView contentContainerStyle={st.pad} keyboardShouldPersistTaps="handled">
         <View style={st.card}>
-          <Text style={st.k}>{d.from ? 'AI 起草，改好再保存' : '本机草稿（没有 AI 起草的小结）'}</Text>
+          <Text style={st.k}>{d.from ? 'AI 小结草稿 · 确认后保存' : '本机草稿 · 确认后保存'}</Text>
           <Text style={st.h}>摘要</Text>
-          <TextInput value={d.summary} onChangeText={summary => setD({ ...d, summary })} multiline style={st.ta} placeholder="这一节讲了什么（120 字以内）" placeholderTextColor={color.ink3} />
+          {editing ? <TextInput accessibilityLabel="小结摘要" value={d.summary} onChangeText={summary => setD({ ...d, summary })} multiline style={st.ta} placeholder="这一节讲了什么（120 字以内）" placeholderTextColor={color.ink3} /> : <Text style={st.body}>{d.summary}</Text>}
+          <Button title={editing ? "完成编辑" : "编辑小结"} onPress={() => setEditing(v => !v)} />
           {d.skipped.length ? <Text style={st.k}>跳过了第 {d.skipped.map(x => x + 1).join('、')} 步</Text> : null}
         </View>
         <View style={st.card}>
@@ -67,26 +98,22 @@ export function SectionDoneScreen({ route }: RootScreenProps<'SectionDone'>) {
         <View style={st.card}>
           <Text style={st.h}>闪卡草稿 <Text style={st.k}>默认全选，不要的取消</Text></Text>
           {d.cards.map((c, i) => (
-            <Pressable key={i} style={st.cardRow} onPress={() => setCard(i, { on: !c.on })} accessibilityRole="checkbox" accessibilityState={{ checked: c.on }}>
+            <View key={i} style={st.cardRow}>
+              <Pressable style={st.cardCheck} onPress={() => setCard(i, { on: !c.on })} accessibilityRole="checkbox" accessibilityLabel={'保存闪卡：' + c.front} accessibilityState={{ checked: c.on }}>
               <View style={[st.box, c.on && st.boxOn]}>{c.on ? <Text style={st.tick}>✓</Text> : null}</View>
-              <View style={st.grow}>
-                <TextInput value={c.front} onChangeText={front => setCard(i, { front })} style={st.front} multiline />
-                <TextInput value={c.back} onChangeText={back => setCard(i, { back })} style={st.back} multiline />
+              </Pressable><View style={st.grow}>
+                {editing ? <><TextInput accessibilityLabel="闪卡问题" value={c.front} onChangeText={front => setCard(i, { front })} style={st.front} multiline />
+                <TextInput accessibilityLabel="闪卡答案" value={c.back} onChangeText={back => setCard(i, { back })} style={st.back} multiline /></> : <><Text style={st.body}>{c.front}</Text><Text style={st.k}>{c.back}</Text></>}
               </View>
-            </Pressable>
+            </View>
           ))}
-          <Button title="加一张" small onPress={() => setD({ ...d, cards: [...d.cards, { front: '', back: '', on: true }] })} style={st.add} />
+          <Button title="加一张" small onPress={() => { setEditing(true); setD({ ...d, cards: [...d.cards, { front: '', back: '', on: true }] }); }} style={st.add} />
         </View>
-        <View style={st.foot}>
-          <Button
-            title="不保存"
-            onPress={async () => {
-              await dismissWrapup(core, d);
-              nav.goBack();
-            }}
-            style={st.grow}
-          />
-          <Button title="保存，学下一节" tone="learn" onPress={save} style={st.grow2} />
+        {saveError ? <Note tone="warn">保存未完成：{saveError}。草稿仍在，可以重试。</Note> : null}
+        <View style={st.actions}>
+          <Button title={saving ? '保存中…' : '保存，今天到这里'} tone="learn" disabled={saving} onPress={() => save(false)} />
+          {leavesOf(s.sections).findIndex(x => x.id === s.section.id) < leavesOf(s.sections).length - 1 ? <Button title="保存，继续下一节" disabled={saving} onPress={() => save(true)} /> : null}
+          <Button title="返回继续读" disabled={saving} onPress={() => nav.goBack()} />
         </View>
       </ScrollView>
     </View>
@@ -128,6 +155,8 @@ export function ReviewScreen() {
   useFocusEffect(reload);
   const today = beijingIso().slice(0, 10);
   const due = d ? dueToday(d.cards, today) : [];
+  const nextDue = d?.cards.filter(c => c.due > today).map(c => c.due).sort()[0];
+  const reviewedToday = d?.cards.filter(c => c.reviewedAt?.slice(0, 10) === today).length ?? 0;
   const boxes = [1, 2, 3, 4, 5].map(n => d?.cards.filter(c => c.box === n).length ?? 0);
   const max = Math.max(1, ...boxes);
   const open = (d?.stuck ?? []).filter(x => !x.resolvedAt);
@@ -151,8 +180,13 @@ export function ReviewScreen() {
               ))}
             </View>
           </View>
-          <Button title={due.length ? '开始复习' : '今天复习完了'} tone="learn" disabled={!due.length} onPress={() => nav.navigate('ReviewRun')} />
-          <Text style={st.k}>盒子 1–5 分别隔 {BOX_DAYS.join(' / ')} 天再复习：记得升一盒，模糊不动，忘了回盒 1。</Text>
+          {due.length ? <Button title="开始复习" tone="learn" onPress={() => nav.navigate('ReviewRun')} /> : <>
+            <Text style={st.h}>{!d ? '加载复习安排…' : !d.cards.length ? '还没有闪卡' : reviewedToday ? '今天的复习已完成' : '今天没有到期的闪卡'}</Text>
+            {d && !d.cards.length ? <><Text style={st.body}>学完一小节，在小结中保存第一张闪卡。</Text><Button title="去学一小节" onPress={() => nav.navigate('Tabs', { screen: 'Learn' })} /></> : null}
+            {nextDue ? <Text style={st.body}>下次复习：{nextDue} · {d?.cards.filter(c => c.due === nextDue).length} 张</Text> : null}
+            {reviewedToday ? <Text style={st.k}>今天已复习 {reviewedToday} 张</Text> : null}
+          </>}
+          <Details title="复习如何安排"><Text style={st.k}>盒子 1–5 分别隔 {BOX_DAYS.join(' / ')} 天再复习：记得升一盒，模糊不动，忘了回盒 1。</Text></Details>
         </View>
         <View style={st.card}>
           <Text style={st.h}>卡点清单</Text>
@@ -213,7 +247,7 @@ export function ReviewRunScreen() {
       <View style={st.page}>
         <NavBar title="复习" back />
         <View style={[st.card, st.center]}>
-          <Text style={st.h}>今天复习完了</Text>
+          <Text style={st.h}>{queue.length ? '本轮复习已完成' : '当前没有待复习的闪卡'}</Text>
           <Text style={st.body}>记得 {stat.good} · 模糊 {stat.hard} · 忘了 {stat.again}</Text>
           {stat.again ? <Note>忘了的卡回到盒 1，明天再来；对应的点加进了卡点清单。</Note> : null}
           <Button title="返回" onPress={() => nav.goBack()} />
@@ -245,6 +279,8 @@ export function ReviewRunScreen() {
 }
 
 const st = StyleSheet.create({
+  cardCheck: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  actions: { padding: 16, gap: 10 },
   page: { flex: 1, backgroundColor: color.bg },
   pad: { paddingBottom: 40 },
   card: { backgroundColor: color.card, marginBottom: 8, paddingHorizontal: PAD, paddingVertical: 12, gap: 8 },

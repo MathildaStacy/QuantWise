@@ -8,17 +8,19 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { universeEnv } from '../../ai/tools/quant';
 import { SAMPLE_BOOK_ID } from '../../book/sample';
 import * as quantRepo from '../../data/quantRepo';
-import { runFactorTest, SampleError, type TestResult } from '../../quant/backtest';
+import { runFactorTest, SampleError } from '../../quant/backtest';
 import { chartTitle, factorCharts } from '../../quant/charts';
 import { FACTOR_IDS, FACTORS, type FactorId } from '../../quant/factors';
 import { loadPanel, prepareBars, refreshHs300, universeCodes, UNIVERSE_NAME, type PrepareProgress, type UniverseId } from '../../quant/universe';
 import { ChartCard } from '../charts/ChartCard';
 import { QuantChart } from '../charts/QuantChart';
-import { howComputed, readout } from '../charts/quantDraw';
-import { AiFab, Button, NavBar, Note } from '../components/ui';
+import { howComputed, pointCount, readout } from '../charts/quantDraw';
+import { Button, Details, NavBar, Note } from '../components/ui';
 import { useAiContext, useCore } from '../hooks';
 import type { RootScreenProps, RootStackParamList } from '../navigation/types';
 import { rc } from '../readTheme';
+import { beijingIso } from '../../market/clock';
+import { factorConclusion, snapshotQuestion, type FactorSnapshot } from '../../quant/interpret';
 import { color, num, PAD } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -56,18 +58,23 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
     groups: 5,
     costBp: 15,
   });
+  const [draft, setDraft] = useState(cfg);
+  const [paramsOpen, setParamsOpen] = useState(false);
+  const changed = JSON.stringify(draft) !== JSON.stringify(cfg);
   const [prog, setProg] = useState<PrepareProgress | null>(null);
-  const [res, setRes] = useState<{ r: TestResult; codes: number; from: string } | null>(null);
+  const [res, setRes] = useState<FactorSnapshot | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ready, setReady] = useState<boolean | null>(null);
   const abort = useRef<AbortController | null>(null);
   const env = universeEnv(core);
-  const set = (p: Partial<Cfg>) => setCfg(c => ({ ...c, ...p }));
+  const set = (p: Partial<Cfg>) => setDraft(c => ({ ...c, ...p }));
 
   // 沪深 300 要用户点「准备数据」；示例池和自选打开就自动准备（几只到几十只，几秒钟）
   useEffect(() => {
     let alive = true;
     setRes(null);
+    setProg(null);
+    setReady(null);
     setErr(null);
     (async () => {
       const { codes } = await universeCodes(env, cfg.universe);
@@ -87,7 +94,7 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
       try {
         const r = runFactorTest(panel, { factor: cfg.factor, hold: cfg.hold, groups: cfg.groups, costBp: cfg.costBp });
         if (alive) {
-          setRes({ r, codes: panel.codes.length, from: panel.dates[0] ?? '' });
+          setRes({ r, universe: cfg.universe, computedAt: beijingIso(), codes: panel.codes.length, from: panel.dates[0] ?? '' });
         }
       } catch (e) {
         if (alive) {
@@ -138,13 +145,20 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
       <NavBar title="因子实验室" back />
       <ScrollView contentContainerStyle={st.pad}>
         <View style={st.card}>
-          <Chips label="股票池" items={(['sample', 'watch', 'hs300'] as UniverseId[]).map(u => [u, u === 'sample' ? '示例池' : u === 'watch' ? '自选 + 持仓' : '沪深 300'])} value={cfg.universe} onPick={universe => set({ universe })} />
-          <Chips label="因子" items={FACTOR_IDS.map(id => [id, FACTORS[id].name])} value={cfg.factor} onPick={factor => set({ factor })} />
-          <Chips label="调仓" items={[5, 10, 20, 60].map(v => [v, '每 ' + v + ' 日'])} value={cfg.hold} onPick={hold => set({ hold })} />
-          <Chips label="分组" items={[3, 5, 10].map(v => [v, v + ' 组'])} value={cfg.groups} onPick={groups => set({ groups })} />
-          <Chips label="单边成本" items={[0, 15, 30].map(v => [v, v ? '万 ' + v : '不扣'])} value={cfg.costBp} onPick={costBp => set({ costBp })} />
+          <Text style={st.h}>{f.name}</Text><Text style={st.k}>{UNIVERSE_NAME[cfg.universe]} · 每 {cfg.hold} 日调仓 · {cfg.groups} 组 · 单边成本 {cfg.costBp}bp</Text>
+          <Button title={paramsOpen ? '收起参数' : '调整参数'} onPress={() => setParamsOpen(v => !v)} />
+          {paramsOpen ? <>
+          <Chips label="股票池" items={(['sample', 'watch', 'hs300'] as UniverseId[]).map(u => [u, u === 'sample' ? '示例池' : u === 'watch' ? '自选 + 持仓' : '沪深 300'])} value={draft.universe} onPick={universe => set({ universe })} />
+          <Chips label="因子" items={FACTOR_IDS.map(id => [id, FACTORS[id].name])} value={draft.factor} onPick={factor => set({ factor })} />
+          <Chips label="调仓" items={[5, 10, 20, 60].map(v => [v, '每 ' + v + ' 日'])} value={draft.hold} onPick={hold => set({ hold })} />
+          <Chips label="分组" items={[3, 5, 10].map(v => [v, v + ' 组'])} value={draft.groups} onPick={groups => set({ groups })} />
+          <Chips label="单边成本" items={[0, 15, 30].map(v => [v, v ? '万 ' + v : '不扣'])} value={draft.costBp} onPick={costBp => set({ costBp })} />
+          <Button title="应用参数并计算" tone="learn" onPress={() => { setCfg({ ...draft }); setParamsOpen(false); }} />
+          <Button title="取消修改" onPress={() => { setDraft(cfg); setParamsOpen(false); }} />
+          </> : null}
           <Text style={st.k}>{f.formula}{f.approx ? '（用今天的股本往回推，近似）' : ''} · 书里在 {f.section}</Text>
         </View>
+        {changed ? <Note style={st.note}>参数已更改，下面仍是上次结果。应用参数后重新计算。</Note> : null}
         {ready === false ? (
           <View style={st.card}>
             <Text style={st.h}>准备沪深 300 数据</Text>
@@ -160,8 +174,15 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
         {!r && !err && ready ? <Text style={[st.k, st.padH]}>{prog && prog.done < prog.total ? '准备数据 ' + prog.done + ' / ' + prog.total : '计算中…'}</Text> : null}
         {r && res ? (
           <>
+            <View style={st.card}>
+              <Text style={st.headline}>{Math.abs(r.t) < 2 ? '先看证据，再下结论' : '有样本内证据，仍需验证'}</Text>
+              <Text style={st.conclusion}>{factorConclusion(r)}</Text>
+              <Text style={st.k}>{res.codes} 只当前成分 · {r.periods} 期 · {r.dates[0]} 至 {r.dates[r.dates.length - 1]}</Text>
+              <Text style={st.k}>计算于 {res.computedAt.replace('T', ' ').slice(0, 19)} · 当前成分存在幸存者偏差</Text>
+              <Button title="解释这次结果" tone="learn" onPress={() => nav.navigate('Study', { bookId: SAMPLE_BOOK_ID, sectionId: f.section, ask: snapshotQuestion(res), askLabel: '解释这次' + f.name + '实验结果', askSnapshot: true })} />
+            </View>
             <View style={st.stats}>
-              {stat('Rank IC 均值', sgn(r.icMean, 3), Math.abs(r.icMean) >= 0.03 ? '过了 0.03' : '没到 0.03', Math.abs(r.icMean) < 0.03)}
+              {stat('Rank IC 均值', sgn(r.icMean, 3), '排序关系，不等于收益', Math.abs(r.icMean) < 0.03)}
               {stat('t 值', r.t.toFixed(2), r.periods + ' 期' + (Math.abs(r.t) < 2 ? '，不显著' : ''), Math.abs(r.t) < 2)}
               {stat('ICIR', r.icir.toFixed(2), '年化 ' + r.icirAnnual.toFixed(2))}
               {stat('IC 为正', (r.icPositive * 100).toFixed(0) + '%', '')}
@@ -169,19 +190,18 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
               {stat('最高组换手', (r.turnover * 100).toFixed(0) + '%', '每期')}
             </View>
             <View style={st.charts}>
-              {factorCharts(r, cfg.universe).map(c => (
-                <ChartCard key={c.kind} data={c} />
-              ))}
+              <ChartCard data={factorCharts(r, cfg.universe)[0]} />
+              <Details title="更多图表：IC 与各组收益">
+                {factorCharts(r, cfg.universe).slice(1).map(c => <ChartCard key={c.kind} data={c} />)}
+              </Details>
             </View>
             <Note style={st.note}>{res.codes} 只、{res.from} 起的前复权日线。股票池用的是当前成分，有幸存者偏差；t 值不到 2 不算显著。口径见《因子投资入门》4.1–4.5。</Note>
             <View style={st.row2}>
-              <Button title="让 AI 解读" tone="learn" small style={st.grow} onPress={() => nav.navigate('Study', { bookId: SAMPLE_BOOK_ID, sectionId: f.section, ask: '解读一下因子实验室的结果：' + f.name + '、' + UNIVERSE_NAME[cfg.universe] + '、每 ' + cfg.hold + ' 日调仓、' + cfg.groups + ' 组、单边成本万 ' + cfg.costBp + '。用 factor_test 按同样的参数重跑一次再说结论。' })} />
               <Button title={'书里怎么说（' + f.section + '）'} small style={st.grow} onPress={() => nav.navigate('Study', { bookId: SAMPLE_BOOK_ID, sectionId: f.section, mode: 'read' })} />
             </View>
           </>
         ) : null}
       </ScrollView>
-      <AiFab />
     </View>
   );
 }
@@ -196,6 +216,7 @@ export function ChartFullScreen({ route }: RootScreenProps<'ChartFull'>) {
       <ScrollView contentContainerStyle={st.pad}>
         <View style={st.card}>
           <QuantChart data={c} full onPick={setI} />
+          <Details title="查看数据表">{Array.from({ length: pointCount(c) }, (_, index) => <Text key={index} selectable style={[st.body, num]}>{readout(c, index)}</Text>)}</Details>
           <Text style={[st.readout, num]}>{i == null ? '在图上按住或拖动，看每一天的数' : readout(c, i)}</Text>
         </View>
         <View style={st.card}>
@@ -211,13 +232,15 @@ export function ChartFullScreen({ route }: RootScreenProps<'ChartFull'>) {
 }
 
 const st = StyleSheet.create({
-  page: { flex: 1, backgroundColor: color.bg },
+  headline: { fontSize: 22, lineHeight: 32, color: rc.ink, fontWeight: '600' },
+  conclusion: { fontSize: 16, lineHeight: 27, color: rc.ink, marginVertical: 8 },
+  page: { flex: 1, backgroundColor: rc.page },
   pad: { paddingBottom: 96 },
   card: { backgroundColor: color.card, marginBottom: 8, paddingHorizontal: PAD, paddingVertical: 10, gap: 6 },
   cfgRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   cfgK: { width: 56, fontSize: 13, color: color.ink2, paddingTop: 5 },
   chips: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  chip: { borderRadius: 14, backgroundColor: color.bg, paddingHorizontal: 9, paddingVertical: 4 },
+  chip: { minHeight: 48, justifyContent: 'center', borderRadius: 14, backgroundColor: color.bg, paddingHorizontal: 9, paddingVertical: 4 },
   chipOn: { backgroundColor: rc.main },
   chipT: { fontSize: 12, color: color.ink2 },
   white: { color: '#FFFFFF' },
@@ -230,8 +253,8 @@ const st = StyleSheet.create({
   note: { marginHorizontal: 10, marginBottom: 8 },
   padH: { paddingHorizontal: PAD, paddingVertical: 8 },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 10, paddingBottom: 8 },
-  stat: { width: '31.8%', backgroundColor: color.card, borderRadius: 10, padding: 8 },
-  statK: { fontSize: 10, color: color.ink3 },
+  stat: { width: '48%', backgroundColor: color.card, borderRadius: 10, padding: 8 },
+  statK: { fontSize: 12, color: color.ink3 },
   statV: { fontSize: 17, fontWeight: '600', color: color.ink },
   weak: { color: color.ink2 },
   charts: { paddingHorizontal: 10 },

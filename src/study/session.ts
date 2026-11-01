@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { activeService, aiKeys, aiTransport } from '../ai/chat';
 import { AiError, callModel } from '../ai/http';
 import { EMPTY_ANSWER_ERROR } from '../ai/messageText';
+import { inferCapabilities } from '../ai/models';
 import { buildRequest } from '../ai/protocol';
 import { installId, setProviderCache } from '../ai/services';
 import type { AiService, Part, StoredMessage, ToolUi } from '../ai/types';
@@ -21,6 +22,7 @@ import * as studyRepo from '../data/studyRepo';
 import { beijingIso } from '../market/clock';
 import { STUDY_PROMPT, studyContext, studyState } from './prompt';
 import { quick, type QuickKind } from './quick';
+import { loadReadingState, saveReadingState } from './readingState';
 import { runStudyTool, STUDY_TOOL_DEFS } from './tools';
 
 export const MAX_STUDY_ROUNDS = 6;
@@ -51,6 +53,7 @@ interface StudyStore {
 export const useStudy = create<StudyStore>(() => ({ s: null, busy: null, error: null }));
 
 let abort: AbortController | null = null;
+let openVersion = 0;
 
 export function stopStudy(): void {
   abort?.abort();
@@ -58,6 +61,9 @@ export function stopStudy(): void {
 
 const patch = (f: (s: StudySession) => Partial<StudySession>) =>
   useStudy.setState(st => (st.s ? { s: { ...st.s, ...f(st.s) } } : st));
+
+const patchSession = (s: StudySession, f: (current: StudySession) => Partial<StudySession>) =>
+  patch(current => current.book.id === s.book.id && current.section.id === s.section.id ? f(current) : {});
 
 export const progressNow = (s: StudySession) => studyRepo.progressOf(s.state, s.section.id);
 
@@ -68,6 +74,7 @@ export async function openSection(
   sectionId?: string,
   mode?: studyRepo.StudyMode,
 ): Promise<void> {
+  const version = ++openVersion;
   const book = await bookRepo.book(core.db, bookId);
   if (!book) {
     throw new Error('这本书不在书架上了');
@@ -97,10 +104,16 @@ export async function openSection(
     activeAt: now,
     sections: old?.sections ?? {},
   };
-  await studyRepo.saveState(core.db, state);
   const blocks = await bookRepo.sectionBlocks(core.db, bookId, target.id);
   const threadId = await studyRepo.studyThreadId(core.db, bookId, target.id);
   const messages = threadId ? await aiRepo.messages(core.db, threadId) : [];
+  if (version !== openVersion) return;
+  await core.db.transaction(async db => {
+    const latest = await studyRepo.getState(db, bookId);
+    state.sections = latest?.sections ?? state.sections;
+    await studyRepo.saveState(db, state);
+  });
+  if (version !== openVersion) return;
   const s: StudySession = {
     book,
     sections,
@@ -112,7 +125,7 @@ export async function openSection(
     messages,
     loaded: loadedOf(target.id, messages),
     extra: {},
-    awayDays: messages.length ? 0 : awayDays,
+    awayDays,
   };
   useStudy.setState({ s, error: null });
   await loadExtra(core, s);
@@ -143,7 +156,7 @@ async function loadExtra(core: AppCore, s: StudySession): Promise<void> {
   for (const id of want) {
     extra[id] = await bookRepo.sectionBlocks(core.db, s.book.id, id);
   }
-  patch(() => ({ extra }));
+  patchSession(s, () => ({ extra }));
 }
 
 /** 引用校验（§6.5）：所在小节读过、或者这个块被 search_book 命中过，并且块存在。 */
@@ -236,6 +249,8 @@ export interface StudyAsk {
   skip?: number;
   /** 从读书模式某一段发起的：问答结束后贴一个便签在这一段上。 */
   pinSeq?: number;
+  /** 实验快照解读只能解释已有数据，不开放重新计算的工具。 */
+  snapshot?: boolean;
 }
 
 export function quickAsk(s: StudySession, kind: QuickKind, block?: BookBlock): StudyAsk {
@@ -296,11 +311,16 @@ async function collectResults(core: AppCore, msgs: StoredMessage[]): Promise<str
   return out;
 }
 
-export async function askStudy(core: AppCore, a: StudyAsk): Promise<void> {
+export async function askStudy(core: AppCore, a: StudyAsk): Promise<boolean> {
   const s0 = useStudy.getState().s;
   if (!s0 || !a.question.trim() || useStudy.getState().busy) {
-    return;
+    return false;
   }
+  useStudy.setState({ busy: '准备讲解…', error: null });
+  const controller = new AbortController();
+  abort = controller;
+  try {
+  await saveReadingState(core.db, s0.book.id, s0.section.id, { pending: a });
   let svc = await activeService(core);
   if (!svc) {
     throw new AiError('auth', '请先在「我的 → 供应商与模型」配置 Key 并启用一个对话模型');
@@ -309,7 +329,7 @@ export async function askStudy(core: AppCore, a: StudyAsk): Promise<void> {
   if (!key) {
     throw new AiError('auth', '「' + svc.name + '」还没有保存 API Key');
   }
-  svc = { ...svc, search: false, mcp: false };
+  svc = { ...svc, search: false, mcp: false, ...(a.snapshot ? { capabilities: { ...(svc.capabilities ?? inferCapabilities(svc.model)), tools: false } } : {}) };
   const now = beijingIso();
   let threadId = s0.threadId;
   if (threadId == null) {
@@ -322,14 +342,9 @@ export async function askStudy(core: AppCore, a: StudyAsk): Promise<void> {
   }
   const p = { ...progressNow(s0) };
   const step = a.step == null ? s0.state.step : Math.max(0, Math.min(s0.steps.length - 1, a.step));
-  if (a.step != null) {
-    p.taught = Math.max(p.taught, step);
-  }
   if (a.skip != null && !p.skipped.includes(a.skip)) {
     p.skipped = [...p.skipped, a.skip];
   }
-  const state = { ...s0.state, step, activeAt: now, sections: { ...s0.state.sections, [s0.section.id]: p } };
-  await studyRepo.saveState(core.db, state);
   const stuck = (await studyRepo.stuckOf(core.db, s0.book.id)).filter(x => !x.resolvedAt).map(x => x.sectionId + '：' + x.text);
   const results = await collectResults(core, await aiRepo.messages(core.db, threadId));
   const ctx =
@@ -340,18 +355,33 @@ export async function askStudy(core: AppCore, a: StudyAsk): Promise<void> {
     { threadId, role: 'user', parts: [{ t: 'text', text: ctx }, { t: 'text', text: a.question.trim() }], ui: { question: a.label.trim() } },
     now,
   );
-  patch(() => ({ threadId, state, awayDays: 0 }));
+  patchSession(s0, () => ({ threadId, awayDays: 0 }));
   await reload(core, threadId);
-  await runLoop(core, svc, key, threadId);
-  if (a.pinSeq != null) {
+  const success = await runLoop(core, svc, key, threadId, s0, controller.signal);
+  if (success) {
+    const committed = await core.db.transaction(async db => {
+      const latest = (await studyRepo.getState(db, s0.book.id)) ?? s0.state;
+      const progress = studyRepo.progressOf(latest, s0.section.id);
+      const state = { ...latest, step: latest.main === s0.section.id ? step : latest.step, activeAt: now, sections: { ...latest.sections, [s0.section.id]: { ...progress, skipped: [...new Set([...progress.skipped, ...p.skipped])], taught: a.step == null ? progress.taught : Math.max(progress.taught, step) } } };
+      await studyRepo.saveState(db, state);
+      const reading = await loadReadingState(db, s0.book.id, s0.section.id);
+      await saveReadingState(db, s0.book.id, s0.section.id, { pending: null, ...(reading.draft?.trim() === a.question.trim() ? { draft: '' } : {}) });
+      return state;
+    });
+    patch(current => current.book.id === s0.book.id ? { state: committed } : {});
+  }
+  if (success && a.pinSeq != null) {
     await studyRepo.addMark(core.db, s0.book.id, { blockSeq: a.pinSeq, kind: 'pin', text: a.label }, beijingIso());
   }
   await maybeDetour(core, threadId, userMsg);
+  return success;
+  } finally {
+    if (abort === controller) abort = null;
+    useStudy.setState({ busy: null });
+  }
 }
 
-async function runLoop(core: AppCore, svc0: AiService, key: string, threadId: number): Promise<void> {
-  abort = new AbortController();
-  const signal = abort.signal;
+async function runLoop(core: AppCore, svc0: AiService, key: string, threadId: number, session: StudySession, signal: AbortSignal): Promise<boolean> {
   let svc = svc0;
   let partial = '';
   let last = 0;
@@ -369,11 +399,13 @@ async function runLoop(core: AppCore, svc0: AiService, key: string, threadId: nu
   useStudy.setState({ busy: '思考中…', error: null });
   try {
     for (let round = 0; ; round++) {
+      if (signal.aborted) throw new Error('已停止');
       partial = '';
       const r = await call(core, svc, key, threadId, signal, paint);
       svc = r.svc;
       const parsed = r.res.parsed;
       const calls = parsed.stop === 'tool' ? parsed.parts.filter((x): x is Extract<Part, { t: 'call' }> => x.t === 'call') : [];
+      if (calls.length && svc.capabilities?.tools === false) throw new Error('这次解读仅使用已有结果，模型未返回解读文字。请重试。');
       const incomplete = parsed.stop !== 'tool' && parsed.parts.some(x => x.t === 'call');
       const empty = !calls.length && !parsed.parts.some(x => x.t === 'text' && x.text.trim());
       await aiRepo.addMessage(
@@ -395,10 +427,12 @@ async function runLoop(core: AppCore, svc0: AiService, key: string, threadId: nu
       );
       await reload(core, threadId);
       if (!calls.length) {
-        break;
+        const ok = !empty && !incomplete && parsed.stop !== 'max_tokens' && parsed.stop !== 'refusal' && !signal.aborted;
+        if (!ok) useStudy.setState({ error: signal.aborted ? '已停止，讲解进度未推进' : '这次讲解未完成，可以重试' });
+        return ok;
       }
       const over = round >= MAX_STUDY_ROUNDS;
-      const s = useStudy.getState().s!;
+      const s = session;
       const results: Part[] = [];
       const uis: ToolUi[] = [];
       for (const c of calls) {
@@ -416,16 +450,17 @@ async function runLoop(core: AppCore, svc0: AiService, key: string, threadId: nu
       await reload(core, threadId);
       if (over || signal.aborted) {
         await aiRepo.addMessage(core.db, { threadId, role: 'assistant', parts: [], ui: { error: signal.aborted ? '已停止' : '工具调用超过 ' + MAX_STUDY_ROUNDS + ' 轮，已停止' } }, beijingIso());
-        break;
+        useStudy.setState({ error: signal.aborted ? '已停止，讲解进度未推进' : '工具调用达到上限，可以重试' });
+        return false;
       }
       useStudy.setState({ busy: '思考中…' });
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = signal.aborted ? '已停止，已收到的内容已保留' : e instanceof Error ? e.message : String(e);
+    useStudy.setState({ error: msg });
     await aiRepo.addMessage(core.db, { threadId, role: 'assistant', parts: partial ? [{ t: 'text', text: partial }] : [], ui: { error: msg } }, beijingIso());
+    return false;
   } finally {
-    abort = null;
-    useStudy.setState({ busy: null });
     await reload(core, threadId);
   }
 }
@@ -437,9 +472,13 @@ async function saveProgress(core: AppCore, f: (p: studyRepo.SectionProgress) => 
   if (!s) {
     return;
   }
-  const state = { ...s.state, sections: { ...s.state.sections, [s.section.id]: f(progressNow(s)) } };
-  await studyRepo.saveState(core.db, state);
-  patch(() => ({ state }));
+  const state = await core.db.transaction(async db => {
+    const latest = (await studyRepo.getState(db, s.book.id)) ?? s.state;
+    const updated = { ...latest, sections: { ...latest.sections, [s.section.id]: f(studyRepo.progressOf(latest, s.section.id)) } };
+    await studyRepo.saveState(db, updated);
+    return updated;
+  });
+  patchSession(s, () => ({ state }));
 }
 
 /** 这一轮里 load_section 带了 detour：从这次提问开始算岔路。已经在岔路上时不变。 */
@@ -509,9 +548,13 @@ export async function setStudyMode(core: AppCore, mode: studyRepo.StudyMode) {
   if (!s || s.state.mode === mode) {
     return;
   }
-  const state = { ...s.state, mode };
-  await studyRepo.saveState(core.db, state);
-  patch(() => ({ state }));
+  const state = await core.db.transaction(async db => {
+    const latest = (await studyRepo.getState(db, s.book.id)) ?? s.state;
+    const updated = { ...latest, mode };
+    await studyRepo.saveState(db, updated);
+    return updated;
+  });
+  patchSession(s, () => ({ state }));
 }
 
 // ---------- 本节小结（§6.6） ----------
@@ -558,15 +601,30 @@ export async function saveWrapup(core: AppCore, d: WrapDraft): Promise<BookSecti
   }
   const now = beijingIso();
   const tomorrow = new Date(Date.parse(now.slice(0, 10) + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
-  await studyRepo.saveSummary(core.db, s.book.id, s.section.id, d.summary.trim(), now);
-  await studyRepo.addCards(core.db, s.book.id, s.section.id, d.cards.filter(c => c.on && c.front.trim()), tomorrow, now);
-  for (const x of d.stuck) {
-    await studyRepo.addStuck(core.db, s.book.id, s.section.id, x, now);
-  }
-  if (d.from) {
-    await patchTool(core, d.from.msgId, d.from.toolId, t => (t.wrapup ? { ...t, wrapup: { ...t.wrapup, status: 'saved' } } : t));
-  }
-  await saveProgress(core, p => ({ ...p, done: true, taught: Math.max(p.taught, s.steps.length - 1) }));
+  let state = s.state;
+  let updatedMessage: StoredMessage | undefined;
+  await core.db.transaction(async db => {
+    const latest = (await studyRepo.getState(db, s.book.id)) ?? s.state;
+    const p = studyRepo.progressOf(latest, s.section.id);
+    state = { ...latest, sections: { ...latest.sections, [s.section.id]: { ...p, done: true } } };
+    const fingerprint = JSON.stringify(d);
+    const reading = await loadReadingState(db, s.book.id, s.section.id);
+    if (reading.savedWrap === fingerprint) return;
+    await studyRepo.saveSummary(db, s.book.id, s.section.id, d.summary.trim(), now);
+    await studyRepo.addCards(db, s.book.id, s.section.id, d.cards.filter(c => c.on && c.front.trim()), tomorrow, now);
+    for (const x of d.stuck) await studyRepo.addStuck(db, s.book.id, s.section.id, x, now);
+    if (d.from) {
+      const m = s.messages.find(x => x.id === d.from!.msgId);
+      if (m?.ui?.tools) {
+        const ui = { ...m.ui, tools: m.ui.tools.map(t => t.id === d.from!.toolId && t.wrapup ? { ...t, wrapup: { ...t.wrapup, status: 'saved' as const } } : t) };
+        await aiRepo.updateMessageUi(db, m.id, ui);
+        updatedMessage = { ...m, ui };
+      }
+    }
+    await studyRepo.saveState(db, state);
+    await saveReadingState(db, s.book.id, s.section.id, { wrap: null, savedWrap: fingerprint });
+  });
+  patchSession(s, x => ({ state, messages: updatedMessage ? x.messages.map(m => m.id === updatedMessage!.id ? updatedMessage! : m) : x.messages }));
   const leaves = leavesOf(s.sections);
   return leaves[leaves.findIndex(x => x.id === s.section.id) + 1] ?? null;
 }

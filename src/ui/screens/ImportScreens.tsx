@@ -1,9 +1,9 @@
 /**
  * PDF 解析设置（页数、分片、模型、上传确认）、解析进度、MinerU Token、讲解偏好（QUANTWISE_DESIGN.md §5、§6.2）。
  */
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import * as bookRepo from '../../data/bookRepo';
 import * as repo from '../../data/repos';
@@ -43,8 +43,12 @@ export function ImportBookScreen({ route }: RootScreenProps<'ImportBook'>) {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     planPdf(path).then(setPlan).catch(e => setErr(e instanceof Error ? e.message : String(e)));
-    mineruToken.get().then(t => setToken(!!t)).catch(() => setToken(false));
   }, [path]);
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    mineruToken.get().then(t => active && setToken(!!t)).catch(() => active && setToken(false));
+    return () => { active = false; };
+  }, []));
   const start = async () => {
     setBusy(true);
     try {
