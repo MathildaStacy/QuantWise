@@ -120,7 +120,7 @@ ALTER TABLE ai_thread ADD context_snapshot TEXT;                    -- 伴读的
 
 ### 6.1 本节路线图
 
-进入一个叶子小节，先在本机切出 2–5 步（`book/steps.ts`，不调用模型）：有小标题按小标题切；否则按块数平均切，公式、列表项不和它前面的说明段拆开，每步 1–3 个块。步骤标题取该步第一段的第一个短句。Pagewise 用整理模型生成路线图，QuantWise 先用确定的切法：可测、不花钱、和原型一致；以后可以换成模型生成，再按 Pagewise 的规则校验块范围。
+进入一个叶子小节，先在本机切出 1–5 步（`book/steps.ts`，不调用模型）：有小标题按小标题切；否则按块数平均切，公式、列表项不和它前面的说明段拆开，每步 1–3 个块。步骤标题取该步第一段的第一个短句。Pagewise 用整理模型生成路线图，QuantWise 先用确定的切法：可测、不花钱、和原型一致；以后可以换成模型生成，再按 Pagewise 的规则校验块范围。
 
 ### 6.2 讲解协议（系统提示，所有伴读对话共用一份缓存）
 
@@ -237,6 +237,7 @@ type ChartData =
 
 - 独立公式（`$$…$$`、MinerU 的 equation 块）：离线 MathJax 3 在一个隐藏的 WebView 里转成 SVG，`SvgXml` 显示（移植 Pagewise `services/math`）。内存缓存 300 条；3 秒没渲染出来或报错就显示原始 TeX（等宽字体）。
 - 行内公式（`$…$`）：本机把简单 TeX 转成带 Unicode 上下标的文字（$r_t$ → rₜ，$\sqrt{252}$ → √252，希腊字母、×、≈、≤）；转不了的保留原文、等宽显示。行内用 SVG 在 RN 的 Text 里对不齐基线，所以不用。
+- v0.1.1 起忽略数学模式中的源空白（包括 MinerU 插入的逐字符空格），按运算符补空格；`\text{…}` 等文本命令保留词间空格。OCR 本身识错或漏掉的内容不会自动补写。
 - MathJax 资源在 `postinstall` 时从 `node_modules/mathjax` 复制到 `android/app/src/main/assets/math/`（不进 git，CI 和本机都会生成）。
 
 ## 10. 新增依赖
@@ -264,7 +265,7 @@ type ChartData =
 | 伴读运行时 | 内存库 + 脚本化的 SSE 回复：讲解 → `load_section`（岔路）→ 引用校验 → `plot_chart` 存图 → `factor_test` → `ask_quiz` 作答进 `<action_results>` → `propose_section_wrapup` → 保存后进度前移；请求结构（工具排序、两个缓存断点、`<study_state>`） |
 | AI 助手 | 工具数 39、排序；`plot_chart` / `factor_test` 在助手里能用 |
 | 界面 | 书架、地图、听讲（含图表卡片）、读书、小结、复习、因子实验室的渲染测试 |
-| 真机 / 模拟器 | Pixel 10 Pro 模拟器：导入 Markdown、示例教材听讲（本地模拟服务）、读书、小结、复习、因子实验室（真实行情）、AI 助手画图。真实模型和 MinerU 需要你的 Key / Token，见发布说明 |
+| 真机 / 模拟器 | 独立 QuantWise_Test 模拟器已用真实模型走通听讲、行情举例、因子检验、检查题、小结和闪卡保存，并通过 MinerU 导入 5 页 PDF；公式和图表标签修复已在 release APK 上走查。见 [v0.1.1 发布说明](releases/v0.1.1.md) |
 
 ## 12. 实施顺序
 
