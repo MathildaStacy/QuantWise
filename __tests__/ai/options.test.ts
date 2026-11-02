@@ -4,6 +4,7 @@ import {
   capabilitiesOf,
   inferCapabilities,
   normaliseConfig,
+  protocolNotice,
   resolvedService,
   searchAvailability,
 } from '../../src/ai/models';
@@ -11,6 +12,7 @@ import {
   buildRequest,
   endpointOf,
   parseResponse,
+  retainedRaw,
   type RequestInput,
 } from '../../src/ai/protocol';
 import { kimiSearch } from '../../src/ai/search';
@@ -160,6 +162,8 @@ test.each([
   ['glm-4.7', ['off', 'on']],
   ['glm-5.3', ['low', 'high', 'max']],
   ['gpt-6.1-sol', ['low', 'medium', 'high', 'xhigh', 'max']],
+  ['gpt-5.3-codex', ['low', 'medium', 'high', 'xhigh']],
+  ['gpt-5-codex', ['low', 'medium', 'high']],
 ] as [string, Effort[]][])('模型 %s 只提供实际可用档位', (id, levels) => {
   expect(inferCapabilities(id).thinking).toEqual(levels);
 });
@@ -652,4 +656,36 @@ test('引用贴在段落句尾，Kimi 等普通编号 URL 统一映射为真实�
   expect(
     citedText('结论[7](https://example.com/a)', { ...search, citations: [] }),
   ).toBe('结论[1](source:0)');
+});
+
+test('Codex：托管搜索未确认按未知处理；不在 Responses 协议下时提示改协议', () => {
+  expect(inferCapabilities('gpt-5.3-codex')).toMatchObject({ search: null, known: true, thinkingStyle: 'reasoning' });
+  const chat = provider('openai', 'gpt-5.3-codex', 'chat');
+  expect(searchAvailability(chat, chat.models[0]).ok).toBe(false);
+  expect(protocolNotice(chat, 'gpt-5.3-codex')).toContain('Responses');
+  expect(protocolNotice(provider('openai', 'gpt-5.3-codex', 'openai'), 'gpt-5.3-codex')).toBeNull();
+  expect(protocolNotice(chat, 'gpt-5.5')).toBeNull();
+});
+
+test('整理请求不改工具前缀：Anthropic 不发 tool_choice（会让 messages 缓存失效），Responses 用 none 并保留搜索工具', () => {
+  const a = service(provider('anthropic', 'claude-sonnet-5-5', 'anthropic'), 'low', true);
+  const normal = buildRequest(input(a)).body;
+  const compact = buildRequest({ ...input(a), noTools: true }).body;
+  expect(compact.tools).toEqual(normal.tools);
+  expect(compact.tool_choice).toBeUndefined();
+  const o = service(provider('openai', 'gpt-5.3-codex', 'openai'), 'medium', false);
+  const oSearch = { ...o, search: true };
+  const on = buildRequest(input(oSearch)).body;
+  const oc = buildRequest({ ...input(oSearch), noTools: true }).body;
+  expect(oc.tools).toEqual(on.tools);
+  expect(oc.tool_choice).toBe('none');
+  expect(oc.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+  expect(buildRequest({ ...input(o), tools: [], noTools: true }).body.tool_choice).toBeUndefined();
+});
+
+test('整理后保留的回答：Anthropic 去掉思考块，其他协议原样（DeepSeek 要回传 reasoning_content）', () => {
+  const raw = { protocol: 'anthropic' as const, model: 'claude-sonnet-5-5', items: [{ type: 'thinking', thinking: 't', signature: 's' }, { type: 'redacted_thinking', data: 'x' }, { type: 'text', text: '答' }, { type: 'tool_use', id: 'u', name: 'n', input: {} }] };
+  expect(retainedRaw(raw).items).toEqual([{ type: 'text', text: '答' }, { type: 'tool_use', id: 'u', name: 'n', input: {} }]);
+  const ds = { protocol: 'chat' as const, model: 'deepseek-reasoner', items: [{ role: 'assistant', content: '答', reasoning_content: 'r' }] };
+  expect(retainedRaw(ds)).toBe(ds);
 });

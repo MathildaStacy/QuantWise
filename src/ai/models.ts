@@ -166,6 +166,17 @@ export function inferCapabilities(id: string): ModelCapabilities {
       thinkingStyle: 'reasoning',
     });
   }
+  // Codex 只有 Responses 端点。官方模型页（gpt-5.3-codex）只列 low–xhigh，没有 none / minimal；其他型号核对前
+  // 只给 low–high。托管 web_search 官方没确认，保持未知，用户标注后才能开（docs/design/ai-study-options.md §5）。
+  if (/codex/.test(b)) {
+    return known({
+      thinking: /^gpt-5\.3-codex/.test(b)
+        ? ['low', 'medium', 'high', 'xhigh']
+        : ['low', 'medium', 'high'],
+      search: null,
+      thinkingStyle: 'reasoning',
+    });
+  }
   if (/^gpt-5(?:[.-]|$)/.test(b)) {
     const firstGpt5 = /^gpt-5(?:-|$)/.test(b) && !/^gpt-5-[1-9]/.test(b);
     return known({
@@ -289,6 +300,16 @@ export function capabilitiesOf(
     c.tools = false;
   }
   return c;
+}
+
+/** 模型和接口协议不搭时的提示：Codex 只提供 Responses 接口。 */
+export function protocolNotice(
+  p: Pick<AiProvider, 'protocol'>,
+  modelId: string,
+): string | null {
+  return /codex/.test(bareModel(modelId)) && p.protocol !== 'openai'
+    ? 'Codex 模型只提供 Responses 接口，建议把供应商协议改成 OpenAI Responses'
+    : null;
 }
 
 export type SearchMethod =
@@ -455,6 +476,10 @@ export function configLabel(
     (cfg.mcp ? ' · 外部工具开' : '')
   );
 }
+
+/** 短标签：「GPT-6.1-sol · 思考低 · 搜索开」（搜索关时不写），用于讲解的分隔线和讲解记录。 */
+export const configBrief = (cfg: ConversationConfig): string =>
+  prettyModel(cfg.model) + ' · 思考' + EFFORT_NAME[cfg.effort] + (cfg.search ? ' · 搜索开' : '');
 
 export function configChanges(
   a: ConversationConfig,

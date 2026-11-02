@@ -1,13 +1,13 @@
 /**
  * AI 讲解里的标记（QUANTWISE_DESIGN.md §6.2、§6.5）→ 界面能画的片段：
  * - [[b:3.1#2]] 引用 → 「3.1 ¶2」按钮；所在小节本轮没读过、或块不存在 → 「未核实」
- * - [[derive]] / [[example]] / [[real]] … [[/…]] → 带标签的底色块
+ * - [[derive]] / [[example]] / [[real]] / [[web]] … [[/…]] → 带标签的底色块（web 是联网搜索来的网页资料）
  * - $$…$$ / \[…\] → 独立公式；$…$ → 转成 Unicode 文字（转不了的保留原文、等宽）
  * 其余交给 AShareSim 的 Markdown 组件（段落、列表、表格、加粗）。流式时半截的标记先藏起来。
  */
 import { texToText } from './tex';
 
-export type CalloutKind = 'derive' | 'example' | 'real';
+export type CalloutKind = 'derive' | 'example' | 'real' | 'web';
 
 export type Seg =
   | { t: 'md'; text: string }
@@ -21,10 +21,11 @@ export const CALLOUT_LABEL: Record<CalloutKind, string> = {
   derive: '补充推导',
   example: 'AI 举例',
   real: '真实行情',
+  web: '网页资料',
 };
 
 const CITE = /\[\[b:([\w.-]+)[#¶](\d+)\]\]/g;
-const CALLOUT = /\[\[(derive|example|real)\]\]([\s\S]*?)(\[\[\/\1\]\]|$)/g;
+const CALLOUT = /\[\[(derive|example|real|web)\]\]([\s\S]*?)(\[\[\/\1\]\]|$)/g;
 
 /** 流式输出停在半截标记上（「[[b:3.」「[[der」「$$」）时先去掉，等下一段到了再显示。 */
 function trimPartial(s: string): string {

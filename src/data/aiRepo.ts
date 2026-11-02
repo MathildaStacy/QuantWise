@@ -202,6 +202,18 @@ export async function updateMessageUi(
   ]);
 }
 
+/** 只在整理（压缩）时用：保留下来的回答去掉不能再回放的思考块（protocol.retainedRaw）。 */
+export async function updateMessageRaw(
+  db: Db,
+  id: number,
+  raw: RawOutput | null,
+): Promise<void> {
+  await db.run('UPDATE ai_message SET raw = ? WHERE id = ?', [
+    raw ? JSON.stringify(raw) : null,
+    id,
+  ]);
+}
+
 export async function markCompacted(
   db: Db,
   threadId: number,

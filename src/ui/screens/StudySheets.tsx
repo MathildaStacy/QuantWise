@@ -4,9 +4,13 @@
  */
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { EFFORT_NAME, prettyModel } from '../../ai/models';
 import { estimateTokens } from '../../ai/prompt';
+import type { AiService } from '../../ai/types';
 import { secLabel } from '../../book/book';
 import { threadContext } from '../../data/studyRepo';
+import { lastRequestTokens, studyBudget } from '../../study/compact';
+import { resolveStudyService } from '../../study/config';
 import { STUDY_PROMPT } from '../../study/prompt';
 import { progressNow, type StudySession } from '../../study/session';
 import { STUDY_TOOL_DEFS } from '../../study/tools';
@@ -49,22 +53,30 @@ const k = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n));
 export function ContextSheet({ visible, s, onClose }: { visible: boolean; s: StudySession; onClose: () => void }) {
   const core = useCore();
   const [ctx, setCtx] = useState<string | null>(null);
+  const [svc, setSvc] = useState<AiService | null>(null);
   useEffect(() => {
     if (visible && s.threadId) {
       threadContext(core.db, s.threadId).then(setCtx).catch(() => undefined);
     }
-  }, [visible, s.threadId, core]);
+    if (visible) {
+      resolveStudyService(core.db, s.config).then(setSvc).catch(() => undefined);
+    }
+  }, [visible, s.threadId, s.config, core]);
   const map = ctx ? ctx.slice(0, ctx.indexOf('<current_section>')) : '';
   const cur = ctx ? ctx.slice(ctx.indexOf('<current_section>')) : s.blocks.map(b => b.text).join('\n');
   const loaded = [...s.loaded].filter(x => !x.includes('#') && x !== s.section.id);
-  const history = s.messages.reduce((n, m) => n + m.parts.reduce((a, p) => a + (p.t === 'text' ? p.text : p.t === 'call' ? p.args : p.output).length, 0), 0);
+  const live = s.messages.filter(m => !m.compacted);
+  const history = live.reduce((n, m) => n + m.parts.reduce((a, p) => a + (p.t === 'text' ? p.text : p.t === 'call' ? p.args : p.output).length, 0), 0);
+  const budget = svc ? studyBudget(svc) : null;
+  const lastSize = lastRequestTokens(s.messages);
   const rows: [string, string, number, boolean][] = [
     ['工具定义', STUDY_TOOL_DEFS.length + ' 个：读书 6、行情与因子 3、只读行情 7；没有下单、转账', estimateTokens(JSON.stringify(STUDY_TOOL_DEFS)), true],
     ['1 讲解规则', '讲解顺序、引用和来源标记、只引用读过的原文、举例优先用真实行情', estimateTokens(STUDY_PROMPT), true],
     ['2 书的地图', ctx ? s.sections.length + ' 个标题 + 已学小节的摘要（这一节的对话开始时拍的快照）' : '第一次提问时拍快照', estimateTokens(map), true],
     ['3 当前原文', secLabel(s.section) + ' 全部 ' + s.blocks.length + ' 个块', estimateTokens(cur), true],
+    ...(s.summary ? [['3+ 讲解摘要', '较早的讲解由 App 自动整理，整理后从这里接着讲', estimateTokens(s.summary), true] as [string, string, number, boolean]] : []),
     ['4 读过的其他小节', loaded.length ? loaded.join('、') : '还没有', 0, false],
-    ['5 对话', s.messages.length + ' 条（含工具结果）', Math.round(history * 0.8), false],
+    ['5 对话', live.length + ' 条（含工具结果' + (live.length < s.messages.length ? '；已整理的不再发送' : '') + '）', Math.round(history * 0.8), false],
     ['6 这次附带', '<study_state>：现在讲第 ' + (s.state.step + 1) + ' 步' + (progressNow(s).skipped.length ? '、跳过的步' : '') + '、没解决的卡点', 150, false],
   ];
   return (
@@ -82,7 +94,19 @@ export function ContextSheet({ visible, s, onClose }: { visible: boolean; s: Stu
             <Text style={st.n}>{n ? k(n) : '—'}</Text>
           </View>
         ))}
-        <Text style={st.muted}>只有当前原文和 load_section / search_book 读到的块能被引用，引用到别处的标「未核实」。缓存断点在第 3 层之后，同一节反复问很省。</Text>
+        {s.config ? (
+          <Text style={st.muted}>
+            这一节：{prettyModel(s.config.model)} · 思考{EFFORT_NAME[s.config.effort]} · 搜索{s.config.search ? '开' : '关'}
+            {budget ? '。上一次请求约 ' + (lastSize != null ? k(lastSize) : '—') + ' 词元；超过 ' + k(budget.compactAt) + ' 时回答后自动整理较早的讲解，接近 ' + k(budget.hardAt) + ' 时先整理再问。' : ''}
+          </Text>
+        ) : null}
+        {s.summary ? (
+          <View style={st.summary}>
+            <Text style={st.rowT}>讲解摘要</Text>
+            <Text style={st.rowD}>{s.summary}</Text>
+          </View>
+        ) : null}
+        <Text style={st.muted}>只有当前原文和 load_section / search_book 读到的块能被引用，引用到别处的标「未核实」。缓存断点在第 3 层之后，同一节反复问很省；换模型、改思考或开关搜索后，第一次提问要重建缓存。</Text>
       </ScrollView>
     </AiSheet>
   );
@@ -101,4 +125,5 @@ const st = StyleSheet.create({
   rowD: { fontSize: 12, color: rc.muted, marginTop: 2, lineHeight: 18 },
   n: { fontSize: 13, color: rc.secondary, fontVariant: ['tabular-nums'] },
   muted: { fontSize: 12, color: rc.muted, lineHeight: 18, paddingVertical: 10 },
+  summary: { padding: 10, borderRadius: 8, backgroundColor: rc.soft, gap: 4 },
 });

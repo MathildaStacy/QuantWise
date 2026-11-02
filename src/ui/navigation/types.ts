@@ -93,6 +93,10 @@ export type RootStackParamList = {
   /** mode：进来时的模式；blockSeq：读书模式定位到这一块；ask：进来就问这个问题（复习页「让 AI 重讲」）。 */
   Study: { bookId: string; sectionId?: string; mode?: 'lecture' | 'read'; blockSeq?: number; ask?: string; askLabel?: string; askSnapshot?: boolean; wrapup?: boolean };
   SectionDone: { bookId: string };
+  /** 讲解记录：给了 bookId 只看这本书。 */
+  StudyHistory: { bookId?: string } | undefined;
+  /** 归档的一轮讲解（只读）。 */
+  StudyRound: { threadId: number; bookId: string; sectionId: string };
   Review: undefined;
   ReviewRun: undefined;
   Notes: { bookId: string };

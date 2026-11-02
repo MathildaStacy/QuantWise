@@ -1,20 +1,28 @@
 /**
- * 听讲的对话（QUANTWISE_DESIGN.md §6）：按「一次提问」分组画：你的问题 → 工具步骤 → 讲解 → 图表 → 检查题 / 小结草稿。
- * 回到主线后的岔路折叠成一行，正在进行的岔路左侧紫线。只画，不请求模型。
+ * 听讲的对话（QUANTWISE_DESIGN.md §6）：按「一次提问」分组画：你的问题 → 工具步骤 → 讲解 → 图表 → 检查题 / 小结草稿
+ * → 网页来源和用量（默认收起）。回到主线后的岔路折叠成一行，正在进行的岔路左侧紫线；较早整理成摘要的部分上方一条说明。
+ * 只画，不请求模型。
  */
 import { useMemo, useState, type ReactElement } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import type { StoredMessage, ToolUi } from '../../ai/types';
+import { prettyModel } from '../../ai/models';
+import { addUsage, ZERO_USAGE } from '../../ai/prompt';
+import type { SearchSource, StoredMessage, ToolUi, Usage } from '../../ai/types';
 import { secLabel } from '../../book/book';
 import type { CiteCheck } from '../../book/markup';
 import { citeCheck, progressNow, type StudySession } from '../../study/session';
 import { ChartCard } from '../charts/ChartCard';
 import { StudyText } from '../components/StudyText';
 import { rc } from '../readTheme';
+import { usageText } from './AiScreen';
 
 interface Turn {
   first: number;
   question: string | null;
+  /** 换了模型 / 思考 / 搜索之后的第一问：「更换模型：从这里起用 GPT-6.1-sol · 思考低」。 */
+  divider?: string;
+  /** 这一问已经整理进摘要（不再发给模型，界面照常显示）。 */
+  compacted: boolean;
   tools: ToolUi[];
   answers: StoredMessage[];
   /** 检查题和小结草稿要知道在哪条消息上。 */
@@ -25,7 +33,7 @@ export function turnsOf(messages: StoredMessage[]): Turn[] {
   const out: Turn[] = [];
   for (const m of messages) {
     if (m.role === 'user' || !out.length) {
-      out.push({ first: m.id, question: m.role === 'user' ? m.ui?.question ?? null : null, tools: [], answers: [], cards: [] });
+      out.push({ first: m.id, question: m.role === 'user' ? m.ui?.question ?? null : null, divider: m.role === 'user' ? m.ui?.divider : undefined, compacted: m.compacted, tools: [], answers: [], cards: [] });
       if (m.role === 'user') {
         continue;
       }
@@ -52,6 +60,10 @@ export interface ThreadActions {
   onPick: (msgId: number, toolId: string, k: number) => void;
   onWrapup: () => void;
   onStuck: (text: string) => void;
+  /** 「开启搜索并重问」（搜索关着、问的是最新资料时）。 */
+  onSearch?: (question: string) => void;
+  /** 点「较早的 n 问已整理成摘要」。 */
+  onSummary?: () => void;
 }
 
 export function StudyThread({ s, busy, a, onTurnLayout }: { s: StudySession; busy: string | null; a: ThreadActions; onTurnLayout?: (id: number, box: { y: number; height: number }) => void }) {
@@ -62,8 +74,16 @@ export function StudyThread({ s, busy, a, onTurnLayout }: { s: StudySession; bus
   const folds = p.folds ?? [];
   const turns = turnsOf(s.messages);
   const out: { id: number; node: ReactElement }[] = [];
+  const compacted = turns.filter(t => t.compacted && t.question != null).length;
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
+    if (compacted && !t.compacted && (i === 0 || turns[i - 1].compacted)) {
+      out.push({ id: -1000 - t.first, node:
+        <Pressable onPress={a.onSummary} disabled={!a.onSummary} accessibilityRole="button" style={st.compact}>
+          <Text style={st.compactT}>较早的 {compacted} 问已整理成摘要（保留进度、卡点和检查题结果）{a.onSummary ? ' · 查看摘要' : ''}</Text>
+        </Pressable>,
+      });
+    }
     const f = folds.find(x => x.fromMsg === t.first);
     if (f) {
       const inside = turns.filter(x => x.first >= f.fromMsg && x.first <= f.toMsg);
@@ -93,8 +113,10 @@ export function StudyThread({ s, busy, a, onTurnLayout }: { s: StudySession; bus
 
 function TurnView({ t, detour, a, check, streaming }: { t: Turn; detour: boolean; a: ThreadActions; check: CiteCheck; streaming: boolean }) {
   const charts = t.tools.flatMap(x => x.charts ?? []);
+  const offer = t.answers.map(m => m.ui?.searchOffer).find(Boolean);
   return (
     <View style={detour && st.detour}>
+      {t.divider ? <Text style={st.sys}>{t.divider}</Text> : null}
       {t.question ? (
         <View style={st.uRow}>
           <Text style={st.u}>{t.question}</Text>
@@ -122,6 +144,50 @@ function TurnView({ t, detour, a, check, streaming }: { t: Turn; detour: boolean
         <ChartCard key={k} data={c} />
       ))}
       {t.cards.map(({ msgId, tool }) => (tool.quiz ? <Quiz key={tool.id} msgId={msgId} tool={tool} a={a} check={check} /> : <Wrap key={tool.id} tool={tool} a={a} />))}
+      {offer && a.onSearch && !streaming ? (
+        <Pressable onPress={() => a.onSearch!(offer)} style={st.small} accessibilityRole="button">
+          <Text style={st.smallT}>开启搜索并重问</Text>
+        </Pressable>
+      ) : null}
+      {streaming ? null : <TurnFooter answers={t.answers} onLink={a.onLink} />}
+    </View>
+  );
+}
+
+const hostOf = (url: string) => /^https?:\/\/([^/]+)/.exec(url)?.[1]?.replace(/^www\./, '') ?? url;
+
+/** 一问的网页来源和用量：默认收起成一行，点开看明细（只显示接口实际返回的数据）。 */
+function TurnFooter({ answers, onLink }: { answers: StoredMessage[]; onLink: (href: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const sources: SearchSource[] = [];
+  let usage: Usage | null = null;
+  for (const m of answers) {
+    for (const x of m.ui?.search?.sources ?? []) {
+      if (!sources.some(y => y.url === x.url)) sources.push(x);
+    }
+    if (m.ui?.usage) usage = addUsage(usage ?? ZERO_USAGE, m.ui.usage);
+  }
+  const last = [...answers].reverse().find(m => m.ui?.service);
+  if (!usage && !sources.length) return null;
+  const model = last?.ui?.config ? prettyModel(last.ui.config.model) : last?.ui?.service?.split(' · ').pop() ?? '';
+  return (
+    <View style={st.footer}>
+      <Pressable onPress={() => setOpen(v => !v)} style={st.footerRow} accessibilityRole="button" accessibilityState={{ expanded: open }}>
+        <Text style={st.meta} numberOfLines={1}>
+          {[model, sources.length ? '来源 ' + sources.length + ' 个' : '', '用量'].filter(Boolean).join(' · ')} {open ? '▴' : '▾'}
+        </Text>
+      </Pressable>
+      {open ? (
+        <View style={st.footerIn}>
+          {sources.map((x, k) => (
+            <Pressable key={x.url} onPress={() => onLink(x.url)} accessibilityRole="link" style={st.source}>
+              <Text style={st.sourceT} numberOfLines={2}>{k + 1}. {x.title || hostOf(x.url)}</Text>
+              <Text style={st.meta} numberOfLines={1}>{hostOf(x.url)}</Text>
+            </Pressable>
+          ))}
+          {usage ? <Text style={st.meta}>{usageText(usage, { price: last?.ui?.price ?? null })}</Text> : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -199,4 +265,11 @@ const st = StyleSheet.create({
   smallT: { fontSize: 12, color: rc.secondary },
   primary: { backgroundColor: rc.main, borderColor: rc.main },
   white: { color: '#FFFFFF' },
+  compact: { minHeight: 48, justifyContent: 'center', marginVertical: 6, paddingHorizontal: 12, borderRadius: 10, backgroundColor: rc.soft },
+  compactT: { fontSize: 12, lineHeight: 18, color: rc.secondary, textAlign: 'center' },
+  footer: { marginTop: 2, marginBottom: 6 },
+  footerRow: { minHeight: 48, justifyContent: 'center' },
+  footerIn: { gap: 6, paddingBottom: 4 },
+  source: { minHeight: 48, justifyContent: 'center', paddingVertical: 4 },
+  sourceT: { fontSize: 13, lineHeight: 19, color: rc.ink },
 });

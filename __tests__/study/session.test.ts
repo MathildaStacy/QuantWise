@@ -5,9 +5,9 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { setAiDeps } from '../../src/ai/chat';
+import { setAiDeps, useChat } from '../../src/ai/chat';
 import type { FetchLike } from '../../src/ai/http';
-import { saveServices, type KeyStore } from '../../src/ai/services';
+import { loadProviders, saveProviders, saveServices, type KeyStore } from '../../src/ai/services';
 import type { AiService } from '../../src/ai/types';
 import type { AppCore } from '../../src/app/boot';
 import { SAMPLE_BOOK_ID } from '../../src/book/sample';
@@ -27,12 +27,16 @@ import {
   openSection,
   pickQuiz,
   progressNow,
+  newStudyRound,
   quickAsk,
   saveWrapup,
+  selectStudyConfig,
+  studyRebuild,
   useStudy,
   wrapDraft,
 } from '../../src/study/session';
-import { STUDY_TOOL_DEFS } from '../../src/study/tools';
+import { STUDY_COMPACT_PROMPT } from '../../src/study/compact';
+import { runStudyTool, snippetOf, STUDY_TOOL_DEFS } from '../../src/study/tools';
 
 jest.mock('../../src/data/drivers/opSqlite', () => ({ openDeviceDb: () => { throw new Error('测试里不用设备数据库'); } }));
 jest.mock('../../src/app/tracker', () => ({ nativeTracker: () => null }));
@@ -257,14 +261,19 @@ test('保存小结是原子操作；失败可重试，重复确认不重复添�
   await core.db.close();
 });
 
-test('实验解读禁用工具，拒绝模型重新计算；无 Key 问题也保留', async () => {
+test('实验解读：工具定义照常发送（缓存不变），拒绝模型重新计算；无 Key 问题也保留', async () => {
   const core = await setup();
   await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  replies = [text('先讲一句')];
+  await askStudy(core, quickAsk(s(), 'start'));
   const a = { label: '解释这次结果', question: '指定结果快照', snapshot: true };
-  replies = [tool('factor_test', { factor: 'mom20' })];
-  expect(await askStudy(core, a)).toBe(false);
-  expect(sent[0].tools ?? []).toHaveLength(0);
-  expect(toolUis()).toHaveLength(0);
+  replies = [tool('factor_test', { factor: 'mom20' }), text('只根据屏幕上的结果解读')];
+  expect(await askStudy(core, a)).toBe(true);
+  // 和普通提问同一组工具、同样的前缀：快照解读不让缓存失效
+  expect(sent[1].tools).toEqual(sent[0].tools);
+  expect(JSON.stringify(sent[1].messages[0])).toBe(JSON.stringify(sent[0].messages[0]));
+  expect(toolUis()).toEqual([expect.objectContaining({ name: 'factor_test', error: true, label: 'factor_test（只解读已有结果，没有执行）' })]);
+  expect(toolUis()[0].charts).toBeUndefined();
   keys.delete('s1');
   await expect(askStudy(core, a)).rejects.toThrow('API Key');
   const { loadReadingState } = require('../../src/study/readingState');
@@ -282,5 +291,201 @@ test('准备阶段立即停止也不会发出模型请求', async () => {
   expect(await request).toBe(false);
   expect(sent).toHaveLength(0);
   expect(progressNow(s()).taught).toBe(-1);
+  await core.db.close();
+});
+
+test('讲解的模型 / 思考 / 搜索按小节保存，和 AI 助手分开；改了设置提示重建缓存、可改回，发送后插分隔线', async () => {
+  const core = await setup();
+  const ps = await loadProviders(core.db);
+  await saveProviders(core.db, ps.map(p => ({ ...p, models: [...p.models, { id: 'claude-opus-5-5', enabled: true, price: null }] })));
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  expect(s().config).toMatchObject({ providerId: 's1', model: 'claude-sonnet-5-5', search: false });
+  // 助手里开着别的模型和搜索：讲解不跟着变
+  useChat.setState({ config: { providerId: 's1', model: 'claude-opus-5-5', effort: 'high', search: true } });
+  replies = [text('第 1 步')];
+  await askStudy(core, quickAsk(s(), 'start'));
+  expect(sent[0].model).toBe('claude-sonnet-5-5');
+  expect(sent[0].tools.some((t: any) => t.name === 'web_search')).toBe(false);
+  expect(studyRebuild(s())).toBeNull();
+  await selectStudyConfig(core, { ...s().config!, model: 'claude-opus-5-5', effort: 'medium' });
+  expect(studyRebuild(s())).toMatchObject({ reason: '更换模型、调整思考强度' });
+  await selectStudyConfig(core, studyRebuild(s())!.previous);
+  expect(studyRebuild(s())).toBeNull();
+  await selectStudyConfig(core, { ...s().config!, model: 'claude-opus-5-5', effort: 'medium' });
+  replies = [text('第 2 步')];
+  await askStudy(core, quickAsk(s(), 'next'));
+  expect(sent[1].model).toBe('claude-opus-5-5');
+  expect(sent[1].output_config).toEqual({ effort: 'medium' });
+  expect(s().messages.filter(m => m.role === 'user').at(-1)?.ui?.divider).toBe('更换模型、调整思考强度：从这里起用 Opus 5.5 · 思考中');
+  expect(studyRebuild(s())).toBeNull();
+  // 下一节沿用讲解最近一次选择，搜索不继承
+  await selectStudyConfig(core, { ...s().config!, search: true });
+  await openSection(core, SAMPLE_BOOK_ID, '3.2');
+  expect(s().config).toMatchObject({ model: 'claude-opus-5-5', effort: 'medium', search: false });
+  useChat.setState({ config: null });
+  await core.db.close();
+});
+
+test('讲解开启联网搜索：发送搜索工具，pause_turn 接着跑，来源记在回答上', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  await selectStudyConfig(core, { ...s().config!, search: true });
+  const paused = { model: SVC.model, stop_reason: 'pause_turn', content: [{ type: 'server_tool_use', id: 'srv_1', name: 'web_search', input: { query: 'Fama French 五因子 A股' } }], usage };
+  const done = {
+    model: SVC.model, stop_reason: 'end_turn', usage,
+    content: [
+      { type: 'web_search_tool_result', tool_use_id: 'srv_1', content: [{ type: 'web_search_result', url: 'https://example.com/ff5', title: 'FF 五因子在 A 股' }] },
+      { type: 'text', text: '[[web]]有研究发现……（example.com）[[/web]]' },
+    ],
+  };
+  replies = [paused, done];
+  expect(await askStudy(core, { label: 'FF 五因子', question: 'Fama-French 五因子最新的 A 股实证？' })).toBe(true);
+  expect(sent[0].tools[0]).toMatchObject({ name: 'web_search' });
+  expect(sent).toHaveLength(2);
+  expect(sent[1].messages.at(-1).role).toBe('assistant');
+  const last = s().messages.filter(m => m.role === 'assistant').at(-1)!;
+  expect(last.ui?.search?.sources).toEqual([expect.objectContaining({ url: 'https://example.com/ff5' })]);
+  expect(last.ui?.searchOffer).toBeUndefined();
+  await core.db.close();
+});
+
+test('回到讲解页时：模型停用了就换成可用的默认，删掉讲解对话不影响进度', async () => {
+  const core = await setup();
+  const ps = await loadProviders(core.db);
+  await saveProviders(core.db, ps.map(p => ({ ...p, models: [...p.models, { id: 'claude-opus-5-5', enabled: true, price: null }] })));
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  await selectStudyConfig(core, { ...s().config!, model: 'claude-opus-5-5' });
+  replies = [text('第 1 步')];
+  await askStudy(core, quickAsk(s(), 'start'));
+  await saveProviders(core.db, (await loadProviders(core.db)).map(p => ({ ...p, models: p.models.map(m => ({ ...m, enabled: m.id !== 'claude-opus-5-5' })) })));
+  const { refreshStudyConfig, deleteStudyThread } = require('../../src/study/session');
+  await refreshStudyConfig(core);
+  expect(s().config?.model).toBe('claude-sonnet-5-5');
+  await deleteStudyThread(core, s().threadId!);
+  expect(s().threadId).toBeNull();
+  expect(progressNow(s()).taught).toBe(0);
+  expect(await studyRepo.studyThreads(core.db, { bookId: SAMPLE_BOOK_ID })).toEqual([]);
+  await core.db.close();
+});
+
+test('长对话自动整理：回答后超过整理线就整理较早的讲解；保留的回答不再回放思考块，之后带上摘要', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  for (let i = 1; i <= 4; i++) {
+    replies = [text('答' + i)];
+    await askStudy(core, { label: '问' + i, question: '问' + i });
+  }
+  expect(sent).toHaveLength(4);
+  const big = { input_tokens: 2000, cache_read_input_tokens: 68000, cache_creation_input_tokens: 500, output_tokens: 300 };
+  replies = [{ ...text('答5'), content: [{ type: 'thinking', thinking: '想', signature: 'sig5' }, { type: 'text', text: '答5' }], usage: big }, text('讲到第 1 步；用户问过 1–2。')];
+  expect(await askStudy(core, { label: '问5', question: '问5' })).toBe(true);
+  expect(sent).toHaveLength(6);
+  const req = sent[5];
+  expect(lastUser(req)).toBe(STUDY_COMPACT_PROMPT);
+  // 同一前缀：工具、system 不变，Anthropic 不改 tool_choice
+  expect(req.tool_choice).toBeUndefined();
+  expect(req.tools).toEqual(sent[4].tools);
+  expect(JSON.stringify(req.system)).toBe(JSON.stringify(sent[4].system));
+  expect(s().summary).toBe('讲到第 1 步；用户问过 1–2。');
+  expect(s().messages.filter(m => m.role === 'user' && !m.compacted).map(m => m.ui?.question)).toEqual(['问3', '问4', '问5']);
+  replies = [text('答6')];
+  await askStudy(core, { label: '问6', question: '问6' });
+  expect(sent[6].system[1].text).toContain('<lecture_summary>');
+  const hist = JSON.stringify(sent[6].messages);
+  expect(hist).not.toContain('问1');
+  expect(hist).toContain('答5');
+  expect(hist).not.toContain('sig5');
+  expect((await studyRepo.studyThreads(core.db, { bookId: SAMPLE_BOOK_ID }))[0].compactedCount).toBe(2);
+  await core.db.close();
+});
+
+test('一问之内工具结果按剩余上下文截断，不改历史', async () => {
+  const core = await setup();
+  const ps = await loadProviders(core.db);
+  await saveProviders(core.db, ps.map(p => ({ ...p, models: p.models.map(m => ({ ...m, overrides: { ...m.overrides, context: 40000 } })) })));
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  replies = [{ ...tool('load_section', { id: '4.2' }), usage: { ...usage, input_tokens: 15800 } }, text('根据已读内容回答')];
+  expect(await askStudy(core, { label: 'IC', question: 'IC 是什么' })).toBe(true);
+  expect(JSON.stringify(sent[1].messages)).toContain('上下文快满了');
+  expect(toolUis()[0].label).toContain('只发送了一部分');
+  await core.db.close();
+});
+
+test('新开一轮：旧的讲解归档只读，下一问新建对话；讲解记录能列出、能搜索', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  replies = [text('第一轮')];
+  await askStudy(core, quickAsk(s(), 'start'));
+  const first = s().threadId!;
+  // 岔路记的是这一轮的消息 id：新开一轮时清掉，讲到第几步保留
+  replies = [tool('load_section', { id: '4.2', detour: true }), text('IC 是横截面相关系数')];
+  await askStudy(core, { label: 'IC 是什么？', question: 'IC 是什么？' });
+  expect(progressNow(s()).detour).not.toBeNull();
+  // 新的一轮按新对话的默认：模型和思考沿用，搜索关
+  await selectStudyConfig(core, { ...s().config!, search: true });
+  await newStudyRound(core, first);
+  expect(s().threadId).toBeNull();
+  expect(s().config).toMatchObject({ model: 'claude-sonnet-5-5', search: false });
+  expect(s().messages).toEqual([]);
+  expect(progressNow(s()).taught).toBe(0);
+  expect(progressNow(s()).detour).toBeNull();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  expect(s().threadId).toBeNull();
+  replies = [text('第二轮')];
+  await askStudy(core, quickAsk(s(), 'start'));
+  expect(s().threadId).not.toBe(first);
+  const rows = await studyRepo.studyThreads(core.db, { bookId: SAMPLE_BOOK_ID });
+  expect(rows.map(r => [r.sectionId, r.archivedAt != null, r.questions, r.lastQuestion])).toEqual([
+    ['3.1', false, 1, '开始讲第 1 步'],
+    ['3.1', true, 2, 'IC 是什么？'],
+  ]);
+  expect(await studyRepo.studyThreads(core.db, { query: '第二轮' })).toHaveLength(1);
+  await core.db.close();
+});
+
+test('load_section 可以从指定块接着读；search_book 只给命中处前后', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  const env = { core, threadId: 0, bookId: SAMPLE_BOOK_ID, sectionId: '3.1', sections: s().sections };
+  const out = await runStudyTool(env, 'x', 'load_section', JSON.stringify({ id: '3.1', from: 2 }));
+  expect(out.output).not.toContain('[3.1#1]');
+  expect(out.output).toContain('[3.1#2]');
+  expect(snippetOf('a'.repeat(500) + '动量' + 'b'.repeat(500), '动量')).toBe('…' + 'a'.repeat(200) + '动量' + 'b'.repeat(200) + '…');
+  expect(snippetOf('短句里有动量', '动量')).toBe('短句里有动量');
+  await core.db.close();
+});
+
+test('OpenAI Responses（Codex）：讲解带 reasoning、-study 缓存 key；整理用 tool_choice none 不破坏前缀，保留加密推理', async () => {
+  const core = await setup();
+  const ps = await loadProviders(core.db);
+  await saveProviders(core.db, ps.map(p => ({ ...p, kind: 'openai' as const, protocol: 'openai' as const, baseUrl: 'https://api.openai.com/v1', models: [{ id: 'gpt-5.3-codex', enabled: true, price: null }] })));
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  expect(s().config).toMatchObject({ model: 'gpt-5.3-codex', effort: 'low', search: false });
+  const out = (t: string, u: Record<string, unknown> = { input_tokens: 100, input_tokens_details: { cached_tokens: 0 }, output_tokens: 5 }, enc?: string) => ({
+    model: 'gpt-5.3-codex',
+    status: 'completed',
+    output: [...(enc ? [{ type: 'reasoning', id: 'rs_' + enc, encrypted_content: enc, summary: [] }] : []), { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: t }] }],
+    usage: u,
+  });
+  for (let i = 1; i <= 4; i++) {
+    replies = [out('答' + i)];
+    expect(await askStudy(core, { label: '问' + i, question: '问' + i })).toBe(true);
+  }
+  expect(sent[0]).toMatchObject({ model: 'gpt-5.3-codex', reasoning: { effort: 'low', summary: 'auto' }, store: false, include: ['reasoning.encrypted_content'] });
+  expect(sent[0].prompt_cache_key).toMatch(/^quantwise-.+-study$/);
+  expect(sent[0].tools.some((t: any) => t.type === 'web_search')).toBe(false);
+  replies = [out('答5', { input_tokens: 70000, input_tokens_details: { cached_tokens: 60000 }, output_tokens: 300 }, 'enc5'), out('讲到第 1 步。')];
+  expect(await askStudy(core, { label: '问5', question: '问5' })).toBe(true);
+  expect(sent).toHaveLength(6);
+  expect(sent[5].tool_choice).toBe('none');
+  expect(sent[5].tools).toEqual(sent[4].tools);
+  expect(sent[5].instructions).toBe(sent[4].instructions);
+  expect(sent[5].prompt_cache_key).toBe(sent[4].prompt_cache_key);
+  replies = [out('答6')];
+  await askStudy(core, { label: '问6', question: '问6' });
+  const hist = JSON.stringify(sent[6].input);
+  expect(hist).toContain('enc5');
+  expect(hist).not.toContain('问1');
+  expect(sent[6].instructions).toContain('<lecture_summary>');
   await core.db.close();
 });

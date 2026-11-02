@@ -16,6 +16,7 @@ import {
   capabilitiesOf,
   EFFORT_NAME,
   prettyModel,
+  protocolNotice,
   PROVIDER_PRESETS,
   searchAvailability,
 } from '../../ai/models';
@@ -217,6 +218,9 @@ export function ModelPicker({
                 <Text style={s.modelTitle}>{prettyModel(m.id)}</Text>
                 <Text style={s.sub}>{p.name + ' · ' + m.id}</Text>
                 <CapabilityTags caps={capabilitiesOf(p, m)} />
+                {protocolNotice(p, m.id) ? (
+                  <Text style={[s.tag, s.warn]}>{protocolNotice(p, m.id)}</Text>
+                ) : null}
               </View>
               {selected ? <Check size={20} color={c.ink} /> : null}
             </Pressable>
@@ -233,6 +237,7 @@ export function EffortPicker({
   onClose,
   onSelect,
   onManage,
+  note,
 }: {
   visible: boolean;
   caps: ModelCapabilities | null;
@@ -240,6 +245,8 @@ export function EffortPicker({
   onClose: () => void;
   onSelect: (e: ConversationConfig['effort']) => void;
   onManage: () => void;
+  /** 可调档位时附加的一句建议（讲解用）。 */
+  note?: string;
 }) {
   const levels = caps?.thinking ?? [];
   return (
@@ -254,6 +261,7 @@ export function EffortPicker({
             ? '这个模型始终思考，无法关闭。'
             : '强度越高，通常耗时和用量越多。'}
         </Text>
+        {note && levels.length > 1 ? <Text style={[s.explain, s.explainMore]}>{note}</Text> : null}
         {levels.map(e => (
           <Pressable
             key={e}
@@ -399,6 +407,7 @@ const s = StyleSheet.create({
   warn: { color: color.warnInk, backgroundColor: color.warnBg },
   empty: { padding: 24, fontSize: 14, color: c.secondary, lineHeight: 22 },
   explain: { padding: 20, fontSize: 14, lineHeight: 22, color: c.secondary },
+  explainMore: { paddingTop: 0, marginTop: -8 },
   option: {
     minHeight: 52,
     flexDirection: 'row',

@@ -31,6 +31,7 @@ import {
   ZERO_USAGE,
 } from './prompt';
 import { buildRequest, type BuiltRequest } from './protocol';
+import { retireBefore } from './compact';
 import {
   installId,
   keychainStore,
@@ -1127,7 +1128,7 @@ export const liveMessageCount = (msgs: StoredMessage[]) =>
 export const COMPACT_PROMPT =
   '（App 自动发送）这个对话太长了，请把上面除最近 ' +
   KEEP_EXCHANGES +
-  ' 轮问答以外的较早部分总结成摘要，供之后的对话参考：保留结论、用户的决定和偏好、待办和没解决的问题；不要保留行情、价格、持仓这类会变的数字（之后会用工具现查）。只输出摘要正文，不要调用工具，不要加「仅供学习」那句话。';
+  ' 轮问答以外的较早部分总结成摘要，供之后的对话参考：保留结论、用户的决定和偏好、待办和没解决的问题；不要保留行情、价格、持仓这类会变的数字（之后会用工具现查）。只输出摘要正文，不要调用任何工具（包括联网搜索），不要加「仅供学习」那句话。';
 
 export async function maybeCompact(
   core: AppCore,
@@ -1182,7 +1183,7 @@ export async function maybeCompact(
     const thread = (await aiRepo.thread(core.db, threadId))!;
     const compactedUsers = users.filter(u => u.id < keepFrom).length;
     const now = beijingIso();
-    await aiRepo.markCompacted(core.db, threadId, keepFrom - 1);
+    await retireBefore(core.db, threadId, keepFrom);
     await aiRepo.updateThread(
       core.db,
       threadId,

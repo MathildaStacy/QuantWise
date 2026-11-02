@@ -534,7 +534,9 @@ describe('缓存和压缩', () => {
     const prefs = await loadPrefs(core.db);
     await savePrefs(core.db, { ...prefs, compactAt: 10 });
     for (let i = 1; i <= 5; i++) {
-      replies = [{ json: textReply('答' + i) }];
+      const r = textReply('答' + i);
+      // 第 5 问的回答带思考块：压缩前照常回放，压缩后保留下来也不能再回放（前缀变了，新模型会 400）
+      replies = [{ json: i === 5 ? { ...r, content: [{ type: 'thinking', thinking: '想', signature: 'sig5' }, ...r.content] } : r }];
       await ask(core, { question: '问' + i, page: null });
     }
     expect(sent).toHaveLength(5); // 10 条消息，还没超过
@@ -562,6 +564,12 @@ describe('缓存和压缩', () => {
     await ask(core, { question: '问7', page: null });
     expect(sent[7].body.system[1].text).toContain('用户在学 A 股规则。');
     expect(JSON.stringify(sent[7].body.messages)).not.toContain('问1');
+    expect(JSON.stringify(sent[5].body.messages)).toContain('sig5');
+    expect(JSON.stringify(sent[7].body.messages)).not.toContain('sig5');
+    expect(JSON.stringify(sent[7].body.messages)).toContain('答5');
+    // Anthropic 不改 tool_choice，messages 缓存不失效
+    expect(compactReq.tool_choice).toBeUndefined();
+    expect(compactReq.tools).toEqual(sent[5].body.tools);
   });
 
   test('工具调用超过 6 轮就停', async () => {
