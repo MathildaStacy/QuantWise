@@ -28,7 +28,7 @@ import type { RootStackParamList } from '../../src/ui/navigation/types';
 import { BookMapScreen, NotesScreen } from '../../src/ui/screens/BookScreens';
 import { ChartFullScreen, FactorLabScreen } from '../../src/ui/screens/FactorScreens';
 import * as importer from '../../src/study/importer';
-import { ImportBookScreen, MineruSettingsScreen, StudyPrefsScreen } from '../../src/ui/screens/ImportScreens';
+import { ImportBookScreen, MineruSettingsScreen, ParseProgressScreen, StudyPrefsScreen } from '../../src/ui/screens/ImportScreens';
 import { LearnScreen } from '../../src/ui/screens/LearnScreens';
 import { ReviewScreen, SectionDoneScreen } from '../../src/ui/screens/ReviewScreens';
 import { StudyScreen } from '../../src/ui/screens/StudyScreen';
@@ -349,5 +349,31 @@ test('PDF 默认开启 OCR；主动关闭后切换模型不重置选择', async 
     expect(r.text()).toContain('已关闭，文字层中的公式和符号可能遗漏');
   } finally {
     plan.mockRestore();
+  }
+});
+
+test('解析进度区分等待上传、上传、云端确认、排队和生成结果，暂停时提供继续入口', async () => {
+  const now = beijingIso(), id = 'parse-progress-recovery';
+  await bookRepo.createBook(core.db, { id, title: '上传恢复测试', author: '', format: 'pdf', source: 'import', sha256: id, pages: 1000, status: 'parsing', error: null, body: {} }, now);
+  const states: bookRepo.PartState[] = ['uploading', 'pending', 'uploaded', 'queued', 'converting'];
+  for (const [i, state] of states.entries()) {
+    await bookRepo.savePart(core.db, id, { partNo: i + 1, pageFrom: i * 200 + 1, pageTo: (i + 1) * 200, dataId: id + '-p' + (i + 1), batchId: 'batch', state, error: null, updatedAt: now });
+  }
+  const run = jest.spyOn(importer, 'runParse').mockResolvedValue();
+  importer.useParse.setState({ [id]: { stage: '上传第 1 / 5 片', done: 0.1, error: null } });
+  try {
+    const r = await render('ParseProgress', ParseProgressScreen, { bookId: id });
+    for (const label of ['上传第 1 / 5 片', '上传时请保持 App 在前台', '等待上传', '上传中', '已上传，等待云端确认', 'MinerU 排队中', '正在生成解析结果']) expect(r.text()).toContain(label);
+    await act(async () => {
+      importer.useParse.setState({ [id]: { stage: '已暂停', done: 0.1, error: 'MinerU 一直未确认收到文件，请检查网络后点「继续」补传' } });
+    });
+    expect(r.text()).toContain('上传未完成');
+    expect(r.text()).not.toContain('上传中');
+    expect(r.text()).toContain('未确认收到文件');
+    await r.press('继续');
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenLastCalledWith(core, id);
+  } finally {
+    run.mockRestore();
   }
 });

@@ -1,7 +1,7 @@
 /**
  * 导入一本书（QUANTWISE_DESIGN.md §5）：选文件 → SHA-256（导入过就直接打开）→ 按格式解析 → 写书架。
  * PDF 走 MinerU：按 ≤ 200 页分片（同一个文件 + page_ranges）→ 上传 → 轮询 → 下载结果包 → content_list → 内容块。
- * 每片的任务号和状态写进 book_part，App 被杀后回到解析页接着轮询，不重复上传。
+ * 每片的任务号和状态写进 book_part；恢复时核对云端，补传未收到的片，已接收的片接着轮询。
  */
 import { errorCodes, isErrorWithCode, keepLocalCopy, pick, types } from '@react-native-documents/picker';
 import * as Keychain from 'react-native-keychain';
@@ -20,6 +20,7 @@ import {
   planParts,
   type MineruClient,
   type MineruModel,
+  type MineruResult,
 } from './import/mineru';
 import { adaptContentList, findContentList, mergeParts } from './import/mineruAdapter';
 import { preparePdfItems } from './import/pdfStructure';
@@ -221,6 +222,19 @@ export async function retryParse(core: AppCore, bookId: string): Promise<void> {
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** 网络、账号或配额错误保留任务并持久化暂停原因，解决后继续轮询。 */
 const RETRIABLE = new Set(['network', 'timeout', 'queue_full', 'service', 'cancelled', 'auth', 'daily_limit']);
+/** PUT 完成后允许云端短暂同步；一直 waiting-file 时暂停并提供补传入口。 */
+const UPLOAD_CONFIRM_MS = 120_000;
+
+const remotePartState = (state: MineruResult['state']): bookRepo.PartState => {
+  switch (state) {
+    case 'waiting-file': return 'uploaded';
+    case 'pending': return 'queued';
+    case 'running': return 'parsing';
+    case 'converting': return 'converting';
+    case 'done': return 'uploaded'; // 下载结果成功后才写 done。
+    case 'failed': return 'failed';
+  }
+};
 
 async function parseQueue(core: AppCore, bookId: string): Promise<void> {
   const book = await bookRepo.book(core.db, bookId);
@@ -233,13 +247,39 @@ async function parseQueue(core: AppCore, bookId: string): Promise<void> {
   const model = book.body.model ?? 'vlm';
   const save = (p: bookRepo.BookPart, patch: Partial<bookRepo.BookPart>) =>
     bookRepo.savePart(core.db, bookId, { ...p, ...patch, updatedAt: beijingIso() });
-  setProgress(bookId, { error: null });
+  setProgress(bookId, { stage: '正在恢复解析任务', error: null });
   try {
     await bookRepo.updateBook(core.db, bookId, { status: 'parsing', error: null }, beijingIso());
     let parts = await bookRepo.parts(core.db, bookId);
     const total = parts.length;
+    // 任务号只表示申请过上传地址，不证明 PUT 完成。旧版也会提前把整批标成 uploading。
+    const interrupted = parts.filter(p => p.batchId && (p.state === 'uploading' || p.state === 'pending'));
+    if (interrupted.length) {
+      setProgress(bookId, { stage: '核对未完成的上传' });
+      for (const batch of new Set(interrupted.map(p => p.batchId!))) {
+        const results = await client.query(batch);
+        for (const p of interrupted.filter(x => x.batchId === batch)) {
+          const r = results.find(x => x.dataId === p.dataId);
+          if (!r) throw new MineruError('protocol');
+          if (r.state === 'waiting-file') {
+            await save(p, { batchId: null, state: 'pending', error: null });
+          } else if (r.state === 'failed') {
+            if (r.error && ['auth', 'daily_limit'].includes(r.error.kind)) throw r.error;
+            await save(p, { state: 'failed', error: r.error?.message ?? 'MinerU 解析失败' });
+          } else {
+            await save(p, { state: remotePartState(r.state), error: null });
+          }
+        }
+      }
+      parts = await bookRepo.parts(core.db, bookId);
+    }
+    const checkFailed = () => {
+      const failed = parts.find(p => p.state === 'failed');
+      if (failed) throw new Error('第 ' + failed.partNo + ' 片解析失败：' + (failed.error ?? ''));
+    };
+    checkFailed();
     // 1. 还没申请上传地址的片：一次申请，逐个上传（同一个文件 + 不同的 page_ranges）
-    const pending = parts.filter(p => p.state === 'pending' || (p.state === 'uploading' && !p.batchId));
+    const pending = parts.filter(p => !p.batchId && (p.state === 'pending' || p.state === 'uploading'));
     if (pending.length) {
       setProgress(bookId, { stage: '申请上传地址', done: 0.02 });
       const { batchId, urls } = await client.requestUpload(
@@ -247,26 +287,28 @@ async function parseQueue(core: AppCore, bookId: string): Promise<void> {
         model,
       );
       for (const p of pending) {
-        await save(p, { batchId, state: 'uploading' });
+        await save(p, { batchId, state: 'pending', error: null });
       }
       for (let i = 0; i < pending.length; i++) {
+        await save(pending[i], { batchId, state: 'uploading', error: null });
         setProgress(bookId, { stage: '上传第 ' + pending[i].partNo + ' / ' + total + ' 片', done: 0.05 + (0.25 * i) / pending.length });
         await client.upload(urls[i], dir + '/source.pdf', (sent, all) =>
           setProgress(bookId, { done: 0.05 + (0.25 * (i + (all ? sent / all : 0))) / pending.length }),
         );
-        await save({ ...pending[i], batchId }, { state: 'parsing' });
+        await save(pending[i], { batchId, state: 'uploaded', error: null });
       }
       parts = await bookRepo.parts(core.db, bookId);
     }
     // 2. 轮询，完成的片下载结果包
     for (let round = 0; parts.some(p => p.state !== 'done' && p.state !== 'failed'); round++) {
+      let parsingStage: string | undefined;
       const batches = [...new Set(parts.filter(p => p.batchId && p.state !== 'done').map(p => p.batchId!))];
       for (const b of batches) {
-        for (const r of await client.query(b)) {
-          const p = parts.find(x => x.dataId === r.dataId);
-          if (!p || p.state === 'done') {
-            continue;
-          }
+        const results = await client.query(b);
+        // 旧批次仍会返回补传片的旧记录，只处理属于本批次的当前任务。
+        for (const p of parts.filter(x => x.batchId === b && x.state !== 'done')) {
+          const r = results.find(x => x.dataId === p.dataId);
+          if (!r) throw new MineruError('protocol');
           if (r.state === 'failed') {
             if (r.error && ['auth', 'daily_limit'].includes(r.error.kind)) throw r.error;
             await save(p, { state: 'failed', error: r.error?.message ?? 'MinerU 解析失败' });
@@ -274,22 +316,33 @@ async function parseQueue(core: AppCore, bookId: string): Promise<void> {
             setProgress(bookId, { stage: '下载第 ' + p.partNo + ' 片的结果' });
             await client.download(r.zipUrl, dir + '/part' + p.partNo);
             await save(p, { state: 'done', error: null });
-          } else if (r.progress) {
-            setProgress(bookId, { stage: 'MinerU 解析中（第 ' + p.partNo + ' 片 ' + r.progress.extractedPages + ' / ' + r.progress.totalPages + ' 页）' });
+          } else {
+            if (r.state === 'waiting-file' && Date.now() - Date.parse(p.updatedAt) >= UPLOAD_CONFIRM_MS) {
+              await save(p, { state: 'uploading' });
+              throw new MineruError('upload_unconfirmed');
+            }
+            const state = remotePartState(r.state);
+            if (p.state !== state) await save(p, { state, error: null });
+            if (r.state === 'running' && r.progress) {
+              parsingStage ??= 'MinerU 解析中（第 ' + p.partNo + ' 片 ' + r.progress.extractedPages + ' / ' + r.progress.totalPages + ' 页）';
+            }
           }
         }
       }
       parts = await bookRepo.parts(core.db, bookId);
       const done = parts.filter(p => p.state === 'done').length;
       setProgress(bookId, { done: 0.3 + (0.6 * done) / total });
-      if (parts.some(p => p.state === 'failed')) {
-        const f = parts.find(p => p.state === 'failed')!;
-        throw new Error('第 ' + f.partNo + ' 片解析失败：' + (f.error ?? ''));
-      }
+      checkFailed();
       if (parts.every(p => p.state === 'done')) {
         break;
       }
-      setProgress(bookId, { stage: parts.some(p => p.state === 'parsing') ? 'MinerU 解析中' : '排队中' });
+      const stage = parsingStage ?? (
+        parts.some(p => p.state === 'parsing') ? 'MinerU 解析中'
+        : parts.some(p => p.state === 'converting') ? 'MinerU 正在生成解析结果'
+        : parts.some(p => p.state === 'queued') ? 'MinerU 排队中'
+        : '等待 MinerU 确认上传'
+      );
+      setProgress(bookId, { stage });
       await sleep(deps.pollMs(round));
     }
     // 3. 合并各片，切章节、建块

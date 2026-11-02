@@ -7,7 +7,7 @@ import * as bookRepo from '../../src/data/bookRepo';
 import { openMemoryDb } from '../../src/data/drivers/nodeSqlite';
 import { migrate } from '../../src/data/migrations';
 import type { ImportIo } from '../../src/study/files';
-import { MineruError, type MineruClient, type MineruUploadFile } from '../../src/study/import/mineru';
+import { MineruError, type MineruClient, type MineruResult, type MineruUploadFile } from '../../src/study/import/mineru';
 import { importFile, planPdf, retryParse, runParse, setImportDeps, startPdfImport, useParse } from '../../src/study/importer';
 
 const files = new Map<string, string>();
@@ -87,6 +87,7 @@ async function core() {
   queries = 0;
   failQuery = null;
   pages = 418;
+  useParse.setState({}, true);
   return { db } as AppCore;
 }
 
@@ -170,6 +171,148 @@ test('PDF：MinerU 说这一片解析失败 → 书失败；重试从上传开�
   expect((await bookRepo.book(c.db, id))?.status).toBe('ready');
 });
 
+test('PDF：上传中断后重启，云端还在 waiting-file 的片会重新上传，不会空转排队', async () => {
+  const c = await core();
+  pages = 393;
+  files.set('/cache/interrupted.pdf', 'pdf');
+  const upload = jest.spyOn(client, 'upload').mockRejectedValueOnce(new MineruError('network'));
+  const query = jest.spyOn(client, 'query');
+  const originalQuery = query.getMockImplementation()!;
+  let oldQueries = 0;
+  query.mockImplementation(async batch => {
+    if (batch !== 'batch-1') return originalQuery(batch);
+    // 第二次查询抛错，让旧实现确定性退出，而不是让测试真的无限排队。
+    if (++oldQueries > 1) throw new MineruError('network');
+    return requested[0].map(f => ({ fileName: f.name, dataId: f.dataId, state: 'waiting-file' }));
+  });
+  try {
+    const id = await startPdfImport(c, { path: '/cache/interrupted.pdf', name: 'interrupted.pdf', model: 'vlm', ocr: true });
+    await runParse(c, id);
+    expect(useParse.getState()[id].stage).toBe('已暂停');
+    expect((await bookRepo.parts(c.db, id)).map(p => p.state)).toEqual(['uploading', 'pending']);
+    // 旧版会预先将整批标为 uploading；模拟截图中的已有记录。
+    for (const p of await bookRepo.parts(c.db, id)) await bookRepo.savePart(c.db, id, { ...p, state: 'uploading' });
+    useParse.setState({}, true);
+    await runParse(c, id);
+    expect(requested).toHaveLength(2);
+    expect(requested[1].map(f => f.pageRanges)).toEqual(['1-200', '201-393']);
+    expect(uploads).toHaveLength(2);
+    expect(oldQueries).toBe(1);
+    expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'ready', error: null });
+  } finally {
+    upload.mockRestore();
+    query.mockRestore();
+  }
+});
+
+test('PDF：只补传中断的片，保留已接收的片，旧批次的 waiting-file 不覆盖新任务', async () => {
+  const c = await core();
+  pages = 393;
+  files.set('/cache/partial.pdf', 'pdf');
+  const upload = jest.spyOn(client, 'upload');
+  const originalUpload = upload.getMockImplementation()!;
+  upload.mockImplementationOnce(originalUpload).mockRejectedValueOnce(new MineruError('timeout'));
+  const query = jest.spyOn(client, 'query');
+  let round = 0;
+  query.mockImplementation(async batch => {
+    if (++round > 6) throw new MineruError('network');
+    return requested[Number(batch.split('-')[1]) - 1].map(f =>
+      batch === 'batch-1' && f.dataId.endsWith('-p2')
+        ? { fileName: f.name, dataId: f.dataId, state: 'waiting-file' }
+        : { fileName: f.name, dataId: f.dataId, state: 'done', zipUrl: 'zip:' + f.dataId },
+    );
+  });
+  try {
+    const id = await startPdfImport(c, { path: '/cache/partial.pdf', name: 'partial.pdf', model: 'vlm', ocr: true });
+    await runParse(c, id);
+    await retryParse(c, id);
+    expect(requested).toHaveLength(2);
+    expect(requested[1].map(f => f.pageRanges)).toEqual(['201-393']);
+    expect(uploads).toHaveLength(2);
+    expect((await bookRepo.parts(c.db, id)).map(p => [p.batchId, p.state])).toEqual([['batch-1', 'done'], ['batch-2', 'done']]);
+    expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'ready' });
+  } finally {
+    upload.mockRestore();
+    query.mockRestore();
+  }
+});
+
+test('PDF：上传响应丢失但云端已接收，恢复时不重复上传', async () => {
+  const c = await core();
+  pages = 50;
+  files.set('/cache/accepted.pdf', 'pdf');
+  const upload = jest.spyOn(client, 'upload').mockRejectedValueOnce(new MineruError('network'));
+  try {
+    const id = await startPdfImport(c, { path: '/cache/accepted.pdf', name: 'accepted.pdf', model: 'vlm', ocr: false });
+    await runParse(c, id);
+    await runParse(c, id);
+    expect(requested).toHaveLength(1);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'ready' });
+  } finally {
+    upload.mockRestore();
+  }
+});
+
+test('PDF：进度使用云端真实状态，保留解析页数，不把等待接收和排队显示成解析', async () => {
+  const c = await core();
+  pages = 50;
+  files.set('/cache/states.pdf', 'pdf');
+  const states: MineruResult['state'][] = ['waiting-file', 'pending', 'running', 'converting', 'done'];
+  const seen: { state: string; stage: string }[] = [];
+  const query = jest.spyOn(client, 'query').mockImplementation(async () => {
+    const f = requested[0][0];
+    const id = f.dataId.replace(/-p1$/, '');
+    if (states.length < 5) seen.push({ state: (await bookRepo.parts(c.db, id))[0].state, stage: useParse.getState()[id].stage });
+    const state = states.shift()!;
+    return [{ fileName: f.name, dataId: f.dataId, state, ...(state === 'running' ? { progress: { extractedPages: 12, totalPages: 50 } } : {}), ...(state === 'done' ? { zipUrl: 'zip:' + f.dataId } : {}) }];
+  });
+  try {
+    const id = await startPdfImport(c, { path: '/cache/states.pdf', name: 'states.pdf', model: 'vlm', ocr: true });
+    await runParse(c, id);
+    expect(seen).toEqual([
+      { state: 'uploaded', stage: '等待 MinerU 确认上传' },
+      { state: 'queued', stage: 'MinerU 排队中' },
+      { state: 'parsing', stage: 'MinerU 解析中（第 1 片 12 / 50 页）' },
+      { state: 'converting', stage: 'MinerU 正在生成解析结果' },
+    ]);
+    expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'ready' });
+  } finally {
+    query.mockRestore();
+  }
+});
+
+test('PDF：云端一直未确认上传时暂停，继续后补传，不会永久等待', async () => {
+  const c = await core();
+  pages = 50;
+  files.set('/cache/unconfirmed.pdf', 'pdf');
+  let time = Date.now();
+  const clock = jest.spyOn(Date, 'now').mockImplementation(() => time);
+  const query = jest.spyOn(client, 'query');
+  const originalQuery = query.getMockImplementation()!;
+  let waitingQueries = 0;
+  query.mockImplementation(async batch => {
+    if (batch !== 'batch-1') return originalQuery(batch);
+    if (++waitingQueries > 4) throw new MineruError('network');
+    time += 61_000;
+    return requested[0].map(f => ({ fileName: f.name, dataId: f.dataId, state: 'waiting-file' }));
+  });
+  try {
+    const id = await startPdfImport(c, { path: '/cache/unconfirmed.pdf', name: 'unconfirmed.pdf', model: 'vlm', ocr: true });
+    await runParse(c, id);
+    expect(waitingQueries).toBe(2);
+    expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'parsing', error: expect.stringContaining('未确认收到文件') });
+    expect(useParse.getState()[id].stage).toBe('已暂停');
+    useParse.setState({}, true);
+    await runParse(c, id);
+    expect(requested).toHaveLength(2);
+    expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'ready', error: null });
+  } finally {
+    clock.mockRestore();
+    query.mockRestore();
+  }
+});
+
 test.each(['A0211', '-60018'])('PDF account error %s persists a pause and resumes the accepted batch', async code => {
   const c = await core();
   pages = 50;
@@ -179,7 +322,7 @@ test.each(['A0211', '-60018'])('PDF account error %s persists a pause and resume
   await runParse(c, id);
   expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'parsing', error: failQuery.message });
   const before = await bookRepo.parts(c.db, id);
-  expect(before[0]).toMatchObject({ state: 'parsing', batchId: 'batch-1' });
+  expect(before[0]).toMatchObject({ state: 'uploaded', batchId: 'batch-1' });
   useParse.setState({}, true); // App 重启，不能只靠内存显示暂停原因
   expect((await bookRepo.book(c.db, id))?.error).toBe(failQuery.message);
   failQuery = null;
@@ -233,7 +376,7 @@ test('an account failure inside a batch row keeps the accepted task available to
     const id = await startPdfImport(c, { path: '/cache/row.pdf', name: 'row.pdf', model: 'vlm', ocr: false });
     await runParse(c, id);
     expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'parsing', error: expect.stringContaining('过期') });
-    expect((await bookRepo.parts(c.db, id))[0]).toMatchObject({ state: 'parsing', batchId: 'batch-1' });
+    expect((await bookRepo.parts(c.db, id))[0]).toMatchObject({ state: 'uploaded', batchId: 'batch-1' });
     client.query = query;
     await runParse(c, id);
     expect(uploads).toHaveLength(1);

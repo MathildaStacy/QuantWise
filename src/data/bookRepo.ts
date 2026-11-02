@@ -237,7 +237,7 @@ export const today = (iso: string): DateStr => iso.slice(0, 10);
 
 // ---------- PDF 分片（MinerU 任务） ----------
 
-export type PartState = 'pending' | 'uploading' | 'parsing' | 'done' | 'failed';
+export type PartState = 'pending' | 'uploading' | 'uploaded' | 'queued' | 'parsing' | 'converting' | 'done' | 'failed';
 
 export interface BookPart {
   partNo: number;

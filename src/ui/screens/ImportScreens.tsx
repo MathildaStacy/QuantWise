@@ -95,7 +95,7 @@ export function ImportBookScreen({ route }: RootScreenProps<'ImportBook'>) {
   );
 }
 
-const PART_STATE: Record<bookRepo.PartState, string> = { pending: '等待上传', uploading: '上传中', parsing: 'MinerU 解析中', done: '完成', failed: '失败' };
+const PART_STATE: Record<bookRepo.PartState, string> = { pending: '等待上传', uploading: '上传中', uploaded: '已上传，等待云端确认', queued: 'MinerU 排队中', parsing: 'MinerU 解析中', converting: '正在生成解析结果', done: '完成', failed: '失败' };
 
 export function ParseProgressScreen({ route }: RootScreenProps<'ParseProgress'>) {
   const core = useCore();
@@ -134,13 +134,13 @@ export function ParseProgressScreen({ route }: RootScreenProps<'ParseProgress'>)
           <View style={st.track}>
             <View style={[st.fill, { width: Math.round((done ? 1 : prog?.done ?? 0) * 100) + '%' }]} />
           </View>
-          <Text style={st.k}>{done ? '完成 · ' + (book?.pages ?? 0) + ' 页 · ' + (book?.body.leaves ?? 0) + ' 个小节' : failed ? '失败：' + (book?.error ?? '') : (paused ? '已暂停' : prog?.stage || '排队中') + ' · 可以离开这个页面，回来接着看'}</Text>
+          <Text style={st.k}>{done ? '完成 · ' + (book?.pages ?? 0) + ' 页 · ' + (book?.body.leaves ?? 0) + ' 个小节' : failed ? '失败：' + (book?.error ?? '') : paused ? '已暂停' : (prog?.stage || '正在恢复解析任务') + ' · ' + (parts.some(p => p.state === 'pending' || p.state === 'uploading') ? '上传时请保持 App 在前台' : '可以离开这个页面，回来接着看')}</Text>
         </View>
         <View style={st.card}>
           {parts.map(p => (
             <View key={p.partNo} style={st.partRow}>
               <Text style={[st.body, num]}>第 {p.partNo} 片 · p.{p.pageFrom}–{p.pageTo}</Text>
-              <Text style={[st.k, p.state === 'failed' && st.bad]}>{PART_STATE[p.state]}{p.error ? '：' + p.error : ''}</Text>
+              <Text style={[st.k, p.state === 'failed' && st.bad]}>{paused && p.state === 'uploading' ? '上传未完成' : PART_STATE[p.state]}{p.error ? '：' + p.error : ''}</Text>
             </View>
           ))}
         </View>

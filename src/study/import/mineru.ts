@@ -52,6 +52,7 @@ const KINDS = new Map<string, MineruErrorKind>([
   // 本地产生的
   ['network', 'network'],
   ['timeout', 'timeout'],
+  ['upload_unconfirmed', 'timeout'],
   ['cancelled', 'cancelled'],
   ['protocol', 'protocol'],
   ['bad_request', 'protocol'],
@@ -82,6 +83,7 @@ const CODE_MESSAGES = new Map<string, string>([
   ['-60012', 'MinerU 找不到这个解析任务（可能已过期），需要重新上传'],
   ['-60013', '这个解析任务不属于当前 Token 的账号，需要重新上传'],
   ['bad_request', '解析请求的参数不对（文件数、data_id、页码范围或模型）'],
+  ['upload_unconfirmed', 'MinerU 一直未确认收到文件，请检查网络后点「继续」补传'],
 ]);
 
 /** 只有长得像官方错误码的才写进文字，方便用户反馈；其余一律不带。 */
