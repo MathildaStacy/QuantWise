@@ -30,6 +30,7 @@ import {
   Segmented,
 } from '../components/ui';
 import { ShelfView } from './ShelfView';
+import { LearningHubView } from '../learning/HubScreen';
 import { useAiContext, useCore, useViewLog } from '../hooks';
 import type { RootScreenProps, RootStackParamList } from '../navigation/types';
 import { color, num, PAD } from '../theme';
@@ -99,12 +100,12 @@ const TOOLS: Tool[] = [
   },
 ];
 
-/** 学习 Tab 顶部两段：读书（QuantWise 的书架，默认）和路线（AShareSim 原来的学习 Tab）。 */
-let lastSeg: 'read' | 'route' = 'read';
+/** 学习 Tab：读书（默认书架）、路线（交易规则）和研习（个人量化学习）。 */
+let lastSeg: 'read' | 'route' | 'practice' = 'read';
 
 export function LearnScreen() {
   const [seg, setSeg] = useState(lastSeg);
-  const pick = (k: 'read' | 'route') => {
+  const pick = (k: 'read' | 'route' | 'practice') => {
     lastSeg = k;
     setSeg(k);
   };
@@ -115,11 +116,12 @@ export function LearnScreen() {
         items={[
           ['read', '读书'],
           ['route', '路线'],
+          ['practice', '研习'],
         ]}
         value={seg}
         onChange={pick}
       />
-      {seg === 'read' ? <ShelfView /> : <RouteView />}
+      {seg === 'read' ? <ShelfView /> : seg === 'route' ? <RouteView /> : <LearningHubView />}
     </View>
   );
 }

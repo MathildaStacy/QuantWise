@@ -157,7 +157,7 @@ test('v1.1 数据库无损升级：旧表保留，新增译文外键', async () 
   const db = openMemoryDb();
   for (const sql of migrations.slice(0, 8).flat()) await db.run(sql);
   await db.run('PRAGMA user_version = 8');
-  expect(await migrate(db)).toEqual({ from: 8, to: 10 });
+  expect(await migrate(db)).toEqual({ from: 8, to: 11 });
   expect((await db.all("SELECT * FROM pragma_foreign_key_list('book_translation')"))).toHaveLength(2);
   await db.close();
 });

@@ -78,6 +78,11 @@ import { StudyScreen } from '../screens/StudyScreen';
 import { WatchEditScreen } from '../screens/WatchEditScreen';
 import { WatchScreen } from '../screens/WatchScreen';
 import { color } from '../theme';
+import { LearningPlanScreen } from '../learning/HubScreen';
+import { ConceptScreen, KnowledgeScreen } from '../learning/KnowledgeScreens';
+import { QuantQuizScreen } from '../learning/QuizScreen';
+import { ResearchEditScreen, ResearchNotesScreen } from '../learning/ResearchScreens';
+import { LearningCoachScreen, LearningReportScreen } from '../learning/CoachReportScreens';
 import type { RootStackParamList, TabParamList } from './types';
 
 const Tab = createBottomTabNavigator<TabParamList>();
@@ -224,6 +229,14 @@ export function RootStack() {
       <Stack.Screen name="ChartFull" component={ChartFullScreen} />
       <Stack.Screen name="MineruSettings" component={MineruSettingsScreen} />
       <Stack.Screen name="StudyPrefs" component={StudyPrefsScreen} />
+      <Stack.Screen name="LearningPlan" component={LearningPlanScreen} />
+      <Stack.Screen name="Knowledge" component={KnowledgeScreen} />
+      <Stack.Screen name="Concept" component={ConceptScreen} />
+      <Stack.Screen name="QuantQuiz" component={QuantQuizScreen} />
+      <Stack.Screen name="ResearchNotes" component={ResearchNotesScreen} />
+      <Stack.Screen name="ResearchEdit" component={ResearchEditScreen} />
+      <Stack.Screen name="LearningCoach" component={LearningCoachScreen} />
+      <Stack.Screen name="LearningReport" component={LearningReportScreen} />
     </Stack.Navigator>
   );
 }
