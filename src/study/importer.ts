@@ -87,14 +87,18 @@ export async function pickAndImport(core: AppCore): Promise<PickResult | null> {
     throw e;
   }
   const name = picked.name ?? 'book';
-  if (!['pdf', 'epub', 'md', 'markdown', 'txt'].includes(extOf(name))) {
+  const ext = extOf(name);
+  if (!['pdf', 'epub', 'md', 'markdown', 'txt'].includes(ext)) {
     throw new Error('只支持 PDF、EPUB 和 Markdown（.md / .txt）');
   }
-  const [copy] = await keepLocalCopy({ files: [{ uri: picked.uri, fileName: name }], destination: 'cachesDirectory' });
+  // Picker 为每次复制创建独立目录；磁盘上用短 ASCII 名，原书名只用于显示和元数据。
+  const [copy] = await keepLocalCopy({ files: [{ uri: picked.uri, fileName: 'source.' + ext }], destination: 'cachesDirectory' });
   if (copy.status !== 'success') {
     throw new Error('读不了这个文件：' + copy.copyError);
   }
-  return importFile(core, copy.localUri.replace(/^file:\/\//, ''), name);
+  // localUri 是编码后的 file:// URI，文件 I/O 接收真实路径；只在 URI 边界解码一次。
+  const path = decodeURIComponent(copy.localUri.replace(/^file:\/\//, ''));
+  return importFile(core, path, name);
 }
 
 export async function importFile(core: AppCore, path: string, name: string): Promise<PickResult> {
