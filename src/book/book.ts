@@ -25,6 +25,15 @@ export function citeLabel(
 export const leavesOf = (sections: BookSection[]) =>
   sections.filter(s => s.leaf).sort((a, b) => a.ord - b.ord);
 
+/** 一个小节属于哪一章（沿 parentId 往上找到第 1 级）。 */
+export function chapterOf(sections: BookSection[], s: BookSection): string {
+  let cur: BookSection | undefined = s;
+  while (cur?.parentId) {
+    cur = sections.find(x => x.id === cur!.parentId);
+  }
+  return cur?.id ?? s.id;
+}
+
 export function nextLeaf(
   sections: BookSection[],
   id: string,

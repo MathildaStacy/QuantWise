@@ -20,6 +20,8 @@ export const rc = {
   exampleInk: '#A15C00',
   real: '#E8F4F1',
   realInk: '#0F7B76',
+  web: '#F1EFF4',
+  webInk: '#5B5470',
   grid: '#ECEAE4',
   bench: '#77736A',
 } as const;

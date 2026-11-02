@@ -16,6 +16,7 @@ import {
   capabilitiesOf,
   EFFORT_NAME,
   prettyModel,
+  protocolNotice,
   PROVIDER_PRESETS,
   searchAvailability,
 } from '../../ai/models';
@@ -217,6 +218,9 @@ export function ModelPicker({
                 <Text style={s.modelTitle}>{prettyModel(m.id)}</Text>
                 <Text style={s.sub}>{p.name + ' · ' + m.id}</Text>
                 <CapabilityTags caps={capabilitiesOf(p, m)} />
+                {protocolNotice(p, m.id) ? (
+                  <Text style={[s.tag, s.warn]}>{protocolNotice(p, m.id)}</Text>
+                ) : null}
               </View>
               {selected ? <Check size={20} color={c.ink} /> : null}
             </Pressable>

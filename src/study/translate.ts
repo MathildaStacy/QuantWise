@@ -1,11 +1,12 @@
-/** 独立翻译请求：沿用 AI 协议和 Key，不写入讲解会话或改变教学进度。 */
-import { activeService, aiKeys, aiTransport } from '../ai/chat';
+/** 独立翻译请求：沿用 AI 协议和 Key，用这一节讲解的模型；不写入讲解会话或改变教学进度。 */
+import { aiKeys, aiTransport } from '../ai/chat';
 import { AiError, callModel } from '../ai/http';
 import { buildRequest } from '../ai/protocol';
 import type { AppCore } from '../app/boot';
 import type { Book, BookBlock, BookSection } from '../book/types';
 import { saveTranslation, type BlockTranslation } from '../data/translationRepo';
 import { beijingIso } from '../market/clock';
+import { sectionStudyService } from './config';
 import { canTranslate, parseTranslations, translationBatches, translationUnits, type TranslationPair } from './translation';
 
 export const TRANSLATION_PROMPT = `你是一位专业的量化教材翻译。把用户 JSON 中的每个 source 忠实译为简体中文。
@@ -14,14 +15,15 @@ export const TRANSLATION_PROMPT = `你是一位专业的量化教材翻译。把
 保留所有数字、正负号、引用、专有名词和 Markdown 格式；数字使用原文的阿拉伯数字，保留小数、千分位和百分号，不换算、不改成中文数词。$...$、$$...$$、\\(...\\)、\\[...\\] 内的 LaTeX 连同定界符必须逐字原样复制，不能增删公式。
 只返回 JSON：{"translations":[{"id":"原 id","text":"简体中文译文"}]}。`;
 
-export async function translateBlocks(core: AppCore, book: Pick<Book, 'id' | 'title'>, section: Pick<BookSection, 'title'>,
+export async function translateBlocks(core: AppCore, book: Pick<Book, 'id' | 'title'>, section: Pick<BookSection, 'id' | 'title'>,
   blocks: BookBlock[], cached: Record<number, BlockTranslation>, signal: AbortSignal,
   onBlock: (seq: number, result: BlockTranslation) => void,
   onCurrent: (seq: number) => void,
 ): Promise<void> {
   const pending = blocks.filter(b => canTranslate(b) && cached[b.seq]?.source !== b.text);
   if (!pending.length || signal.aborted) return;
-  const current = await activeService(core);
+  // 前缀只有约 400 词元，低于各家最低缓存长度，缓存参数不发；译文按块原文存在本机，再次打开不重复请求
+  const current = await sectionStudyService(core.db, book.id, section.id);
   if (!current) throw new AiError('auth', '请先在「供应商与模型」启用一个 AI 模型');
   const key = await aiKeys().get(current.id);
   if (!key) throw new AiError('auth', '「' + current.name + '」还没有保存 API Key');

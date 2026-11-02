@@ -13,7 +13,22 @@ import type { BookSection } from '../book/types';
 import * as bookRepo from '../data/bookRepo';
 import * as studyRepo from '../data/studyRepo';
 import { beijingIso } from '../market/clock';
+import { estimateTokens } from '../ai/prompt';
 import { blockText, sectionText } from './prompt';
+
+/** load_section 一次最多返回多少词元（docs/design/ai-study-options.md §4.3）。 */
+export const LOAD_SECTION_TOKENS = 6000;
+/** search_book 每个命中块保留命中处前后多少字。 */
+const SNIPPET_CHARS = 200;
+
+/** 命中处前后的原文；整块不长时原样返回。 */
+export function snippetOf(text: string, query: string, around = SNIPPET_CHARS): string {
+  if (text.length <= around * 2 + 40) return text;
+  const at = Math.max(0, text.toLowerCase().indexOf(query.toLowerCase()));
+  const from = Math.max(0, at - around);
+  const to = Math.min(text.length, at + query.length + around);
+  return (from > 0 ? '…' : '') + text.slice(from, to) + (to < text.length ? '…' : '');
+}
 
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
   type: 'object',
@@ -43,8 +58,15 @@ const BOOK_TOOLS: ToolDef[] = [
   },
   {
     name: 'load_section',
-    description: '读一个小节的全部原文（带块号），之后可以引用它的块。用户问到另一个话题时 detour 传 true，界面会显示岔路。',
-    schema: obj({ id: { type: 'string', description: '小节号，见 <book_map>，例如 4.2' }, detour: { type: 'boolean' } }, ['id']),
+    description: '读一个小节的原文（带块号），之后可以引用读到的块。很长的小节分段返回，末尾写明从哪个块号继续（from）。用户问到另一个话题时 detour 传 true，界面会显示岔路。',
+    schema: obj(
+      {
+        id: { type: 'string', description: '小节号，见 <book_map>，例如 4.2' },
+        detour: { type: 'boolean' },
+        from: { type: 'integer', description: '从第几个块开始读（接着上一次没读完的地方）' },
+      },
+      ['id'],
+    ),
   },
   {
     name: 'mark_stuck',
@@ -65,7 +87,7 @@ const BOOK_TOOLS: ToolDef[] = [
   },
   {
     name: 'search_book',
-    description: '在这本书里全文搜索，返回前 8 个命中的块（块号、所在小节、原文）。这些块之后可以引用。',
+    description: '在这本书里全文搜索，返回前 8 个命中的块（块号、所在小节、命中处前后的原文）。这些块之后可以引用；要看整块或上下文时再 load_section。',
     schema: obj({ query: { type: 'string' } }, ['query']),
   },
 ];
@@ -89,6 +111,8 @@ export interface StudyToolEnv {
   sectionId: string;
   sections: BookSection[];
   signal?: AbortSignal;
+  /** 实验快照解读：只解释已经给出的结果，不执行任何工具（工具定义照常发送，缓存不变）。 */
+  snapshot?: boolean;
 }
 
 export async function runStudyTool(
@@ -99,6 +123,9 @@ export async function runStudyTool(
 ): Promise<{ output: string; ui: ToolUi }> {
   if (!STUDY_TOOL_NAMES.has(name)) {
     return { output: '伴读里没有这个工具：' + name, ui: { id, name, label: name + '（伴读里不能用）', error: true } };
+  }
+  if (env.snapshot) {
+    return { output: '这次只解释已经给出的实验结果，不调用工具、不重新计算。请直接根据给出的结果回答。', ui: { id, name, label: name + '（只解读已有结果，没有执行）', error: true } };
   }
   if (!BOOK_TOOLS.some(t => t.name === name)) {
     // 行情、因子：和 AI 助手同一套实现；伴读不写记忆、不出操作卡
@@ -135,18 +162,29 @@ async function bookTool(
         throw new Error('没有小节「' + sid + '」，小节号见 <book_map>');
       }
       const kids = env.sections.filter(x => x.parentId === s.id);
-      const blocks = await bookRepo.sectionBlocks(core.db, bookId, s.id);
-      const text = blocks.length
-        ? sectionText(s, blocks)
+      const all = await bookRepo.sectionBlocks(core.db, bookId, s.id);
+      const from = typeof args.from === 'number' && Number.isInteger(args.from) ? args.from : null;
+      const page = pageOf(all.filter(b => from == null || b.no >= from), s.id);
+      const rest = all.filter(b => b.no > (page[page.length - 1]?.no ?? Infinity));
+      const text = all.length
+        ? sectionText(s, page) + (rest.length ? '\n（这一节还有 ' + rest.length + ' 个块没读，从 [' + s.id + '#' + rest[0].no + '] 开始；需要时 load_section(id: "' + s.id + '", from: ' + rest[0].no + ') 接着读）' : '')
         : '## ' + secLabel(s) + '\n（这一级没有正文，下面的小节：' + kids.map(k => k.id + ' ' + k.title).join('、') + '）';
       const detour = args.detour === true && s.id !== env.sectionId;
-      return { output: text, ui: ui('读取 ' + secLabel(s) + '（' + blocks.length + ' 个块）', { section: { id: s.id, detour } }) };
+      const partial = page.length < all.length;
+      const range = partial && page.length ? '¶' + page[0].no + '–' + page[page.length - 1].no + '，共 ' : '';
+      return {
+        output: text,
+        ui: ui('读取 ' + secLabel(s) + '（' + range + all.length + ' 个块）', {
+          section: { id: s.id, detour, ...(partial ? { partial: true } : {}) },
+          ...(partial ? { cites: page.map(b => s.id + '#' + b.no) } : {}),
+        }),
+      };
     }
     case 'search_book': {
       const q = String(args.query ?? '').trim();
       const hits = await bookRepo.searchBlocks(core.db, bookId, q);
       const out = hits.length
-        ? hits.map(b => blockText(b.sectionId, b) + '（' + secLabel(env.sections.find(s => s.id === b.sectionId) ?? { no: '', title: b.sectionId }) + '）').join('\n')
+        ? hits.map(b => blockText(b.sectionId, { ...b, text: snippetOf(b.text, q) }) + '（' + secLabel(env.sections.find(s => s.id === b.sectionId) ?? { no: '', title: b.sectionId }) + '）').join('\n')
         : '没有找到「' + q + '」';
       return { output: out, ui: ui('在书里搜「' + q + '」：' + hits.length + ' 处', { cites: hits.map(b => b.sectionId + '#' + b.no) }) };
     }
@@ -192,4 +230,17 @@ async function bookTool(
     }
   }
   throw new Error('没有这个工具：' + name);
+}
+
+/** 从头取块，直到 LOAD_SECTION_TOKENS；至少一块。 */
+function pageOf<B extends Parameters<typeof blockText>[1]>(blocks: B[], sectionId: string): B[] {
+  const out: B[] = [];
+  let used = 0;
+  for (const b of blocks) {
+    const n = estimateTokens(blockText(sectionId, b));
+    if (out.length && used + n > LOAD_SECTION_TOKENS) break;
+    out.push(b);
+    used += n;
+  }
+  return out;
 }

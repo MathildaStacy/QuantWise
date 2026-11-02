@@ -5,7 +5,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { citeLabel, leavesOf, secLabel } from '../../book/book';
+import { chapterOf, citeLabel, leavesOf, secLabel } from '../../book/book';
 import { ankiCsv, notesMarkdown } from '../../book/export';
 import type { Book, BookBlock, BookSection } from '../../book/types';
 import * as bookRepo from '../../data/bookRepo';
@@ -129,6 +129,7 @@ export function BookMapScreen({ route }: RootScreenProps<'BookMap'>) {
         })}
         <View style={st.foot}>
           <Button title="笔记" small onPress={() => nav.navigate('Notes', { bookId })} style={st.grow} />
+          <Button title="讲解记录" small onPress={() => nav.navigate('StudyHistory', { bookId })} style={st.grow} />
           {d.book.source !== 'sample' ? <Button title="从书架删除" small onPress={() => setDel(true)} style={st.grow} /> : null}
         </View>
       </ScrollView>
@@ -151,15 +152,6 @@ export function BookMapScreen({ route }: RootScreenProps<'BookMap'>) {
       <AiFab />
     </View>
   );
-}
-
-/** 一个小节属于哪一章（沿 parentId 往上找到第 1 级）。 */
-function chapterOf(sections: BookSection[], s: BookSection): string {
-  let cur: BookSection | undefined = s;
-  while (cur?.parentId) {
-    cur = sections.find(x => x.id === cur!.parentId);
-  }
-  return cur?.id ?? s.id;
 }
 
 // ---------- 笔记 ----------

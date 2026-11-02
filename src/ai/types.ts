@@ -227,8 +227,8 @@ export interface ToolUi {
   proposal?: { id: number; external?: string[] };
   /** QuantWise 行情与因子工具画的图（数据随消息存下，历史对话打开时和当时一样）。 */
   charts?: ChartData[];
-  /** 伴读：load_section 的小节和是不是岔路（QUANTWISE_DESIGN.md §6.5）。 */
-  section?: { id: string; detour: boolean };
+  /** 伴读：load_section 的小节和是不是岔路（QUANTWISE_DESIGN.md §6.5）；partial 是长小节只读了一段（读到的块在 cites）。 */
+  section?: { id: string; detour: boolean; partial?: boolean };
   /** 伴读：search_book 命中的块（「3.1#2」），这些块之后可以被引用。 */
   cites?: string[];
   /** 伴读：ask_quiz 出的选择题；picked 是用户选的（-1 没选）。 */

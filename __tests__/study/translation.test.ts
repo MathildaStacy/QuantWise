@@ -1,6 +1,6 @@
-import { setAiDeps } from '../../src/ai/chat';
+import { setAiDeps, useChat } from '../../src/ai/chat';
 import type { FetchLike } from '../../src/ai/http';
-import { saveServices } from '../../src/ai/services';
+import { loadProviders, saveProviders, saveServices } from '../../src/ai/services';
 import type { AiService, Protocol } from '../../src/ai/types';
 import type { AppCore } from '../../src/app/boot';
 import type { BookBlock, BookSection } from '../../src/book/types';
@@ -8,6 +8,8 @@ import { createBook, deleteBook, saveContent } from '../../src/data/bookRepo';
 import { openMemoryDb } from '../../src/data/drivers/nodeSqlite';
 import { migrate, migrations } from '../../src/data/migrations';
 import { loadTranslations } from '../../src/data/translationRepo';
+import * as repo from '../../src/data/repos';
+import { STUDY_LAST_CONFIG_KEY } from '../../src/study/config';
 import { translateBlocks } from '../../src/study/translate';
 import { canTranslate, parseTranslations, splitTranslationSource, translationBatches, translationUnits } from '../../src/study/translation';
 
@@ -155,7 +157,25 @@ test('v1.1 数据库无损升级：旧表保留，新增译文外键', async () 
   const db = openMemoryDb();
   for (const sql of migrations.slice(0, 8).flat()) await db.run(sql);
   await db.run('PRAGMA user_version = 8');
-  expect(await migrate(db)).toEqual({ from: 8, to: 9 });
+  expect(await migrate(db)).toEqual({ from: 8, to: 10 });
   expect((await db.all("SELECT * FROM pragma_foreign_key_list('book_translation')"))).toHaveLength(2);
   await db.close();
+});
+
+test('翻译用这一节讲解的模型，不跟 AI 助手当前打开的对话走；不发缓存和思考参数', async () => {
+  const core = await setup();
+  const ps = await loadProviders(core.db);
+  await saveProviders(core.db, ps.map(p => ({ ...p, models: [...p.models, { id: 'lecture-model', enabled: true, price: null }] })));
+  await repo.setSetting(core.db, STUDY_LAST_CONFIG_KEY, { providerId: service.id, model: 'lecture-model', effort: 'off', search: false });
+  useChat.setState({ config: { providerId: service.id, model: 'test-model', effort: 'off', search: true } });
+  const fetchMock = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>();
+  for (const b of fixture.slice(0, 2)) fetchMock.mockResolvedValueOnce({ status: 200, text: async () => JSON.stringify(envelope(payload(b), 'anthropic')) });
+  setAiDeps({ fetch: fetchMock });
+  await translateBlocks(core, book, section, fixture, {}, new AbortController().signal, jest.fn(), jest.fn());
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+  expect(body.model).toBe('lecture-model');
+  expect(JSON.stringify(body)).not.toContain('cache_control');
+  expect(body.tools ?? []).toEqual([]);
+  useChat.setState({ config: null });
+  await core.db.close();
 });

@@ -40,7 +40,10 @@ export interface RequestInput {
   effort: Effort;
   /** 每台设备固定的 prompt_cache_key。 */
   cacheKey: string;
-  /** 压缩时用：不让模型调用工具。 */
+  /**
+   * 压缩 / 整理时用：不让模型调用工具。工具定义（含搜索）照常发送，保持前缀不变：OpenAI 系用
+   * tool_choice: none（不破坏前缀缓存）；Anthropic 改 tool_choice 会让 messages 缓存失效，只靠提示词。
+   */
   noTools?: boolean;
   stream?: boolean;
 }
@@ -87,6 +90,22 @@ const sameModel = (raw: RawOutput | null, s: RequestInput['service']) =>
   (!raw.providerId || raw.providerId === s.id);
 
 const REASONING = new Set(['thinking', 'redacted_thinking', 'reasoning']);
+
+/**
+ * 整理（压缩）之后保留下来的 Anthropic 回答不再回放思考块：新模型校验思考块产生时的 system、tools
+ * 和之前的消息没变，摘要改了前缀就会 400。文字和工具调用保留；其他协议没有这个校验，原样返回
+ * （DeepSeek 还要求原样回传 reasoning_content）。
+ */
+export function retainedRaw(raw: RawOutput): RawOutput {
+  return raw.protocol === 'anthropic'
+    ? {
+        ...raw,
+        items: raw.items.filter(
+          i => !REASONING.has((i as { type?: string })?.type ?? ''),
+        ),
+      }
+    : raw;
+}
 
 /** 原样传回的内容；关了思考时去掉推理块（没开思考的请求不认它们）。 */
 const replay = (raw: RawOutput, effort: Effort): unknown[] =>
@@ -199,7 +218,7 @@ function anthropicBody(input: RequestInput): Record<string, unknown> {
     // 自动断点：落在最后一块，随对话增长后移（§6.2 断点 3）
     ...cc,
     tools: [
-      ...(input.service.search && !input.noTools
+      ...(input.service.search
         ? [
             {
               type: anthropicSearchType(input.service.model),
@@ -214,9 +233,6 @@ function anthropicBody(input: RequestInput): Record<string, unknown> {
         input_schema: t.schema,
       })),
     ],
-    ...(input.noTools && input.tools.length
-      ? { tool_choice: { type: 'none' } }
-      : {}),
     system: [
       { type: 'text', text: input.system, ...cc },
       { type: 'text', text: input.context, ...cc },
@@ -270,7 +286,7 @@ function openaiInput(input: RequestInput): unknown[] {
 }
 
 function openaiBody(input: RequestInput): Record<string, unknown> {
-  const search = input.service.search && !input.noTools;
+  const search = !!input.service.search;
   const include = [
     ...(input.effort !== 'off' ? ['reasoning.encrypted_content'] : []),
     ...(search ? ['web_search_call.action.sources'] : []),
@@ -305,7 +321,9 @@ function openaiBody(input: RequestInput): Record<string, unknown> {
         strict: false,
       })),
     ],
-    ...(input.noTools && input.tools.length ? { tool_choice: 'none' } : {}),
+    ...(input.noTools && (input.tools.length || search)
+      ? { tool_choice: 'none' }
+      : {}),
     input: openaiInput(input),
   };
 }

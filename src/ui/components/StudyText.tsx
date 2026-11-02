@@ -1,5 +1,5 @@
 /**
- * 伴读讲解的正文（QUANTWISE_DESIGN.md §6.5）：引用按钮、「未核实」、补充推导 / AI 举例 / 真实行情底色块、独立公式。
+ * 伴读讲解的正文（QUANTWISE_DESIGN.md §6.5）：引用按钮、「未核实」、补充推导 / AI 举例 / 真实行情 / 网页资料底色块、独立公式。
  * 段落、列表、表格交给 Markdown 组件。
  */
 import { useMemo } from 'react';
@@ -13,6 +13,7 @@ const CALLOUT_STYLE = {
   derive: { bg: rc.derive, ink: rc.deriveInk },
   example: { bg: rc.example, ink: rc.exampleInk },
   real: { bg: rc.real, ink: rc.realInk },
+  web: { bg: rc.web, ink: rc.webInk },
 } as const;
 
 function Segs({ segs, onLink }: { segs: Seg[]; onLink: (href: string) => void }) {

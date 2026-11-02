@@ -4,9 +4,12 @@
  */
 import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { ArrowDown, ChevronDown, Send, Square } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Brain, ChevronDown, Globe, MessagesSquare, Square } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance } from 'react-native';
+import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance } from 'react-native';
+import { EFFORT_NAME, normaliseConfig, prettyModel, protocolNotice, resolvedService, searchAvailability } from '../../ai/models';
+import { loadProviders } from '../../ai/services';
+import type { AiProvider, ModelEntry } from '../../ai/types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { anchorAt, anchorY, loadReadingState, saveReadingState, type ReadingState } from '../../study/readingState';
 import { secLabel } from '../../book/book';
@@ -21,14 +24,20 @@ import {
   pickQuiz,
   progressNow,
   quickAsk,
+  refreshStudyConfig,
+  selectStudyConfig,
   setStudyMode,
   stopStudy,
+  studyRebuild,
+  TRUNCATED_ERROR,
   useStudy,
   type StudyAsk,
   type StudySession,
 } from '../../study/session';
 import { notesOf, stuckOf } from '../../data/studyRepo';
+import { EffortPicker, ModelPicker, SearchUnavailable } from '../components/AiOptions';
 import { Button, NavBar } from '../components/ui';
+import { color } from '../theme';
 import { useAiContext, useCore } from '../hooks';
 import type { RootScreenProps, RootStackParamList } from '../navigation/types';
 import { rc } from '../readTheme';
@@ -64,6 +73,10 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
   const [text, setText] = useState('');
   const [cite, setCite] = useState<CiteTarget | null>(null);
   const [ctx, setCtx] = useState(false);
+  const [providers, setProviders] = useState<AiProvider[]>([]);
+  const [sheet, setSheet] = useState<'model' | 'effort' | 'search' | 'searchModels' | null>(null);
+  /** 「开启搜索并重问」时当前模型不能搜索：选好能搜索的模型后接着问这一句。 */
+  const [searchQuestion, setSearchQuestion] = useState<string | null>(null);
   const scroll = useRef<ScrollViewInstance>(null);
   const follow = useRef(true);
   const { bookId, sectionId, mode, ask, askLabel, askSnapshot, wrapup, blockSeq } = route.params;
@@ -78,6 +91,10 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
       saveReadingState(core.db, target.bookId, target.sectionId, changes).catch(() => toast.show('阅读记录保存失败，请重试', 'bad'));
     }
   }, [core]);
+
+  useFocusEffect(useCallback(() => {
+    loadProviders(core.db).then(setProviders).then(() => refreshStudyConfig(core)).catch(() => undefined);
+  }, [core]));
 
   useFocusEffect(useCallback(() => {
     let alive = true;
@@ -190,6 +207,8 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
       nav.navigate('Stock', { code: href.slice(6) });
     } else if (/^lesson:/.test(href)) {
       nav.navigate('Lesson', { id: href.slice(7) });
+    } else if (/^https?:\/\//.test(href)) {
+      Linking.openURL(href).catch(() => toast.show('打不开这个链接', 'bad'));
     }
   };
 
@@ -247,6 +266,43 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     remember({ translation });
     setReading(v => ({ ...v, translation }));
   };
+  const cfg = s.config;
+  const provider = providers.find(x => x.id === cfg?.providerId);
+  const model = provider?.models.find(x => x.id === cfg?.model);
+  const svc = cfg ? resolvedService(providers, cfg) : null;
+  const availability = provider && model ? searchAvailability(provider, model) : { ok: false, reason: '请先选择并配置模型' };
+  const rebuild = studyRebuild(s);
+  const lastError = [...s.messages].reverse().find(m => m.role === 'assistant')?.ui?.error;
+  const fail = (e: unknown) => toast.show(e instanceof Error ? e.message : String(e), 'bad');
+  const choose = async (pv: AiProvider, m: ModelEntry) => {
+    const forSearch = sheet === 'searchModels';
+    await selectStudyConfig(core, normaliseConfig({ providerId: pv.id, model: m.id, effort: cfg?.effort ?? 'low', search: forSearch ? true : cfg?.search ?? false }, providers));
+    setSheet(null);
+    if (searchQuestion && forSearch) {
+      const q = searchQuestion;
+      setSearchQuestion(null);
+      send({ label: q, question: q });
+    }
+  };
+  const toggleSearch = () => {
+    if (!cfg || busy) return;
+    if (!availability.ok) {
+      setSheet('search');
+      return;
+    }
+    if (!cfg.search) toast.show('已开启联网搜索：网页资料单独标出，搜索可能另外计费', 'learn');
+    selectStudyConfig(core, { ...cfg, search: !cfg.search }).catch(fail);
+  };
+  const searchAgain = async (q: string) => {
+    if (busy || !cfg) return;
+    if (!availability.ok) {
+      setSearchQuestion(q);
+      setSheet('search');
+      return;
+    }
+    await selectStudyConfig(core, { ...cfg, search: true });
+    send({ label: q, question: q });
+  };
   const bar = quickBar({ steps: s.steps, step: s.state.step, taught: p.taught, detour: !!p.detour, factor: factorish(s.section.title + s.blocks.map(b => b.text).join('')) });
   return (
     <KeyboardAvoidingView style={st.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -254,6 +310,11 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
         title={secLabel(s.section)}
         sub={s.book.title}
         back
+        right={
+          <Pressable style={st.navBtn} onPress={() => nav.navigate('StudyHistory', { bookId })} accessibilityRole="button" accessibilityLabel="讲解记录">
+            <MessagesSquare size={21} color={rc.secondary} />
+          </Pressable>
+        }
       />
       <View style={st.modes}>
         {(['read', 'translation', 'lecture'] as const).map(m => (
@@ -312,11 +373,12 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             {(!s.messages.length || (recap && s.awayDays >= 1)) ? <Intro s={s} onReviewStuck={q => send({ label: '先复习卡点：' + q, question: '先帮我弄懂上次的卡点：' + q + '。如果它属于别的小节，先 load_section 读那一节（detour: true）。' })} /> : null}
             {recap && s.awayDays >= 1 ? <Button title="收起回顾" onPress={() => setRecap(false)} /> : null}
             <View onLayout={e => { threadTop.current = e.nativeEvent.layout.y; restoreThread(); }}>
-            <StudyThread onTurnLayout={(id, box) => { turnLayouts.current.set(id, box); restoreThread(); }} s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')) }} />
+            <StudyThread onTurnLayout={(id, box) => { turnLayouts.current.set(id, box); restoreThread(); }} s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true) }} />
             </View>
             {ask && reading.pending && !busy ? <Button title={askLabel ?? '发送刚才的问题'} onPress={() => { nav.setParams({ ask: undefined, askLabel: undefined, askSnapshot: undefined }); send({ label: askLabel ?? ask, question: ask, snapshot: askSnapshot }); }} /> : null}
             {reading.pending && !busy ? <View style={st.retry}>
               <Text style={st.cardP}>{error || '上次的问题还未完成：' + reading.pending.label}</Text>
+              {lastError === TRUNCATED_ERROR && !auth ? <Button title="接着讲" tone="learn" onPress={() => send({ label: '接着讲', question: '你上一条回答因为篇幅停在半截了。从停下的地方接着讲，不要重复已经讲过的内容。', step: reading.pending?.step })} /> : null}
               <Button title={auth ? '连接 AI，保留问题' : '重试上次的问题'} tone="learn" onPress={() => auth ? nav.navigate('AiServices', { returnToStudy: { bookId, sectionId: s.section.id } }) : send(reading.pending!)} />
               <Button title="稍后再问" onPress={() => { saveReadingState(core.db, bookId, s.section.id, { pending: null }).catch(() => toast.show('暂存失败，请重试', 'bad')); setReading(v => ({ ...v, pending: null })); useStudy.setState({ error: null }); }} />
             </View> : null}
@@ -336,21 +398,75 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             </Pressable>
           </ScrollView>
           <View style={[st.composer, { paddingBottom: Math.max(12, safe.bottom) }]}>
-            <TextInput value={text} onChangeText={value => { setText(value); remember({ draft: value }); }} accessibilityLabel="提问草稿" placeholder="不懂就问，比如「用茅台举例」" placeholderTextColor={rc.muted} style={st.input} multiline maxLength={2000} />
-            <Pressable
-              onPress={() => (busy ? stopStudy() : text.trim() && send({ label: text.trim(), question: text.trim() }))}
-              disabled={!busy && !text.trim()}
-              style={[st.sendB, !busy && !text.trim() && st.sendOff]}
-              accessibilityRole="button"
-              accessibilityLabel={busy ? '停止' : '发送'}
-            >
-              {busy ? <Square size={14} color="#FFFFFF" fill="#FFFFFF" /> : <Send size={16} color="#FFFFFF" />}
-            </Pressable>
+            {rebuild && !busy ? (
+              <View style={st.cacheWarning}>
+                <Text style={st.cacheText}>{rebuild.reason + (rebuild.tokens ? '：下次预计重建约 ' + rebuild.tokens.toLocaleString('zh-CN') + ' 词元的缓存' : '：下次提问要重建缓存')}</Text>
+                <Pressable style={st.revert} onPress={() => selectStudyConfig(core, rebuild.previous).catch(fail)} accessibilityRole="button">
+                  <Text style={st.revertText}>改回</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {provider && cfg && protocolNotice(provider, cfg.model) ? <Text style={st.notice}>{protocolNotice(provider, cfg.model)}</Text> : null}
+            {svc?.capabilities?.tools === false ? <Text style={st.notice}>这个模型不能调用读书工具：不能读其他小节、出检查题、用真实行情举例</Text> : svc?.capabilities?.tools === null ? <Text style={st.notice}>这个模型的工具能力未知，可在供应商里标注</Text> : null}
+            <View style={st.box}>
+              <TextInput value={text} onChangeText={value => { setText(value); remember({ draft: value }); }} accessibilityLabel="提问草稿" placeholder="不懂就问，比如「用茅台举例」" placeholderTextColor={rc.muted} style={st.input} multiline maxLength={2000} />
+              <View style={st.toolbar}>
+                <Pressable style={[st.control, st.modelControl]} onPress={() => setSheet('model')} disabled={!!busy} accessibilityRole="button" accessibilityLabel="选择讲解模型" accessibilityValue={{ text: cfg?.model ?? '未选择' }} accessibilityState={{ disabled: !!busy }}>
+                  <Text style={st.controlText} numberOfLines={1}>{cfg ? prettyModel(cfg.model) : '选择模型'}</Text>
+                  <ChevronDown size={13} color={rc.secondary} />
+                </Pressable>
+                <Pressable style={st.control} onPress={toggleSearch} disabled={!!busy || !cfg} accessibilityRole="button" accessibilityLabel="联网搜索" accessibilityState={{ selected: !!cfg?.search, disabled: !!busy || !cfg }} accessibilityValue={{ text: !availability.ok ? '当前模型不可用' : cfg?.search ? '已开启' : '已关闭' }}>
+                  <View style={[st.symbol, !availability.ok && st.unavailable]}>
+                    <Globe size={19} color={cfg?.search ? rc.main : rc.secondary} />
+                  </View>
+                  {cfg?.search ? <View style={st.searchDot} /> : null}
+                </Pressable>
+                <Pressable style={st.control} onPress={() => setSheet('effort')} disabled={!!busy || !svc} accessibilityRole="button" accessibilityLabel="思考强度" accessibilityValue={{ text: cfg ? EFFORT_NAME[cfg.effort] : '未选择' }} accessibilityState={{ disabled: !!busy || !svc }}>
+                  <Brain size={19} color={rc.secondary} />
+                  <Text style={st.controlText}>{'思考' + (cfg ? EFFORT_NAME[cfg.effort] : '未选')}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => (busy ? stopStudy() : text.trim() && send({ label: text.trim(), question: text.trim() }))}
+                  disabled={!busy && !text.trim()}
+                  style={st.send}
+                  accessibilityRole="button"
+                  accessibilityLabel={busy ? '停止' : '发送'}
+                  accessibilityState={{ disabled: !busy && !text.trim() }}
+                >
+                  <View style={[st.sendDisc, !busy && !text.trim() && st.sendOff]}>
+                    {busy ? <Square size={14} color="#FFFFFF" fill="#FFFFFF" /> : <ArrowUp size={20} color="#FFFFFF" />}
+                  </View>
+                </Pressable>
+              </View>
+            </View>
           </View>
         </>
       )}
       <CiteSheet target={cite} s={s} onClose={() => setCite(null)} onOpen={openCite} />
       <ContextSheet visible={ctx} s={s} onClose={() => setCtx(false)} />
+      <ModelPicker
+        visible={sheet === 'model' || sheet === 'searchModels'}
+        searchOnly={sheet === 'searchModels'}
+        providers={providers}
+        config={cfg}
+        onClose={() => { setSheet(null); setSearchQuestion(null); }}
+        onSelect={(pv, m) => { choose(pv, m).catch(fail); }}
+        onManage={() => { setSheet(null); nav.navigate('AiServices', { returnToStudy: { bookId, sectionId: s.section.id } }); }}
+      />
+      <EffortPicker
+        visible={sheet === 'effort'}
+        caps={svc?.capabilities ?? null}
+        config={cfg}
+        onClose={() => setSheet(null)}
+        onSelect={effort => { if (cfg) selectStudyConfig(core, { ...cfg, effort }).then(() => setSheet(null)).catch(fail); }}
+        onManage={() => { setSheet(null); nav.navigate('AiService', { id: provider?.id }); }}
+      />
+      <SearchUnavailable
+        visible={sheet === 'search'}
+        reason={availability.reason}
+        onClose={() => { setSheet(null); setSearchQuestion(null); }}
+        onChoose={() => setSheet('searchModels')}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -435,10 +551,25 @@ const st = StyleSheet.create({
   qT: { fontSize: 13, color: rc.secondary },
   white: { color: '#FFFFFF' },
   dim: { opacity: 0.5 },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingBottom: 10 },
-  input: { flex: 1, minHeight: 48, maxHeight: 120, borderRadius: 18, backgroundColor: rc.paper, borderWidth: StyleSheet.hairlineWidth, borderColor: rc.line, paddingHorizontal: 14, paddingVertical: 9, fontSize: 16, color: rc.ink },
-  sendB: { width: 48, height: 48, borderRadius: 24, backgroundColor: rc.action, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  navBtn: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  composer: { paddingHorizontal: 10, paddingBottom: 10 },
+  box: { borderWidth: StyleSheet.hairlineWidth, borderColor: rc.line, borderRadius: 18, padding: 4, backgroundColor: rc.paper },
+  input: { minHeight: 36, maxHeight: 120, paddingHorizontal: 10, paddingVertical: 6, fontSize: 16, lineHeight: 24, color: rc.ink },
+  toolbar: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  control: { minHeight: 48, minWidth: 48, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 12 },
+  modelControl: { flex: 1, justifyContent: 'flex-start', paddingHorizontal: 10 },
+  controlText: { fontSize: 12, lineHeight: 18, color: rc.secondary, flexShrink: 1 },
+  symbol: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  unavailable: { borderWidth: 1, borderColor: rc.line, borderStyle: 'dashed', borderRadius: 14 },
+  searchDot: { position: 'absolute', right: 10, top: 9, width: 4, height: 4, borderRadius: 2, backgroundColor: rc.main },
+  send: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  sendDisc: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: rc.action },
   sendOff: { backgroundColor: rc.disabled },
+  cacheWarning: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: color.warnBg, borderRadius: 12, paddingLeft: 12, marginBottom: 8 },
+  cacheText: { flex: 1, fontSize: 12, lineHeight: 19, color: color.warnInk },
+  revert: { minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'center' },
+  revertText: { fontSize: 12, fontWeight: '600', color: color.warnInk },
+  notice: { fontSize: 12, lineHeight: 18, color: rc.muted, marginBottom: 6, paddingHorizontal: 4 },
   card: { marginVertical: 10, padding: 12, borderRadius: 12, backgroundColor: rc.paper, borderWidth: StyleSheet.hairlineWidth, borderColor: rc.line, gap: 4 },
   cardK: { fontSize: 12, color: rc.muted, marginTop: 2 },
   cardP: { fontSize: 14, color: rc.ink, lineHeight: 22 },

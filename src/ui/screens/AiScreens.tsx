@@ -38,6 +38,7 @@ import { Button, Empty, NavBar, Note, SectionTitle } from '../components/ui';
 import { useAiContext, useCore, useViewLog } from '../hooks';
 import type { RootStackParamList } from '../navigation/types';
 import { toast } from '../toast';
+import { StudyHistoryList } from './StudyHistoryScreens';
 import { color, num, PAD } from '../theme';
 import { usageText } from './AiScreen';
 
@@ -51,6 +52,8 @@ export function AiThreadsScreen() {
   const current = useChat(st => st.threadId);
   const [list, setList] = useState<aiRepo.ThreadListItem[]>([]);
   const [del, setDel] = useState<aiRepo.ThreadListItem | null>(null);
+  /** 助手对话和读书讲解分开列（讲解要回到小节和进度）。 */
+  const [tab, setTab] = useState<'assistant' | 'study'>('assistant');
   const reload = useCallback(() => {
     aiRepo
       .threads(core.db)
@@ -64,16 +67,36 @@ export function AiThreadsScreen() {
         title="对话列表"
         back
         right={
-          <Button
-            small
-            title="新对话"
-            onPress={() => {
-              newThread();
-              nav.goBack();
-            }}
-          />
+          tab === 'assistant' ? (
+            <Button
+              small
+              title="新对话"
+              onPress={() => {
+                newThread();
+                nav.goBack();
+              }}
+            />
+          ) : undefined
         }
       />
+      <View style={s.tabs}>
+        {(['assistant', 'study'] as const).map(k => (
+          <Pressable
+            key={k}
+            onPress={() => setTab(k)}
+            style={[s.tab, tab === k && s.tabOn]}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: tab === k }}
+          >
+            <Text style={[s.tabT, tab === k && s.tabTOn]}>
+              {k === 'assistant' ? 'AI 助手' : '读书讲解'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {tab === 'study' ? (
+        <StudyHistoryList />
+      ) : (
       <ScrollView contentContainerStyle={s.pad}>
         {list.length ? (
           <View style={s.card}>
@@ -109,6 +132,7 @@ export function AiThreadsScreen() {
           <Empty text="还没有对话。回到 AI 页直接提问就会新建一个。" />
         )}
       </ScrollView>
+      )}
       <ConfirmDialog
         visible={!!del}
         title="删除对话"
@@ -593,6 +617,24 @@ function requestJson(body: Record<string, unknown>): string {
 
 const s = StyleSheet.create({
   page: { flex: 1, backgroundColor: color.bg },
+  tabs: {
+    flexDirection: 'row',
+    marginHorizontal: PAD,
+    marginTop: 10,
+    padding: 3,
+    borderRadius: 10,
+    backgroundColor: color.line,
+  },
+  tab: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+  },
+  tabOn: { backgroundColor: color.card },
+  tabT: { fontSize: 14, color: color.ink2 },
+  tabTOn: { color: color.ink, fontWeight: '600' },
   pad: { paddingBottom: 40 },
   card: { backgroundColor: color.card, marginTop: 8 },
   note: { margin: 10 },

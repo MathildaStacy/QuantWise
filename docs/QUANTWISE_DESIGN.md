@@ -230,7 +230,7 @@ type ChartData =
 
 - AI 助手（全局）：工具从 36 个变成 39 个，仍然按名字排序、任何设置下不增减。个股页快捷问题加「画出它的 20 日动量」。
 - 伴读：读书 6 个 + 上面 3 个 + 只读行情 7 个（`get_quote`、`get_kline`、`get_company_profile`、`get_financials`、`get_benchmark`、`query_local_db`、`screen`），共 16 个。伴读里不带下单、转账、改设置、记忆这类工具。
-- 伴读运行时（`study/session.ts`）是一个精简的工具循环：拼请求 → `callModel`（流式）→ 执行工具 → 再请求，最多 6 轮；复用 AShareSim 的协议层（`buildRequest`、`callModel`、`parseResponse`）、服务配置和 Key、`ai_message` 存法、兼容服务的缓存参数回退。不做压缩、联网搜索、MCP、操作卡。模型和思考强度沿用 AI 助手当前的对话配置。
+- 伴读运行时（`study/session.ts`）是一个精简的工具循环：拼请求 → `callModel`（流式）→ 执行工具 → 再请求，最多 6 轮；复用 AShareSim 的协议层（`buildRequest`、`callModel`、`parseResponse`）、服务配置和 Key、`ai_message` 存法、兼容服务的缓存参数回退。模型、思考强度和联网搜索按小节对话保存（`study/config.ts`），和 AI 助手的对话配置分开；长对话按词元预算自动整理（`study/compact.ts`）。不做 MCP、操作卡。见 [AI 讲解选项与自动整理](design/ai-study-options.md)。
 - 数字溯源：伴读回答也用 AShareSim 的 `traceNumbers` 对一遍，找不到来源的数字加虚线。
 
 ## 9. 公式

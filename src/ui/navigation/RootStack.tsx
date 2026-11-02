@@ -60,6 +60,7 @@ import {
 import { LessonScreen, LessonsScreen } from '../screens/LessonScreens';
 import { MeScreen, TradeScreen } from '../screens/TabScreens';
 import { BookMapScreen, NotesScreen } from '../screens/BookScreens';
+import { StudyHistoryScreen, StudyRoundScreen } from '../screens/StudyHistoryScreens';
 import { ChartFullScreen, FactorLabScreen } from '../screens/FactorScreens';
 import {
   ImportBookScreen,
@@ -214,6 +215,8 @@ export function RootStack() {
       <Stack.Screen name="BookMap" component={BookMapScreen} />
       <Stack.Screen name="Study" component={StudyScreen} />
       <Stack.Screen name="SectionDone" component={SectionDoneScreen} />
+      <Stack.Screen name="StudyHistory" component={StudyHistoryScreen} />
+      <Stack.Screen name="StudyRound" component={StudyRoundScreen} />
       <Stack.Screen name="Review" component={ReviewScreen} />
       <Stack.Screen name="ReviewRun" component={ReviewRunScreen} />
       <Stack.Screen name="Notes" component={NotesScreen} />

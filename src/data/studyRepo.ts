@@ -2,6 +2,7 @@
  * 伴读记录（迁移 0008，QUANTWISE_DESIGN.md §4、§6）：进度、笔记和问答、卡点、闪卡、高亮，以及小节对应的伴读对话。
  * 小节状态不单独存：已学看 study_state.body，有卡点看 study_stuck，在学看讲到第几步。
  */
+import type { ConversationConfig } from '../ai/types';
 import type { DateStr } from '../engine/calendar';
 import type { Db } from './db';
 
@@ -235,7 +236,7 @@ export async function toggleHighlight(db: Db, bookId: string, blockSeq: number, 
 
 export async function studyThreadId(db: Db, bookId: string, sectionId: string): Promise<number | null> {
   const r = await db.get<{ id: number }>(
-    "SELECT id FROM ai_thread WHERE kind = 'study' AND book_id = ? AND section_id = ? ORDER BY id DESC LIMIT 1",
+    "SELECT id FROM ai_thread WHERE kind = 'study' AND book_id = ? AND section_id = ? AND archived_at IS NULL ORDER BY id DESC LIMIT 1",
     [bookId, sectionId],
   );
   return r ? Number(r.id) : null;
@@ -256,4 +257,74 @@ export async function createStudyThread(
 export async function threadContext(db: Db, threadId: number): Promise<string | null> {
   const r = await db.get<{ context_snapshot: string | null }>('SELECT context_snapshot FROM ai_thread WHERE id = ?', [threadId]);
   return r?.context_snapshot ?? null;
+}
+
+export async function studyThreadSection(db: Db, threadId: number): Promise<{ bookId: string; sectionId: string } | null> {
+  const r = await db.get<{ book_id: string; section_id: string }>("SELECT book_id, section_id FROM ai_thread WHERE id = ? AND kind = 'study'", [threadId]);
+  return r ? { bookId: r.book_id, sectionId: r.section_id } : null;
+}
+
+/** 新开一轮：这一节当前的讲解对话归档成只读（学习进度、笔记、闪卡、卡点不变）。 */
+export async function archiveStudyThread(db: Db, threadId: number, now: string): Promise<void> {
+  await db.run("UPDATE ai_thread SET archived_at = ? WHERE id = ? AND kind = 'study'", [now, threadId]);
+}
+
+export interface StudyThreadRow {
+  id: number;
+  bookId: string;
+  bookTitle: string;
+  sectionId: string;
+  title: string;
+  config: ConversationConfig | null;
+  summary: string;
+  /** 已经整理进摘要的提问数。 */
+  compactedCount: number;
+  questions: number;
+  lastQuestion: string | null;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
+/** 讲解记录：全部（或一本书的）讲解对话，最近的在前；query 在问题和回答文字里找。 */
+export async function studyThreads(db: Db, o: { bookId?: string; query?: string } = {}): Promise<StudyThreadRow[]> {
+  const where = ["t.kind = 'study'"];
+  const args: string[] = [];
+  if (o.bookId) {
+    where.push('t.book_id = ?');
+    args.push(o.bookId);
+  }
+  const q = o.query?.trim().replace(/[%_]/g, '');
+  if (q) {
+    const like = '%' + q + '%';
+    where.push("(t.title LIKE ? OR t.summary LIKE ? OR EXISTS (SELECT 1 FROM ai_message m WHERE m.thread_id = t.id AND ((m.role = 'assistant' AND m.parts LIKE ?) OR (m.role = 'user' AND m.ui LIKE ?))))");
+    args.push(like, like, like, like);
+  }
+  const rows = await db.all<{
+    id: number; book_id: string; book_title: string; section_id: string; title: string; config: string | null; summary: string;
+    compacted_count: number; created_at: string; updated_at: string; archived_at: string | null; n: number; last_ui: string | null;
+  }>(
+    `SELECT t.id, t.book_id, b.title AS book_title, t.section_id, t.title, t.config, t.summary, t.compacted_count, t.created_at, t.updated_at, t.archived_at,
+       (SELECT COUNT(*) FROM ai_message m WHERE m.thread_id = t.id AND m.role = 'user') AS n,
+       (SELECT m.ui FROM ai_message m WHERE m.thread_id = t.id AND m.role = 'user' ORDER BY m.id DESC LIMIT 1) AS last_ui
+     FROM ai_thread t JOIN book b ON b.id = t.book_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY t.updated_at DESC, t.id DESC`,
+    args,
+  );
+  return rows.map(r => ({
+    id: Number(r.id),
+    bookId: r.book_id,
+    bookTitle: r.book_title,
+    sectionId: r.section_id,
+    title: r.title,
+    config: r.config ? JSON.parse(r.config) : null,
+    summary: r.summary,
+    compactedCount: Number(r.compacted_count),
+    questions: Number(r.n),
+    lastQuestion: r.last_ui ? (JSON.parse(r.last_ui) as { question?: string }).question ?? null : null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    archivedAt: r.archived_at,
+  }));
 }

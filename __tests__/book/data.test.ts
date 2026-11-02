@@ -21,7 +21,7 @@ async function db() {
 describe('书和伴读记录', () => {
   it('迁移到当前版本，示例教材只写一次', async () => {
     const d = await db();
-    expect(SCHEMA_VERSION).toBe(9);
+    expect(SCHEMA_VERSION).toBe(10);
     await ensureSample(d, NOW);
     await ensureSample(d, NOW);
     const all = await bookRepo.books(d);
