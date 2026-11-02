@@ -9,7 +9,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 ## QuantWise
 
-当前正式版 **v1.1.4**：修复 PDF 上传中断后一直停在“排队中 / 上传中”；恢复时核对云端并补传未收到的分片，区分上传、排队和解析状态。包含此前的书籍导入与阅读修复。见 [发布说明](docs/releases/v1.1.4.md)。
+当前正式版 **v1.2.0**：新增 AI 逐句中文对照翻译，每句原文下方紧跟简体中文译文；支持翻译本节、单段翻译、停止与失败重试，译文保存在本机供离线阅读。见 [发布说明](docs/releases/v1.2.0.md)。
 
 桌面名称、启动页、通知、iOS 工程和原型已统一命名。Android 包名 `com.quantwise`、数据库与服务配置保持兼容，可直接覆盖 v1.0.0 及更早版本，保留已有数据。
 
@@ -17,6 +17,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 - **听讲**：每节在本机切成 1–5 步，点「开始讲」才请求 AI。讲解里的引用点开看原文；AI 自己补的推导、编的例子、工具算出的真实数据分别用不同底色标出；问到别的小节时走岔路，回到主线折叠成一行并记进那一节的笔记。
 - **真实行情举例**：AI 调用 `plot_chart`（前复权日 K、均线、布林带、动量 / 波动 / 回撤 / RSI 副图、对比图）、`get_factor_values`、`factor_test`（分组回测 + Rank IC），图存在消息里，能全屏看十字线读数。结论按 t 值和期数说。
 - **读书模式**：重排原文（宋体），讲过的段落和当前这一步有标记；点段落可以解释、从这里开始讲、用真实行情举例、高亮。
+- **中文对照**：读书页顶部切到「中文对照」，点「翻译本节」，或从段落菜单点「翻译这一段」。外文正文、列表和图注逐句对照简体中文，公式、表格、代码与原页保持原样；已完成段落自动保存，再次打开不重复请求 AI。
 - **小结、复习、笔记**：讲完一节 AI 起草摘要、卡点和闪卡，确认后保存；Leitner 5 盒复习、卡点清单；笔记导出 Markdown 和 Anki CSV。
 - **因子实验室**：示例池 / 自选 + 持仓 / 沪深 300 当前成分，7 个因子，调仓周期、分组和成本可调，和听讲里的 `factor_test` 同一套口径。
 - AShareSim 的全部功能保留；AI 助手多了上面 3 个行情与因子工具（共 39 个）。
@@ -24,7 +25,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 内置入门体验无需网络或 AI Key。自由问答需要自己的 AI 服务（「我的 → 供应商与模型」）；导入 PDF 时需要 MinerU Token（「我的 → 解析服务（MinerU）」）。
 
-已发布安装包：[下载 v1.1.4 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.1.4/QuantWise-v1.1.4-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
+已发布安装包：[下载 v1.2.0 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.2.0/QuantWise-v1.2.0-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
 
 开发：和下面 AShareSim 的一样（`npm run check`、`npm run android`）。`npm install` 会把离线 MathJax 复制进 `android/app/src/main/assets/math/`。没有 AI Key 时可以在电脑上运行 `node scripts/mock-ai.cjs`，再在调试版「我的 → 调试页 → 接本地模拟 AI」，用固定脚本走听讲流程。
 

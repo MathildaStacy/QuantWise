@@ -9,6 +9,7 @@ export interface ReadingAnchor {
 }
 
 export interface ReadingState {
+  translation?: boolean;
   draft?: string;
   reader?: ReadingAnchor;
   thread?: ReadingAnchor;

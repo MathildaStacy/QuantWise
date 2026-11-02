@@ -136,7 +136,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     tip: '这一节的讲解在本页；通用助手是独立会话。',
   }));
 
-  const remember = (changes: Partial<Pick<ReadingState, 'draft' | 'reader' | 'thread' | 'follow'>>) => {
+  const remember = (changes: Partial<Pick<ReadingState, 'draft' | 'reader' | 'thread' | 'follow' | 'translation'>>) => {
     readingRef.current = { ...readingRef.current, ...changes };
     dirty.current = { ...dirty.current, ...changes };
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -242,6 +242,11 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
   }
   const p = progressNow(s);
   const read = s.state.mode === 'read';
+  const readerMode = read ? (readingRef.current.translation ? 'translation' : 'read') : 'lecture';
+  const setTranslation = (translation: boolean) => {
+    remember({ translation });
+    setReading(v => ({ ...v, translation }));
+  };
   const bar = quickBar({ steps: s.steps, step: s.state.step, taught: p.taught, detour: !!p.detour, factor: factorish(s.section.title + s.blocks.map(b => b.text).join('')) });
   return (
     <KeyboardAvoidingView style={st.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -251,14 +256,16 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
         back
       />
       <View style={st.modes}>
-        {(['read', 'lecture'] as const).map(m => (
-          <Pressable key={m} onPress={() => { restored.current = false; threadContentReady.current = false; threadUserMoved.current = false; nav.setParams({ blockSeq: undefined }); setStudyMode(core, m); }} style={[st.mode, s.state.mode === m && st.modeOn]} accessibilityRole="tab" accessibilityState={{ selected: s.state.mode === m }}>
-            <Text style={[st.modeT, s.state.mode === m && st.modeTOn]}>{m === 'read' ? '原文' : 'AI 讲解'}</Text>
+        {(['read', 'translation', 'lecture'] as const).map(m => (
+          <Pressable key={m} onPress={() => { restored.current = false; threadContentReady.current = false; threadUserMoved.current = false; nav.setParams({ blockSeq: undefined }); if (m !== 'lecture') setTranslation(m === 'translation'); setStudyMode(core, m === 'lecture' ? 'lecture' : 'read'); }} style={[st.mode, readerMode === m && st.modeOn]} accessibilityRole="tab" accessibilityState={{ selected: readerMode === m }}>
+            <Text style={[st.modeT, readerMode === m && st.modeTOn]}>{m === 'read' ? '原文' : m === 'translation' ? '中文对照' : 'AI 讲解'}</Text>
           </Pressable>
         ))}
       </View>
       {read ? (
-        <StudyReader s={s} anchor={readingRef.current.reader} onAnchor={reader => remember({ reader })} focusSeq={blockSeq} onQuick={runQuick} onFinish={() => runQuick('finish')} />
+        <StudyReader key={s.book.id + ':' + s.section.id} s={s} anchor={readingRef.current.reader} onAnchor={reader => remember({ reader })} focusSeq={blockSeq} onQuick={runQuick} onFinish={() => runQuick('finish')}
+          translation={readingRef.current.translation} onTranslation={setTranslation} active={focused}
+          onConfigure={() => nav.navigate('AiServices', { returnToStudy: { bookId, sectionId: s.section.id } })} />
       ) : (
         <>
           <View style={st.head}>

@@ -41,6 +41,9 @@ import * as bookRepo from '../../src/data/bookRepo';
 import { BlockInline } from '../../src/ui/components/BookBlock';
 import { MathView } from '../../src/ui/math/MathView';
 import { ShelfView } from '../../src/ui/screens/ShelfView';
+import { importMarkdownText } from '../../src/study/library';
+import { loadTranslations } from '../../src/data/translationRepo';
+import { translationUnits } from '../../src/study/translation';
 
 jest.mock('../../src/data/drivers/opSqlite', () => ({ openDeviceDb: () => { throw new Error('测试里不用设备数据库'); } }));
 jest.mock('../../src/app/tracker', () => ({ nativeTracker: () => null }));
@@ -52,6 +55,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 let replies: unknown[] = [];
 const fetchMock: FetchLike = async () => ({ status: 200, text: async () => JSON.stringify(replies.shift()) });
 const usage = { input_tokens: 1, output_tokens: 1 };
+
 
 let core: AppCore;
 const trees: ReactTestRenderer.ReactTestRenderer[] = [];
@@ -376,4 +380,65 @@ test('解析进度区分等待上传、上传、云端确认、排队和生成�
   } finally {
     run.mockRestore();
   }
+});
+
+test('读书对照翻译：显式请求、错误重试、原文切换和离线缓存', async () => {
+  const { bookId } = await importMarkdownText(core.db, '# 1 Returns\n\nReturns are uncertain. Diversify your portfolio.\n\nRisk changes over time.\n', 'translation-ui.md', 'translation-ui', beijingIso());
+  const secs = await bookRepo.sections(core.db, bookId);
+  const blocks = await bookRepo.sectionBlocks(core.db, bookId, secs[0].id);
+  const response = (index: number) => ({ status: 200, text: async () => JSON.stringify({ model: 'test', stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ translations: translationUnits(blocks[index]).map((u, i) => ({ id: u.id, text: index === 1 ? '风险随时间变化。' : i === 0 ? '收益具有不确定性。' : '分散投资组合。' })) }) }], usage }) });
+  const fetcher = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>().mockResolvedValueOnce(response(0))
+    .mockRejectedValueOnce(new Error('测试断网')).mockResolvedValueOnce(response(1));
+  setAiDeps({ fetch: fetcher });
+  try {
+    const r = await render('Study', StudyScreen, { bookId, sectionId: secs[0].id, mode: 'read' });
+    await r.press('中文对照');
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(r.text()).toContain('翻译本节');
+    await r.press('翻译本节');
+    expect(r.text()).toContain('收益具有不确定性。');
+    expect(r.text()).toContain('测试断网');
+    expect(r.text()).toContain('重试翻译');
+    await r.press('重试翻译');
+    expect(r.text()).toContain('风险随时间变化。');
+    expect(r.text()).not.toContain('测试断网');
+    const bilingualBlock = r.tree.root.findAll(n => typeof n.props.onPress === 'function' && n.props.accessibilityLabel?.includes('译文：收益具有不确定性。'))[0];
+    expect(bilingualBlock.props.accessibilityLabel).toContain('原文：Diversify your portfolio.译文：分散投资组合。');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(useStudy.getState().s?.messages).toHaveLength(0);
+    await r.press('原文');
+    expect(r.text()).not.toContain('收益具有不确定性。');
+    expect(r.text()).toContain('Returns are uncertain. Diversify your portfolio.');
+    await r.press('中文对照');
+    expect(r.text()).toContain('收益具有不确定性。');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    await act(async () => { r.tree.unmount(); });
+    await core.db.get('SELECT 1');
+    expect((await loadReadingState(core.db, bookId, secs[0].id)).translation).toBe(true);
+    const reopened = await render('Study', StudyScreen, { bookId, sectionId: secs[0].id, mode: 'read' });
+    expect(reopened.text()).toContain('风险随时间变化。');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  } finally { setAiDeps({ fetch: fetchMock }); }
+});
+
+test('关闭对照即停止：迟到响应不显示、不缓存，保留继续入口', async () => {
+  const { bookId } = await importMarkdownText(core.db, '# 1 Stop\n\nRisk is uncertain.\n', 'translation-stop.md', 'translation-stop', beijingIso());
+  const secs = await bookRepo.sections(core.db, bookId);
+  let stopped = false;
+  const fetcher: FetchLike = (_url, init) => new Promise((_resolve, reject) => {
+    init.signal?.addEventListener('abort', () => { stopped = true; reject(new Error('stop')); });
+  });
+  setAiDeps({ fetch: fetcher });
+  try {
+    const r = await render('Study', StudyScreen, { bookId, sectionId: secs[0].id, mode: 'read' });
+    await r.press('中文对照');
+    await r.press('翻译本节');
+    expect(r.text()).toContain('停止翻译');
+    await r.press('原文');
+    expect(stopped).toBe(true);
+    await r.press('中文对照');
+    expect(r.text()).toContain('已停止');
+    expect(r.text()).toContain('翻译本节');
+    expect(await loadTranslations(core.db, bookId, await bookRepo.sectionBlocks(core.db, bookId, secs[0].id))).toEqual({});
+  } finally { setAiDeps({ fetch: fetchMock }); }
 });
