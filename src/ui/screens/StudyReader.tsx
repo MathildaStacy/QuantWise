@@ -12,6 +12,7 @@ import type { QuickKind } from '../../study/quick';
 import { progressNow, type StudySession } from '../../study/session';
 import { AiSheet } from '../components/AiOptions';
 import { BookBlockView } from '../components/BookBlock';
+import { PdfSourceSheet } from '../components/PdfSourceSheet';
 import { useCore } from '../hooks';
 import { rc, serif } from '../readTheme';
 import { anchorAt, anchorY, type ReadingAnchor } from '../../study/readingState';
@@ -35,6 +36,7 @@ export function StudyReader({
   const [marks, setMarks] = useState<Mark[]>([]);
   const [menu, setMenu] = useState<BookBlock | null>(null);
   const [guide, setGuide] = useState(false);
+  const [sourcePage, setSourcePage] = useState<number | null>(null);
   const scroll = useRef<ScrollViewInstance>(null);
   const layouts = useRef(new Map<number, { y: number; height: number }>());
   const restored = useRef(false);
@@ -85,6 +87,7 @@ export function StudyReader({
         onContentSizeChange={() => { contentReady.current = true; restore(); }}>
         <View onLayout={e => { layouts.current.set(-1, e.nativeEvent.layout); restore(); }}>
         <Text style={st.h}>{secLabel(s.section)}</Text>
+        {s.book.format === 'pdf' && s.book.body.dir ? <Pressable style={st.guide} accessibilityRole="button" onPress={() => setSourcePage(s.blocks.find(b => b.seq === focusSeq)?.page ?? s.section.pageFrom ?? 1)}><Text style={st.guideT}>查看 PDF 原页</Text></Pressable> : null}
         <Pressable style={st.guide} onPress={() => setGuide(v => !v)} accessibilityRole="button" accessibilityState={{ expanded: guide }}>
           <Text style={st.guideT}>本节讲什么 · {s.steps.length} 步 {guide ? '▴' : '▾'}</Text>
           {guide ? s.steps.map(x => <Text key={x.index} style={st.guideI}>{x.index + 1}. {x.title}</Text>) : null}
@@ -123,6 +126,7 @@ export function StudyReader({
         {menu ? (
           <View>
             <Text style={st.quote} numberOfLines={4}>{menu.text}</Text>
+            {s.book.format === 'pdf' && s.book.body.dir && menu.page != null ? <Pressable style={st.item} accessibilityRole="button" onPress={() => { setSourcePage(menu.page); setMenu(null); }}><Text style={st.itemT}>查看 PDF 第 {menu.page} 页</Text><Text style={st.itemD}>放大核对公式、图表和跨页内容</Text></Pressable> : null}
             {(
               [
                 ['explainBlock', '解释这一段', '200 字以内，在听讲里答'],
@@ -149,6 +153,7 @@ export function StudyReader({
           </View>
         ) : null}
       </AiSheet>
+      {sourcePage != null ? <PdfSourceSheet book={s.book} initialPage={sourcePage} onClose={() => setSourcePage(null)} /> : null}
     </>
   );
 }

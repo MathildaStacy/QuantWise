@@ -8,7 +8,7 @@ const SYM: Record<string, string> = {
   alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε',
   theta: 'θ', lambda: 'λ', mu: 'μ', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ',
   phi: 'φ', varphi: 'φ', omega: 'ω', ell: 'ℓ', Delta: 'Δ', Sigma: 'Σ', Phi: 'Φ',
-  Omega: 'Ω', Gamma: 'Γ', Pi: 'Π',
+  Omega: 'Ω', Gamma: 'Γ', Pi: 'Π', Lambda: 'Λ', xi: 'ξ', Xi: 'Ξ', eta: 'η', zeta: 'ζ', nu: 'ν', psi: 'ψ', Psi: 'Ψ', chi: 'χ',
   times: '×', cdot: '·', approx: '≈', neq: '≠', ne: '≠', le: '≤', leq: '≤',
   ge: '≥', geq: '≥', pm: '±', mp: '∓', infty: '∞', sum: '∑', prod: '∏',
   partial: '∂', nabla: '∇', in: '∈', to: '→', rightarrow: '→', leftarrow: '←',
@@ -150,7 +150,9 @@ export function texToText(tex: string): string | null {
       if (OPS.has(name)) {
         return SYM[name] + opGap();
       }
-      return SYM[name] ?? name;
+      // 不认识的命令不能悄悄丢掉反斜杠，变成另一个变量。
+      if (SYM[name] == null) throw new Unsupported();
+      return SYM[name];
     }
     i++;
     if (c === '_') {

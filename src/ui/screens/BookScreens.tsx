@@ -74,17 +74,17 @@ export function BookMapScreen({ route }: RootScreenProps<'BookMap'>) {
   const done = leaves.filter(s => d.state?.sections[s.id]?.done).length;
   const main = resumeSection(d.sections, d.state);
   const search = async () => setHits(await bookRepo.searchBlocks(core.db, bookId, q, 20));
-  const row = (s: BookSection) => {
+  const row = (s: BookSection, rootLevel: number) => {
     const status = studyRepo.sectionStatus(d.state, s.id, d.stuck);
     const [icon, c, label] = ICON[status];
     return (
-      <Pressable key={s.id} style={({ pressed }) => [st.row, pressed && st.pressed]} onPress={() => nav.navigate('Study', { bookId, sectionId: s.id })} accessibilityRole="button" accessibilityLabel={secLabel(s) + '，' + label}>
+      <Pressable key={s.id} style={({ pressed }) => [st.row, { marginLeft: Math.max(0, s.level - rootLevel - 1) * 12 }, pressed && st.pressed]} onPress={() => nav.navigate('Study', { bookId, sectionId: s.id, mode: 'read' })} accessibilityRole="button" accessibilityLabel={secLabel(s) + '，' + label}>
         <Text style={[st.icon, { color: c }]}>{icon}</Text>
         <View style={st.grow}>
           <Text style={st.rowT}>{secLabel(s)}</Text>
+          <Text style={st.meta}>{label} · {s.pageFrom != null ? 'p.' + s.pageFrom : s.chars + ' 字'}</Text>
           {d.notes.get(s.id) ? <Text style={st.rowS} numberOfLines={1}>{d.notes.get(s.id)}</Text> : null}
         </View>
-        <Text style={st.meta}>{label} · {s.pageFrom != null ? 'p.' + s.pageFrom : s.chars + ' 字'}</Text>
       </Pressable>
     );
   };
@@ -117,11 +117,13 @@ export function BookMapScreen({ route }: RootScreenProps<'BookMap'>) {
           </View>
         ) : null}
         {d.sections.filter(s => s.level === 1).map(ch => {
-          const kids = leaves.filter(s => chapterOf(d.sections, s) === ch.id);
+          const kids = d.sections.filter(s => chapterOf(d.sections, s) === ch.id);
           return kids.length ? (
             <View key={ch.id} style={st.card}>
               <Text style={st.chap}>{secLabel(ch)}</Text>
-              {kids.map(row)}
+              {kids.map(s => s.leaf ? row(s, ch.level) : s.id !== ch.id ? (
+                <Text key={s.id} accessibilityRole="header" style={[st.chap, st.branch, { marginLeft: Math.max(0, s.level - ch.level - 1) * 12 }]}>{secLabel(s)}</Text>
+              ) : null)}
             </View>
           ) : null;
         })}
@@ -261,13 +263,14 @@ const st = StyleSheet.create({
   meta: { fontSize: 12, color: color.ink3 },
   btn: { marginTop: 6 },
   chap: { fontSize: 14, fontWeight: '600', color: color.ink2, paddingTop: 2 },
+  branch: { paddingTop: 16, paddingBottom: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.line },
   icon: { width: 20, textAlign: 'center', fontSize: 14, fontWeight: '700' },
   grow: { flex: 1 },
   rowT: { fontSize: 15, color: color.ink },
   rowS: { fontSize: 11, color: color.ink3, marginTop: 2 },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingBottom: 8 },
-  search: { flex: 1, height: 38, borderRadius: 8, backgroundColor: color.card, paddingHorizontal: 12, fontSize: 14, color: color.ink },
+  search: { flex: 1, minHeight: 48, borderRadius: 8, backgroundColor: color.card, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, color: color.ink },
   hit: { paddingVertical: 8, gap: 2, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.line },
   cite: { fontSize: 11, color: rc.main },
   hitT: { fontSize: 13, color: color.ink2, lineHeight: 19 },

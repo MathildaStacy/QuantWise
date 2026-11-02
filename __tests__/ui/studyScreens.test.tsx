@@ -36,6 +36,11 @@ import { StudyIntroScreen } from '../../src/ui/screens/StudyIntroScreen';
 import { loadReadingState } from '../../src/study/readingState';
 import { beijingIso } from '../../src/market/clock';
 import { addDays } from '../../src/book/review';
+import { assemble } from '../../src/book/assemble';
+import * as bookRepo from '../../src/data/bookRepo';
+import { BlockInline } from '../../src/ui/components/BookBlock';
+import { MathView } from '../../src/ui/math/MathView';
+import { ShelfView } from '../../src/ui/screens/ShelfView';
 
 jest.mock('../../src/data/drivers/opSqlite', () => ({ openDeviceDb: () => { throw new Error('测试里不用设备数据库'); } }));
 jest.mock('../../src/app/tracker', () => ({ nativeTracker: () => null }));
@@ -125,6 +130,47 @@ test('书的地图：章节和状态', async () => {
   expect(r.text()).toContain('第 3 章 动量与反转');
   expect(r.text()).toContain('3.1 动量因子');
   expect(r.text()).toContain('未学');
+});
+
+test('Part 下没有自身正文的章仍在目录里，小节和附录入口保留', async () => {
+  const now = '2026-11-02T12:00:00+08:00';
+  const id = 'nested-reading-audit';
+  await bookRepo.createBook(core.db, { id, title: '层级教材', author: '', format: 'pdf', source: 'import', sha256: id, pages: 10, status: 'parsing', error: null, body: {} }, now);
+  await bookRepo.saveContent(core.db, id, assemble({ title: '层级教材', author: '', warnings: [], items: [
+    { kind: 'heading', text: 'Part I Methods', level: 1, sectionLevel: 1 },
+    { kind: 'heading', text: '第 1 章 无独立正文的章标题', level: 2, sectionLevel: 2 },
+    { kind: 'heading', text: '1.1 可读小节', level: 3, sectionLevel: 3 },
+    { kind: 'block', type: 'p', text: '章节正文。', page: 2 },
+    { kind: 'heading', text: '附录 答案', level: 1, sectionLevel: 1 },
+    { kind: 'block', type: 'p', text: '答案正文。', page: 9 },
+  ] }), now);
+  const r = await render('BookMap', BookMapScreen, { bookId: id });
+  expect(r.text()).toContain('无独立正文的章标题');
+  expect(r.text()).toContain('1.1 可读小节');
+  expect(r.text()).toContain('附录 答案');
+});
+
+test('停在书架时解析完成，状态和入口刷新', async () => {
+  const now = '2026-11-02T12:00:00+08:00', id = 'shelf-finish-audit';
+  await bookRepo.createBook(core.db, { id, title: '后台完成教材', author: '', format: 'pdf', source: 'import', sha256: id, pages: 1, status: 'parsing', error: null, body: {} }, now);
+  const r = await render('Tabs', ShelfView);
+  expect(r.text()).toContain('解析中');
+  await act(async () => {
+    await bookRepo.saveContent(core.db, id, assemble({ title: '后台完成教材', author: '', warnings: [], items: [{ kind: 'block', type: 'p', text: '已完成正文。', page: 1 }] }), now);
+    importer.useParse.setState({ [id]: { stage: '完成', done: 1, error: null } });
+    await new Promise(resolve => setTimeout(resolve, 60));
+  });
+  expect(r.text()).not.toContain('解析中');
+  expect(r.text()).toContain('0 / 1 节');
+});
+
+test('复杂行内公式交给数学渲染器，脚注标签不作为正文显示', async () => {
+  let tree!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { tree = ReactTestRenderer.create(<BlockInline text={'约束 $\\begin{matrix}x&y\\end{matrix}$，说明<sup>[1]</sup>。'} />); });
+  trees.push(tree);
+  expect(tree.root.findByType(MathView).props.tex).toBe('\\begin{matrix}x&y\\end{matrix}');
+  expect(JSON.stringify(tree.toJSON())).toContain('说明[1]');
+  expect(JSON.stringify(tree.toJSON())).not.toContain('<sup>');
 });
 
 test('听讲：进来不请求模型；开讲后显示讲解、引用和真实行情图；读书模式显示原文', async () => {

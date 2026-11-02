@@ -10,9 +10,25 @@ import { rc, serif } from '../readTheme';
 import { Markdown } from './Markdown';
 
 export function BlockInline({ text, style }: { text: string; style?: object }) {
+  const parts = inlineParts(text);
+  // 简单式子可随正文排；矩阵等不能无损转成 Unicode 的式子，完整交给离线 MathJax。
+  if (parts.some(x => x.t === 'math')) {
+    const groups: { tex?: string; parts: typeof parts }[] = [];
+    for (const part of parts) {
+      if (part.t === 'math') groups.push({ tex: part.v, parts: [] });
+      else {
+        const last = groups[groups.length - 1];
+        if (last && !last.tex) last.parts.push(part);
+        else groups.push({ parts: [part] });
+      }
+    }
+    return <View>{groups.map((g, i) => g.tex ? <MathView key={i} tex={g.tex} /> : (
+      <Text key={i} style={[s.p, style]} selectable>{g.parts.map((p, j) => p.t === 'bold' ? <Text key={j} style={s.bold}>{p.v}</Text> : p.v)}</Text>
+    ))}</View>;
+  }
   return (
     <Text style={[s.p, style]} selectable>
-      {inlineParts(text).map((x, i) =>
+      {parts.map((x, i) =>
         x.t === 'bold' ? (
           <Text key={i} style={s.bold}>
             {x.v}

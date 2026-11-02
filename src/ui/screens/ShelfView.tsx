@@ -4,12 +4,12 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { BookOpen, ChevronRight, FlaskConical, Layers, NotebookPen, Plus } from 'lucide-react-native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SAMPLE_BOOK_ID } from '../../book/sample';
 import { secLabel } from '../../book/book';
 import { beijingIso } from '../../market/clock';
-import { pickAndImport } from '../../study/importer';
+import { pickAndImport, useParse } from '../../study/importer';
 import { loadShelf, type Shelf } from '../../study/library';
 import { useAiContext, useCore } from '../hooks';
 import type { RootStackParamList } from '../navigation/types';
@@ -28,10 +28,13 @@ export function ShelfView() {
   const nav = useNavigation<Nav>();
   const [shelf, setShelf] = useState<Shelf | null>(null);
   const [busy, setBusy] = useState(false);
+  // 后台解析完成/暂停也要刷新书架，不能只等用户离开再回来。
+  const parseStatus = useParse(states => Object.entries(states).map(([id, p]) => id + ':' + p.stage + ':' + p.error).join('|'));
   const load = useCallback(() => {
     loadShelf(core.db, beijingIso().slice(0, 10)).then(setShelf).catch(() => undefined);
   }, [core]);
   useFocusEffect(load);
+  useEffect(load, [load, parseStatus]);
   useAiContext('Learn', () => ({
     name: '学习 · 读书',
     lines: [
@@ -111,7 +114,7 @@ export function ShelfView() {
               <Text style={s.coverT}>{b.book.source === 'sample' ? '因子' : b.book.format.toUpperCase()}</Text>
             </View>
             <View style={s.grow}>
-              <Text style={s.bookT} numberOfLines={1}>{b.book.title}</Text>
+              <Text style={s.bookT} numberOfLines={3}>{b.book.title}</Text>
               <Text style={s.bookS} numberOfLines={1}>
                 {(b.book.author || '未知作者') + ' · ' + (b.book.source === 'sample' ? '内置示例' : b.book.format.toUpperCase())}
               </Text>

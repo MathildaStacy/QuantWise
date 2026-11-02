@@ -12,6 +12,7 @@ import { progressNow, type StudySession } from '../../study/session';
 import { STUDY_TOOL_DEFS } from '../../study/tools';
 import { AiSheet } from '../components/AiOptions';
 import { BookBlockView } from '../components/BookBlock';
+import { PdfSourceSheet } from '../components/PdfSourceSheet';
 import { useCore } from '../hooks';
 import { rc } from '../readTheme';
 
@@ -21,11 +22,12 @@ export interface CiteTarget {
 }
 
 export function CiteSheet({ target, s, onClose, onOpen }: { target: CiteTarget | null; s: StudySession; onClose: () => void; onOpen: (t: CiteTarget) => void }) {
+  const [sourcePage, setSourcePage] = useState<number | null>(null);
   const sec = target ? s.sections.find(x => x.id === target.sectionId) : null;
   const blocks = target ? (target.sectionId === s.section.id ? s.blocks : s.extra[target.sectionId] ?? []) : [];
   const i = target ? blocks.findIndex(b => b.no === target.no) : -1;
   return (
-    <AiSheet title={sec ? '原文 · ' + secLabel(sec) + ' ¶' + target!.no : '原文'} visible={!!target} onClose={onClose}>
+    <><AiSheet title={sec ? '原文 · ' + secLabel(sec) + ' ¶' + target!.no : '原文'} visible={!!target && sourcePage == null} onClose={onClose}>
       <ScrollView style={st.body}>
         {i < 0 ? <Text style={st.muted}>这一块还没加载</Text> : null}
         {blocks.slice(Math.max(0, i - 1), i + 2).map(b => (
@@ -34,10 +36,11 @@ export function CiteSheet({ target, s, onClose, onOpen }: { target: CiteTarget |
           </View>
         ))}
       </ScrollView>
+      {i >= 0 && s.book.format === 'pdf' && s.book.body.dir && blocks[i].page != null ? <Pressable style={st.btn} accessibilityRole="button" onPress={() => setSourcePage(blocks[i].page)}><Text style={st.btnT}>查看 PDF 第 {blocks[i].page} 页</Text></Pressable> : null}
       <Pressable style={st.btn} onPress={() => target && onOpen(target)} accessibilityRole="button">
         <Text style={st.btnT}>在读书模式打开</Text>
       </Pressable>
-    </AiSheet>
+    </AiSheet>{sourcePage != null ? <PdfSourceSheet book={s.book} initialPage={sourcePage} onClose={() => setSourcePage(null)} /> : null}</>
   );
 }
 

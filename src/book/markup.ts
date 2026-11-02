@@ -122,8 +122,13 @@ export function plainStudyText(text: string): string {
 
 export type Inline = { t: 'text' | 'bold' | 'math'; v: string };
 
-/** 原书段落里的 **加粗** 和 $行内公式$；行内公式转成文字，转不了的保留原文（界面用等宽显示）。 */
+/** 原书段落里的 **加粗** 和 $行内公式$；简单式子转成文字，复杂式子保留 TeX 交给 MathView。 */
 export function inlineParts(text: string): Inline[] {
+  // MinerU 在普通段落中保留 HTML 脚注/上下标；只处理这些行内标签，代码块不经过这里。
+  text = text.replace(/<(sup|sub)\b[^>]*>([^<]*)<\/\1>/gi, (_all, tag: string, value: string) => {
+    const v = decode(value);
+    return /^\[[^\]]+\]$/.test(v) ? v : texToText((tag.toLowerCase() === 'sup' ? '^' : '_') + '{' + v + '}') ?? v;
+  });
   const out: Inline[] = [];
   const re = /\*\*([^*]+)\*\*|(^|[^$\\])\$([^$\s](?:[^$]*[^$\s])?)\$(?!\d)/g;
   let last = 0;

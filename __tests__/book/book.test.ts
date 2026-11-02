@@ -181,6 +181,9 @@ describe('行内公式和复习', () => {
     expect(texToText('x \\text{ if } y')).toBe('x if y');
     expect(texToText('\\begin{matrix} a \\end{matrix}')).toBeNull();
     expect(texToText('\\frac{a}')).toBeNull();
+    expect(texToText('\\Lambda^{1/2}')).toBe('Λ^(1/2)');
+    expect(texToText('\\notin')).toBeNull();
+    expect(texToText('\\unknown{x}')).toBeNull();
   });
 
   it('Leitner：升盒、留盒、回盒 1；到期排序和上限', () => {
@@ -199,6 +202,11 @@ describe('行内公式和复习', () => {
 });
 
 describe('原书正文', () => {
+  it('MinerU 的脚注 HTML 不泄漏到正文，保留脚注号和上下标', () => {
+    expect(inlineParts('正文<sup>[1]</sup>，x<sup>2</sup> 和 r<sub>t</sub>。')).toEqual([
+      { t: 'text', v: '正文[1]，x² 和 rₜ。' },
+    ]);
+  });
   it('行内：加粗、公式转文字、转不了的保留原文', () => {
     expect(inlineParts('**动量**是 $P_t$，矩阵 $\\begin{matrix}a\\end{matrix}$。')).toEqual([
       { t: 'bold', v: '动量' }, { t: 'text', v: '是 ' }, { t: 'text', v: 'Pₜ' }, { t: 'text', v: '，矩阵 ' },
