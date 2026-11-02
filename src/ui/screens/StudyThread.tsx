@@ -19,7 +19,7 @@ import { usageText } from './AiScreen';
 interface Turn {
   first: number;
   question: string | null;
-  /** 换了模型 / 思考 / 搜索之后的第一问：「更换模型，从这里使用新设置」。 */
+  /** 换了模型 / 思考 / 搜索之后的第一问：「更换模型：从这里起用 GPT-6.1-sol · 思考低」。 */
   divider?: string;
   /** 这一问已经整理进摘要（不再发给模型，界面照常显示）。 */
   compacted: boolean;

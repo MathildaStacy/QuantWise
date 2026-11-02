@@ -411,7 +411,9 @@ Q1–Q5 按建议实现。和上文不同的几处：
 
 代码位置：讲解配置 `src/study/config.ts`，预算与整理 `src/study/compact.ts`，共用整理收尾 `src/ai/compact.ts`，讲解记录 `src/ui/screens/StudyHistoryScreens.tsx`，迁移 `0010_study_rounds`（`ai_thread.archived_at`）。测试：`__tests__/study/session.test.ts`（Anthropic 与 OpenAI Responses 两条路径）、`__tests__/ai/options.test.ts`、`__tests__/ai/chat.test.ts`、`__tests__/study/translation.test.ts`。
 
-未验证：真机 / 模拟器上的界面（输入区三个控件、讲解记录页）；真实 Key 下各家的搜索来源、`pause_turn`、新账户的思考块校验。
+模拟器走查（2026-11-02，本地模拟服务 + 中转的 OpenAI Responses `gpt-6.1-sol`）：输入区三个控件和三个弹层、换模型 / 思考 / 开搜索后的重建提示与「改回」、分隔线、回答页脚（来源和用量）、「AI 现在看到了什么」里的设置与预算、`[[web]]` 网页资料块和来源链接、讲解记录三个入口（讲解页、书的地图、对话列表「读书讲解」）、搜索、按目录、新开一轮、只读历史轮。走查中改了：分隔线写明新设置（「调整思考强度：从这里起用 GPT-6.1-sol · 思考中」）；新开一轮后搜索回到默认关；新的一轮不再显示上一轮留下的「回到最新」；讲解记录搜索时当前一轮没命中显示「当前一轮没有匹配」；讲解的思考弹层加 §2.6 / §4.8 的建议。
+
+未验证：Anthropic 官方 Key 下的搜索来源、`pause_turn`、新账户的思考块校验；自动整理在真实长对话里的触发（单测覆盖）；删除和导出 Markdown 的界面（单测覆盖数据部分）。
 
 ## 参考
 

@@ -10,7 +10,7 @@ import { combineSearch } from '../ai/evidence';
 import { external } from '../ai/external';
 import { AiError, callModel } from '../ai/http';
 import { EMPTY_ANSWER_ERROR } from '../ai/messageText';
-import { configChanges, needsFreshInformation, sameConfig } from '../ai/models';
+import { configBrief, configChanges, needsFreshInformation, sameConfig } from '../ai/models';
 import { estimateTokens } from '../ai/prompt';
 import { buildRequest } from '../ai/protocol';
 import { kimiSearch, SEARCH_TOOL } from '../ai/search';
@@ -26,7 +26,7 @@ import * as repo from '../data/repos';
 import * as studyRepo from '../data/studyRepo';
 import { beijingIso } from '../market/clock';
 import { commitStudyCompaction, fitToBudget, keepFromOf, lastRequestTokens, STUDY_COMPACT_PROMPT, studyBudget, TURN_TOOL_BUDGET, withSummary } from './compact';
-import { resolveStudyService, saveStudyConfig, STUDY_LAST_CONFIG_KEY, threadStudyConfig } from './config';
+import { resolveStudyService, saveStudyConfig, studyDefaultConfig, STUDY_LAST_CONFIG_KEY, threadStudyConfig } from './config';
 import { STUDY_PROMPT, studyContext, studyState } from './prompt';
 import { quick, type QuickKind } from './quick';
 import { loadReadingState, saveReadingState } from './readingState';
@@ -444,7 +444,7 @@ export async function askStudy(core: AppCore, a: StudyAsk): Promise<boolean> {
     useStudy.setState({ busy: '准备讲解…' });
   }
   const lastCfg = (await aiRepo.thread(core.db, threadId))?.lastConfig ?? null;
-  const divider = lastCfg && !sameConfig(lastCfg, cfg) ? configChanges(lastCfg, cfg) + '，从这里使用新设置' : undefined;
+  const divider = lastCfg && !sameConfig(lastCfg, cfg) ? configChanges(lastCfg, cfg) + '：从这里起用 ' + configBrief(cfg) : undefined;
   const p = { ...progressNow(s0) };
   const step = a.step == null ? s0.state.step : Math.max(0, Math.min(s0.steps.length - 1, a.step));
   if (a.skip != null && !p.skipped.includes(a.skip)) {
@@ -658,6 +658,8 @@ async function leaveThread(core: AppCore, threadId: number, f: () => Promise<voi
   }
   const at = await studyRepo.studyThreadSection(core.db, threadId);
   await f();
+  // 新的一轮按新对话的默认（讲解最近一次选择，搜索关），和重新打开这一节时一致
+  const config = await studyDefaultConfig(core.db);
   const state = await core.db.transaction(async db => {
     const latest = at && (await studyRepo.getState(db, at.bookId));
     if (!at || !latest?.sections[at.sectionId]) return latest ?? null;
@@ -667,7 +669,7 @@ async function leaveThread(core: AppCore, threadId: number, f: () => Promise<voi
   });
   useStudy.setState(st =>
     st.s?.threadId === threadId
-      ? { s: { ...st.s, threadId: null, messages: [], loaded: new Set([st.s.section.id]), extra: {}, lastConfig: null, summary: '', ...(state ? { state } : {}) } }
+      ? { s: { ...st.s, threadId: null, messages: [], loaded: new Set([st.s.section.id]), extra: {}, config, lastConfig: null, summary: '', ...(state ? { state } : {}) } }
       : st.s && state && st.s.book.id === state.bookId ? { s: { ...st.s, state } } : st,
   );
 }

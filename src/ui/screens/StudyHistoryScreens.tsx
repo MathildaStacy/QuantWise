@@ -7,7 +7,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useMemo, useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { EFFORT_NAME, prettyModel } from '../../ai/models';
+import { configBrief } from '../../ai/models';
 import type { StoredMessage } from '../../ai/types';
 import { exportText } from '../../app/exportFile';
 import { chapterOf, citeLabel, secLabel } from '../../book/book';
@@ -121,7 +121,10 @@ export function StudyHistoryList({ bookId }: { bookId?: string }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<Row | null>(null);
   const [del, setDel] = useState<studyRepo.StudyThreadRow | null>(null);
+  /** 列表当前按哪个词筛过（输入框里的字没提交前不算）。 */
+  const [applied, setApplied] = useState('');
   const reload = useCallback((q = query) => {
+    setApplied(q.trim());
     loadRows(core.db, bookId, q).then(setRows).catch(() => setRows([]));
   }, [core, bookId, query]);
   useFocusEffect(useCallback(() => reload(), [reload]));
@@ -154,8 +157,8 @@ export function StudyHistoryList({ bookId }: { bookId?: string }) {
     const t = r.active;
     const c = t?.config;
     return [
-      c ? prettyModel(c.model) + ' · 思考' + EFFORT_NAME[c.effort] + (c.search ? ' · 搜索开' : '') : '',
-      t ? t.questions + ' 问' : '还没有新的一轮',
+      c ? configBrief(c) : '',
+      t ? t.questions + ' 问' : applied ? '当前一轮没有匹配' : '还没有新的一轮',
       t?.compactedCount ? '较早 ' + t.compactedCount + ' 问已整理' : '',
     ].filter(Boolean).join(' · ');
   };
@@ -173,7 +176,7 @@ export function StudyHistoryList({ bookId }: { bookId?: string }) {
         </View>
       </View>
       <ScrollView contentContainerStyle={st.pad} keyboardShouldPersistTaps="handled">
-        {rows && !rows.length ? <Empty text={query.trim() ? '没有找到「' + query.trim() + '」' : '还没有讲解记录。打开任意小节点「开始讲」就会出现在这里。'} /> : null}
+        {rows && !rows.length ? <Empty text={applied ? '没有找到「' + applied + '」' : '还没有讲解记录。打开任意小节点「开始讲」就会出现在这里。'} /> : null}
         {groups.map(g => (
           <View key={g.key}>
             {g.title ? <Text style={st.group}>{g.title}</Text> : null}

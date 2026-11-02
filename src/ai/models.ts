@@ -477,6 +477,10 @@ export function configLabel(
   );
 }
 
+/** 短标签：「GPT-6.1-sol · 思考低 · 搜索开」（搜索关时不写），用于讲解的分隔线和讲解记录。 */
+export const configBrief = (cfg: ConversationConfig): string =>
+  prettyModel(cfg.model) + ' · 思考' + EFFORT_NAME[cfg.effort] + (cfg.search ? ' · 搜索开' : '');
+
 export function configChanges(
   a: ConversationConfig,
   b: ConversationConfig,

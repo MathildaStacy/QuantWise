@@ -316,7 +316,7 @@ test('讲解的模型 / 思考 / 搜索按小节保存，和 AI 助手分开；�
   await askStudy(core, quickAsk(s(), 'next'));
   expect(sent[1].model).toBe('claude-opus-5-5');
   expect(sent[1].output_config).toEqual({ effort: 'medium' });
-  expect(s().messages.filter(m => m.role === 'user').at(-1)?.ui?.divider).toContain('更换模型');
+  expect(s().messages.filter(m => m.role === 'user').at(-1)?.ui?.divider).toBe('更换模型、调整思考强度：从这里起用 Opus 5.5 · 思考中');
   expect(studyRebuild(s())).toBeNull();
   // 下一节沿用讲解最近一次选择，搜索不继承
   await selectStudyConfig(core, { ...s().config!, search: true });
@@ -421,8 +421,11 @@ test('新开一轮：旧的讲解归档只读，下一问新建对话；讲解�
   replies = [tool('load_section', { id: '4.2', detour: true }), text('IC 是横截面相关系数')];
   await askStudy(core, { label: 'IC 是什么？', question: 'IC 是什么？' });
   expect(progressNow(s()).detour).not.toBeNull();
+  // 新的一轮按新对话的默认：模型和思考沿用，搜索关
+  await selectStudyConfig(core, { ...s().config!, search: true });
   await newStudyRound(core, first);
   expect(s().threadId).toBeNull();
+  expect(s().config).toMatchObject({ model: 'claude-sonnet-5-5', search: false });
   expect(s().messages).toEqual([]);
   expect(progressNow(s()).taught).toBe(0);
   expect(progressNow(s()).detour).toBeNull();

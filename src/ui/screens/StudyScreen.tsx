@@ -121,7 +121,9 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
       setAuth(false);
       useStudy.setState({ error: null });
       setText(ui.draft ?? '');
-      follow.current = ui.follow ?? !ui.thread;
+      // 新开一轮或删掉对话后，保存的位置指向已经不在的消息：改回跟随最新
+      const stale = !!ui.thread && !session.messages.some(m => m.id === ui.thread!.id);
+      follow.current = stale || (ui.follow ?? !ui.thread);
       restored.current = false;
       setLatest(!follow.current);
     };
@@ -460,6 +462,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
         onClose={() => setSheet(null)}
         onSelect={effort => { if (cfg) selectStudyConfig(core, { ...cfg, effort }).then(() => setSheet(null)).catch(fail); }}
         onManage={() => { setSheet(null); nav.navigate('AiService', { id: provider?.id }); }}
+        note={'讲解用「低」通常就够；推导、证明类小节可以调到「中」。' + (svc?.capabilities?.thinking?.some(e => e === 'xhigh' || e === 'max') ? '「极高」「最高」更容易因篇幅太长被截断。' : '')}
       />
       <SearchUnavailable
         visible={sheet === 'search'}
