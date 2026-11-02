@@ -39,6 +39,7 @@ const io: ImportIo = {
   sha256: async p => 'sha-' + (files.get(p) ?? p).length + '-' + p.length,
   size: async p => (files.get(p) ?? '').length,
   pdfPages: async () => pages,
+  renderPdfPage: jest.fn(async (_pdf, _page, dest) => { files.set(dest, 'png'); }),
   mineru: {} as ImportIo['mineru'],
 };
 
@@ -167,4 +168,77 @@ test('PDF：MinerU 说这一片解析失败 → 书失败；重试从上传开�
   await retryParse(c, id);
   expect(requested).toHaveLength(2);
   expect((await bookRepo.book(c.db, id))?.status).toBe('ready');
+});
+
+test.each(['A0211', '-60018'])('PDF account error %s persists a pause and resumes the accepted batch', async code => {
+  const c = await core();
+  pages = 50;
+  files.set('/cache/account.pdf', 'pdf');
+  failQuery = new MineruError(code);
+  const id = await startPdfImport(c, { path: '/cache/account.pdf', name: 'account.pdf', model: 'vlm', ocr: false });
+  await runParse(c, id);
+  expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'parsing', error: failQuery.message });
+  const before = await bookRepo.parts(c.db, id);
+  expect(before[0]).toMatchObject({ state: 'parsing', batchId: 'batch-1' });
+  useParse.setState({}, true); // App 重启，不能只靠内存显示暂停原因
+  expect((await bookRepo.book(c.db, id))?.error).toBe(failQuery.message);
+  failQuery = null;
+  await runParse(c, id);
+  expect(requested).toHaveLength(1);
+  expect(uploads).toHaveLength(1);
+  expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'ready', error: null });
+});
+
+test('PDF OCR gap renders the original page before saving, and a render failure retries without reupload', async () => {
+  const c = await core();
+  pages = 3;
+  files.set('/cache/gap.pdf', 'pdf');
+  const download = client.download;
+  const render = jest.spyOn(io, 'renderPdfPage');
+  render.mockRejectedValueOnce(new Error('原页图像生成失败'));
+  client.download = async (_url, dest) => {
+    files.set(dest + '/book_content_list.json', JSON.stringify([
+      { type: 'text', text: 'Chapter 1 Gap', text_level: 1, page_idx: 0 },
+      { type: 'text', text: 'Intro', page_idx: 0 },
+      { type: 'text', text: '', bbox: [100, 100, 800, 900], page_idx: 1 },
+    ]));
+    return dest;
+  };
+  try {
+    const id = await startPdfImport(c, { path: '/cache/gap.pdf', name: 'gap.pdf', model: 'vlm', ocr: false });
+    await runParse(c, id);
+    expect((await bookRepo.book(c.db, id))?.status).toBe('failed');
+    expect((await bookRepo.parts(c.db, id))[0].state).toBe('done');
+    await retryParse(c, id);
+    const b = await bookRepo.book(c.db, id);
+    expect(b?.status).toBe('ready');
+    expect(uploads).toHaveLength(1);
+    const blocks = await bookRepo.sectionBlocks(c.db, id, '1');
+    expect(blocks[1]).toMatchObject({ page: 2, type: 'img', image: 'source-pages/p2.png', text: '此页未生成独立的可读内容，已保留原页图像。' });
+    expect(files.has(b!.body.dir + '/source-pages/p2.png')).toBe(true);
+    expect(b?.body.warnings?.[0]).toContain('第 2 页没有独立的可读内容');
+  } finally {
+    client.download = download;
+    render.mockRestore();
+  }
+});
+
+test('an account failure inside a batch row keeps the accepted task available to resume', async () => {
+  const c = await core();
+  pages = 50;
+  files.set('/cache/row.pdf', 'pdf');
+  const query = client.query;
+  client.query = async () => [{ fileName: 'row.pdf', dataId: requested[0][0].dataId, state: 'failed', error: new MineruError('A0211') }];
+  try {
+    const id = await startPdfImport(c, { path: '/cache/row.pdf', name: 'row.pdf', model: 'vlm', ocr: false });
+    await runParse(c, id);
+    expect(await bookRepo.book(c.db, id)).toMatchObject({ status: 'parsing', error: expect.stringContaining('过期') });
+    expect((await bookRepo.parts(c.db, id))[0]).toMatchObject({ state: 'parsing', batchId: 'batch-1' });
+    client.query = query;
+    await runParse(c, id);
+    expect(uploads).toHaveLength(1);
+    expect((await bookRepo.book(c.db, id))?.status).toBe('ready');
+  } finally {
+    client.query = query;
+  }
 });

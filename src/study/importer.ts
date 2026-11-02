@@ -22,6 +22,7 @@ import {
   type MineruModel,
 } from './import/mineru';
 import { adaptContentList, findContentList, mergeParts } from './import/mineruAdapter';
+import { preparePdfItems } from './import/pdfStructure';
 import { bookIdOf, importMarkdownText, saveImported } from './library';
 
 // ---------- 依赖（测试里替换） ----------
@@ -214,8 +215,8 @@ export async function retryParse(core: AppCore, bookId: string): Promise<void> {
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-/** 网络、超时、队列满这类错误：书保持「解析中」，回到解析页点「继续」接着来。 */
-const RETRIABLE = new Set(['network', 'timeout', 'queue_full', 'service', 'cancelled']);
+/** 网络、账号或配额错误保留任务并持久化暂停原因，解决后继续轮询。 */
+const RETRIABLE = new Set(['network', 'timeout', 'queue_full', 'service', 'cancelled', 'auth', 'daily_limit']);
 
 async function parseQueue(core: AppCore, bookId: string): Promise<void> {
   const book = await bookRepo.book(core.db, bookId);
@@ -230,6 +231,7 @@ async function parseQueue(core: AppCore, bookId: string): Promise<void> {
     bookRepo.savePart(core.db, bookId, { ...p, ...patch, updatedAt: beijingIso() });
   setProgress(bookId, { error: null });
   try {
+    await bookRepo.updateBook(core.db, bookId, { status: 'parsing', error: null }, beijingIso());
     let parts = await bookRepo.parts(core.db, bookId);
     const total = parts.length;
     // 1. 还没申请上传地址的片：一次申请，逐个上传（同一个文件 + 不同的 page_ranges）
@@ -262,6 +264,7 @@ async function parseQueue(core: AppCore, bookId: string): Promise<void> {
             continue;
           }
           if (r.state === 'failed') {
+            if (r.error && ['auth', 'daily_limit'].includes(r.error.kind)) throw r.error;
             await save(p, { state: 'failed', error: r.error?.message ?? 'MinerU 解析失败' });
           } else if (r.state === 'done' && r.zipUrl) {
             setProgress(bookId, { stage: '下载第 ' + p.partNo + ' 片的结果' });
@@ -288,6 +291,7 @@ async function parseQueue(core: AppCore, bookId: string): Promise<void> {
     // 3. 合并各片，切章节、建块
     setProgress(bookId, { stage: '切章节、写入书架', done: 0.92 });
     const items = [];
+    const headers = [];
     const warnings: string[] = [];
     for (const p of parts) {
       const files = await io.list(dir + '/part' + p.partNo);
@@ -300,10 +304,20 @@ async function parseQueue(core: AppCore, bookId: string): Promise<void> {
         pageTo: p.pageTo,
         imagePrefix: 'part' + p.partNo + '/' + cl.replace(/[^/]*$/, ''),
       });
+      // 没有独立内容的检测页保留原页图像。渲染失败时不声称已补齐；完成的云端分片留给重试。
+      for (const item of r.items) {
+        if (item.kind !== 'block' || !item.sourcePage || item.page == null) continue;
+        const image = 'source-pages/p' + item.page + '.png';
+        await io.mkdir(dir + '/source-pages');
+        await io.renderPdfPage(dir + '/source.pdf', item.page, dir + '/' + image);
+        item.image = image;
+        item.text = '此页未生成独立的可读内容，已保留原页图像。';
+      }
       items.push(r.items);
+      headers.push(...r.headers);
       warnings.push(...r.warnings);
     }
-    const a = assemble({ title: book.title, author: book.author, items: mergeParts(items), warnings });
+    const a = assemble({ title: book.title, author: book.author, items: preparePdfItems(mergeParts(items), headers), warnings });
     if (!a.sections.some(s => s.leaf)) {
       throw new Error('解析结果里没有正文');
     }
@@ -312,9 +326,7 @@ async function parseQueue(core: AppCore, bookId: string): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const retriable = e instanceof MineruError && RETRIABLE.has(e.kind);
-    if (!retriable) {
-      await bookRepo.updateBook(core.db, bookId, { status: 'failed', error: msg }, beijingIso());
-    }
+    await bookRepo.updateBook(core.db, bookId, { status: retriable ? 'parsing' : 'failed', error: msg }, beijingIso());
     setProgress(bookId, { error: msg, stage: retriable ? '已暂停' : '失败' });
   }
 }

@@ -27,7 +27,8 @@ import { useStudy } from '../../src/study/session';
 import type { RootStackParamList } from '../../src/ui/navigation/types';
 import { BookMapScreen, NotesScreen } from '../../src/ui/screens/BookScreens';
 import { ChartFullScreen, FactorLabScreen } from '../../src/ui/screens/FactorScreens';
-import { MineruSettingsScreen, StudyPrefsScreen } from '../../src/ui/screens/ImportScreens';
+import * as importer from '../../src/study/importer';
+import { ImportBookScreen, MineruSettingsScreen, StudyPrefsScreen } from '../../src/ui/screens/ImportScreens';
 import { LearnScreen } from '../../src/ui/screens/LearnScreens';
 import { ReviewScreen, SectionDoneScreen } from '../../src/ui/screens/ReviewScreens';
 import { StudyScreen } from '../../src/ui/screens/StudyScreen';
@@ -286,4 +287,21 @@ test('同一会话留在内存中，跨天再进入仍显示回顾且保留旧�
   expect(r.text()).toContain('距上次 ');
   expect(useStudy.getState().s?.awayDays).toBe(1);
   expect(r.text()).toContain('已恢复的回答');
+});
+
+
+test('PDF 默认开启 OCR；主动关闭后切换模型不重置选择', async () => {
+  const plan = jest.spyOn(importer, 'planPdf').mockResolvedValue({ pages: 2, size: 100, parts: [{ partNo: 1, pageFrom: 1, pageTo: 2 }], blocked: null });
+  try {
+    const r = await render('ImportBook', ImportBookScreen, { path: '/cache/book.pdf', name: 'book.pdf', size: 100 });
+    const toggle = () => r.tree.root.findAll(n => n.props.accessibilityLabel === 'OCR 文字识别' && typeof n.props.onValueChange === 'function')[0];
+    expect(toggle().props.value).toBe(true);
+    expect(r.text()).toContain('推荐开启，减少公式、负号和变量的识别错误');
+    await act(async () => { toggle().props.onValueChange(false); });
+    await r.press('pipeline');
+    expect(toggle().props.value).toBe(false);
+    expect(r.text()).toContain('已关闭，文字层中的公式和符号可能遗漏');
+  } finally {
+    plan.mockRestore();
+  }
 });

@@ -117,7 +117,7 @@ export function ShelfView() {
               </Text>
             </View>
             <Text style={[s.bookR, num]}>
-              {b.book.status === 'ready' ? b.done + ' / ' + b.leaves + ' 节' : b.book.status === 'failed' ? '解析失败' : '解析中'}
+              {b.book.status === 'ready' ? b.done + ' / ' + b.leaves + ' 节' : b.book.status === 'failed' ? '解析失败' : b.book.error ? '已暂停' : '解析中'}
             </Text>
             <ChevronRight color={color.ink3} size={18} />
           </Pressable>

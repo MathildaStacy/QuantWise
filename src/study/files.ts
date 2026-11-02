@@ -21,6 +21,7 @@ export interface ImportIo {
   sha256(path: string): Promise<string>;
   size(path: string): Promise<number>;
   pdfPages(path: string): Promise<number>;
+  renderPdfPage(path: string, page: number, destination: string): Promise<void>;
   mineru: MineruFiles;
 }
 
@@ -102,6 +103,10 @@ export function deviceIo(): ImportIo {
         throw new Error('这台设备读不了 PDF 页数');
       }
       return DocumentStore.pdfPageCount(plainPath(p));
+    },
+    renderPdfPage: async (p, page, destination) => {
+      if (!DocumentStore) throw new Error('这台设备不能渲染 PDF 原页');
+      await DocumentStore.renderPdfPage(plainPath(p), page, plainPath(destination));
     },
     mineru: {
       put: (url, path, o) => transfer(() => BlobUtil.fetch('PUT', url, {}, BlobUtil.wrap(plainPath(path))), o, true),

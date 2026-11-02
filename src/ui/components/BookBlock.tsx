@@ -1,7 +1,7 @@
 /**
  * 原书的一个内容块（读书模式、原文预览）：段落用宋体，公式用 MathView，表格转成 Markdown 表格，图片从书目录读。
  */
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { htmlTableToMarkdown, inlineParts } from '../../book/markup';
 import type { BookBlock } from '../../book/types';
@@ -27,6 +27,15 @@ export function BlockInline({ text, style }: { text: string; style?: object }) {
       )}
     </Text>
   );
+}
+
+/** 原页截图按实际比例展开，避免完整一页被压进普通插图的 220px 框。 */
+function SourcePageImage({ uri, label }: { uri: string; label: string }) {
+  const [ratio, setRatio] = useState(0.707);
+  return <Image source={{ uri }} accessibilityLabel={label} resizeMode="contain" style={[s.sourcePage, { aspectRatio: ratio }]} onLoad={({ nativeEvent }) => {
+    const { width, height } = nativeEvent.source;
+    if (width > 0 && height > 0) setRatio(width / height);
+  }} />;
 }
 
 const noLink = () => undefined;
@@ -64,7 +73,9 @@ export const BookBlockView = memo(function BlockView({
     case 'img':
       return (
         <View style={s.fig}>
-          {b.image && dir ? (
+          {b.image?.startsWith('source-pages/') && dir && !compact ? (
+            <SourcePageImage uri={'file://' + dir.replace(/\/$/, '') + '/' + b.image} label={b.text} />
+          ) : b.image && dir ? (
             <Image
               source={{ uri: (/^\w+:/.test(b.image) ? '' : 'file://' + dir.replace(/\/$/, '') + '/') + b.image }}
               style={compact ? s.imgSmall : s.img}
@@ -90,6 +101,7 @@ const s = StyleSheet.create({
   liText: { flex: 1 },
   pre: { fontFamily: 'monospace', fontSize: 13, lineHeight: 21, color: rc.ink, backgroundColor: rc.soft, borderRadius: 8, padding: 10 },
   fig: { alignItems: 'center', gap: 4 },
+  sourcePage: { width: '100%' },
   img: { width: '100%', height: 220 },
   imgSmall: { width: '100%', height: 140 },
   caption: { fontSize: 12, color: rc.muted, textAlign: 'center' },

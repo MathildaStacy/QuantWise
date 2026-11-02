@@ -38,7 +38,7 @@ export function ImportBookScreen({ route }: RootScreenProps<'ImportBook'>) {
   const [plan, setPlan] = useState<PdfPlan | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [model, setModel] = useState<MineruModel>('vlm');
-  const [ocr, setOcr] = useState(false);
+  const [ocr, setOcr] = useState(true);
   const [token, setToken] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -74,10 +74,10 @@ export function ImportBookScreen({ route }: RootScreenProps<'ImportBook'>) {
           <Radio on={model === 'pipeline'} title="pipeline" sub="更快，适合文字为主的书" onPress={() => setModel('pipeline')} />
           <View style={st.switchRow}>
             <View style={st.grow}>
-              <Text style={st.body}>扫描版（打开 OCR）</Text>
-              <Text style={st.k}>没有文字层的 PDF 才需要</Text>
+              <Text style={st.body}>OCR 文字识别</Text>
+              <Text style={st.k}>{ocr ? '推荐开启，减少公式、负号和变量的识别错误' : '已关闭，文字层中的公式和符号可能遗漏'}</Text>
             </View>
-            <Switch value={ocr} onValueChange={setOcr} />
+            <Switch accessibilityLabel="OCR 文字识别" value={ocr} onValueChange={setOcr} />
           </View>
         </View>
         {token === false ? (
@@ -123,7 +123,8 @@ export function ParseProgressScreen({ route }: RootScreenProps<'ParseProgress'>)
   }, [core, bookId]);
   const done = book?.status === 'ready';
   const failed = book?.status === 'failed';
-  const paused = !done && !failed && !!prog?.error;
+  const pauseError = prog?.error || book?.error;
+  const paused = !done && !failed && !!pauseError;
   return (
     <View style={st.page}>
       <NavBar title="解析进度" back />
@@ -133,7 +134,7 @@ export function ParseProgressScreen({ route }: RootScreenProps<'ParseProgress'>)
           <View style={st.track}>
             <View style={[st.fill, { width: Math.round((done ? 1 : prog?.done ?? 0) * 100) + '%' }]} />
           </View>
-          <Text style={st.k}>{done ? '完成 · ' + (book?.pages ?? 0) + ' 页 · ' + (book?.body.leaves ?? 0) + ' 个小节' : failed ? '失败：' + (book?.error ?? '') : (prog?.stage || '排队中') + ' · 可以离开这个页面，回来接着看'}</Text>
+          <Text style={st.k}>{done ? '完成 · ' + (book?.pages ?? 0) + ' 页 · ' + (book?.body.leaves ?? 0) + ' 个小节' : failed ? '失败：' + (book?.error ?? '') : (paused ? '已暂停' : prog?.stage || '排队中') + ' · 可以离开这个页面，回来接着看'}</Text>
         </View>
         <View style={st.card}>
           {parts.map(p => (
@@ -143,7 +144,7 @@ export function ParseProgressScreen({ route }: RootScreenProps<'ParseProgress'>)
             </View>
           ))}
         </View>
-        {paused ? <Note tone="warn" style={st.note}>{prog!.error}</Note> : null}
+        {paused ? <Note tone="warn" style={st.note}>{pauseError}</Note> : null}
         <View style={st.row}>
           {done ? <Button title="看书的地图" tone="learn" onPress={() => nav.replace('BookMap', { bookId })} style={st.grow} /> : null}
           {failed ? <Button title="重试失败的片" tone="learn" onPress={() => retryParse(core, bookId).catch(e => toast.show(String(e), 'bad'))} style={st.grow} /> : null}

@@ -3,6 +3,8 @@ package com.quantwise.files
 import android.app.Activity
 import android.content.ClipData
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -171,6 +173,45 @@ class DocumentStoreModule(context: ReactApplicationContext) : NativeDocumentStor
         promise.reject("PDF_ENCRYPTED", "PDF 有密码保护，读不了页数")
       } catch (e: Exception) {
         promise.reject("PDF_INVALID", "读不了这个 PDF：" + (e.message ?: e.javaClass.simpleName))
+      }
+    }
+  }
+
+  /** 逐页渲染并释放位图；不依赖网络，也不把整本 PDF 放进内存。 */
+  override fun renderPdfPage(path: String, page: Double, destination: String, promise: Promise) {
+    dispatch(promise) {
+      try {
+        val source = File(path).canonicalFile
+        val target = File(destination).canonicalFile
+        val base = reactApplicationContext.filesDir.canonicalPath + File.separator
+        if (!source.path.startsWith(base) || !target.path.startsWith(base)) {
+          throw IOException("只能读写 App 私有目录")
+        }
+        ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+          PdfRenderer(fd).use { pdf ->
+            if (!page.isFinite() || page != page.toInt().toDouble() || page < 1 || page > pdf.pageCount) {
+              throw IOException("PDF 页码超出范围")
+            }
+            pdf.openPage(page.toInt() - 1).use { original ->
+              val scale = 1600.0 / maxOf(original.width, original.height)
+              val bitmap = Bitmap.createBitmap(
+                maxOf(1, (original.width * scale).toInt()),
+                maxOf(1, (original.height * scale).toInt()), Bitmap.Config.ARGB_8888,
+              )
+              try {
+                bitmap.eraseColor(Color.WHITE)
+                original.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                target.parentFile?.mkdirs()
+                target.outputStream().use { output ->
+                  if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) throw IOException("原页图像写入失败")
+                }
+              } finally { bitmap.recycle() }
+            }
+          }
+        }
+        promise.resolve(null)
+      } catch (error: Exception) {
+        promise.reject("PDF_RENDER", "原页图像生成失败", error)
       }
     }
   }

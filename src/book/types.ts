@@ -20,6 +20,10 @@ export interface RawBlock {
   mark?: string;
   /** img：相对书目录的图片路径。 */
   image?: string;
+  /** 页内没有独立内容的标记：导入时用本地 PDF 渲染原页，阅读时按原页比例显示。 */
+  sourcePage?: boolean;
+  /** 普通 OCR 文本允许补认标题；脚注、参考文献、图注不参与。 */
+  headingCandidate?: boolean;
   /** table：MinerU / EPUB 给的 HTML。 */
   html?: string;
 }
@@ -30,6 +34,8 @@ export interface RawHeading {
   text: string;
   /** 解析器给的层级：Markdown 的 # 个数、EPUB 目录深度、MinerU 的 text_level。1 最高。 */
   level: number;
+  /** PDF 结构校正后的层级，避免 assemble 再按未编号标题猜测。 */
+  sectionLevel?: 1 | 2 | 3;
   page?: number;
 }
 

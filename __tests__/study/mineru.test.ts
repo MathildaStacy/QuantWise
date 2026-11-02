@@ -781,6 +781,7 @@ describe('adaptContentList', () => {
         kind: 'block',
         type: 'p',
         text: '过去 12 个月的收益 $r_{t-12,t-1}$ 越高，未来越可能继续上涨。',
+        headingCandidate: true,
         page: 1,
       },
       {
@@ -806,6 +807,7 @@ describe('adaptContentList', () => {
       { kind: 'block', type: 'li', text: '计算过去收益', mark: '1.', page: 2 },
       { kind: 'block', type: 'li', text: '排序分组', mark: '2.', page: 2 },
       { kind: 'block', type: 'li', text: '等权持有', mark: '•', page: 2 },
+      { kind: 'block', type: 'p', text: '旁注', page: 2 },
       { kind: 'block', type: 'p', text: '代码 3-1', page: 3 },
       {
         kind: 'block',
@@ -813,6 +815,7 @@ describe('adaptContentList', () => {
         text: 'mom = close.pct_change(12)\n    .shift(1)',
         page: 3,
       },
+      { kind: 'block', type: 'p', text: '① 页脚注', page: 3 },
       {
         kind: 'block',
         type: 'p',
@@ -827,9 +830,9 @@ describe('adaptContentList', () => {
         page: 3,
       },
     ]);
-    // 页眉、页脚、页码、边注、页脚注、discarded 不进正文，也不报警
+    // 页眉、页脚、页码、discarded 不进正文，也不报警
     expect(JSON.stringify(items)).not.toMatch(
-      /因子投资入门|版权所有|旁注|页脚注|水印|VLM/,
+      /因子投资入门|版权所有|水印|VLM/,
     );
     expect(warnings).toEqual(['第 1–3 页：跳过了不认识的内容类型：hologram']);
   });

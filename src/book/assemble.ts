@@ -14,6 +14,7 @@ const CN = '零一二三四五六七八九';
 
 /** 「十二」「二十三」「九十九」→ 数字；认不出返回 null。 */
 export function cnNumber(s: string): number | null {
+  s = s.replace(/〇/g, '零');
   if (/^\d+$/.test(s)) {
     return Number(s);
   }
@@ -52,7 +53,7 @@ const clampLevel = (n: number): 1 | 2 | 3 => (n <= 1 ? 1 : n >= 3 ? 3 : 2);
 
 export function parseHeading(h: RawHeading): Parsed {
   const text = h.text.replace(/\s+/g, ' ').trim();
-  let m = /^第\s*([0-9零一二三四五六七八九十百]+)\s*[章篇部]\s*[:：.、]?\s*(.*)$/.exec(
+  let m = /^第\s*([0-9零〇一二三四五六七八九十百]+)\s*[章篇]\s*[:：.、]?\s*(.*)$/.exec(
     text,
   );
   const chapter = (n: number | null, rest: string): Parsed | null =>
@@ -69,7 +70,7 @@ export function parseHeading(h: RawHeading): Parsed {
   if (m) {
     return chapter(Number(m[1]), m[2])!;
   }
-  m = /^(\d{1,2}(?:\.\d{1,3}){1,2})\.?\s+(.+)$/.exec(text);
+  m = /^((?:\d{1,2}|[A-Z])(?:\.\d{1,3}){1,2})(?!\d|\.\d)\.?\s*(.+)$/.exec(text);
   if (m) {
     return {
       num: m[1],
@@ -127,7 +128,9 @@ export function assemble(doc: RawDoc): AssembledBook {
   for (const it of doc.items) {
     if (it.kind === 'heading') {
       let p = parseHeading(it);
-      if (p.num && p.level === 1) {
+      if (it.sectionLevel != null) {
+        p = { ...p, level: it.sectionLevel };
+      } else if (p.num && p.level === 1) {
         sawChapter = true;
       } else if (
         !p.num &&

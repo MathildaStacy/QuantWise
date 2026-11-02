@@ -26,22 +26,24 @@ const object = (v: unknown): Row | null =>
   v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Row) : null;
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
-/** 页面杂项：页眉、页脚、页码、边注、页脚注、注音，MinerU 自己生成 Markdown 时也丢掉。 */
+/** 重复的页眉、页脚和页码不进正文；脚注与边注属于原书内容，必须保留。 */
 const DROPPED = new Set([
   'header',
   'footer',
   'page_number',
+  'page_num',
+  'page-number',
   'page_header',
   'page_footer',
-  'page_footnote',
-  'aside',
-  'aside_text',
   'phonetic',
   'discarded',
 ]);
 /** 单独出现的图注 / 表注 / 参考文献 / 目录行，当普通段落。 */
 const AS_PARAGRAPH = new Set([
   'ref_text',
+  'page_footnote',
+  'aside',
+  'aside_text',
   'index',
   'caption',
   'image_caption',
@@ -51,11 +53,23 @@ const AS_PARAGRAPH = new Set([
   'table_footnote',
 ]);
 
+/** 部分结果把文字放在 content / lines.spans；图片的 content 是模型描述，不在这里读取。 */
+function textOf(value: unknown): string {
+  if (typeof value === 'string') return value;
+  const row = object(value);
+  if (!row) return '';
+  if (typeof row.text === 'string' && row.text) return row.text;
+  if (typeof row.content === 'string') return row.content;
+  if (Array.isArray(row.lines)) return row.lines.map(textOf).join('\n');
+  if (Array.isArray(row.spans)) return row.spans.map(textOf).join('');
+  return '';
+}
+
 /** image_caption / table_footnote 这类字段：字符串或字符串数组，拼成多行。 */
 function lines(...values: unknown[]): string {
   return values
     .flatMap(v => (Array.isArray(v) ? v : [v]))
-    .map(v => str(v).trim())
+    .map(v => textOf(v).trim())
     .filter(Boolean)
     .join('\n');
 }
@@ -182,11 +196,11 @@ function convert(
     type === 'interline_equation' ||
     row.text_format === 'latex'
   ) {
-    const tex = stripDisplayMath(str(row.latex) || str(row.text));
+    const tex = stripDisplayMath(str(row.latex) || textOf(row));
     return tex ? [block('eq', tex)] : [];
   }
   if (type === 'text' || type === 'title') {
-    const text = str(row.text).trim();
+    const text = textOf(row).trim();
     const level =
       typeof row.text_level === 'number'
         ? row.text_level
@@ -199,7 +213,7 @@ function convert(
       return [{ kind: 'heading', text, level: Math.floor(level), ...at }];
     }
     // 行内公式 MinerU 已经写成 $…$，原样保留
-    return para(text);
+    return text ? [block('p', text, { headingCandidate: true })] : [];
   }
   if (type === 'image' || type === 'chart') {
     // content 是 VLM 生成的图片描述 / 图表数据，不是原书文字，不收
@@ -222,7 +236,7 @@ function convert(
       : para(lines(caption, foot));
   }
   if (type === 'code' || type === 'algorithm') {
-    const code = stripFence(str(row.code_body) || str(row.text));
+    const code = stripFence(str(row.code_body) || textOf(row));
     return [
       ...para(lines(row.code_caption)),
       ...(code.trim() ? [block('code', code)] : []),
@@ -230,9 +244,9 @@ function convert(
     ];
   }
   if (type === 'list' || type === 'list_item') {
-    const values = Array.isArray(row.list_items) ? row.list_items : [row.text];
+    const values = Array.isArray(row.list_items) ? row.list_items : [row];
     return values
-      .map(v => (str(v) || str(object(v)?.text)).trim())
+      .map(v => textOf(v).trim())
       .filter(Boolean)
       .map(t => {
         const li = listItem(t);
@@ -240,7 +254,7 @@ function convert(
       });
   }
   if (AS_PARAGRAPH.has(type)) {
-    return para(str(row.text).trim());
+    return para(textOf(row).trim());
   }
   n.unknown.add(type || '无类型');
   return [];
@@ -255,10 +269,12 @@ function convert(
  * （page = pageFrom + page_idx）；否则按原书页码算（page = page_idx + 1）。planParts 按 200 页切，
  * 第 2 片起原书页码至少是 200，片内页码最多 199，两种情况不会混。算出来落在片外的页另外给警告。
  */
+export interface PageHeader { page: number; text: string }
+
 export function adaptContentList(
   json: unknown,
   o: { pageFrom: number; pageTo: number; imagePrefix: string },
-): { items: RawItem[]; warnings: string[] } {
+): { items: RawItem[]; warnings: string[]; headers: PageHeader[] } {
   if (
     !Number.isSafeInteger(o.pageFrom) ||
     !Number.isSafeInteger(o.pageTo) ||
@@ -309,8 +325,39 @@ export function adaptContentList(
     items.push(...out);
   }
 
+  // 只补有检测区域却没有独立内容的页（也可能被跨页合并）；不将它直接归因为 OCR 失败。
+  const present = new Set(items.map(item => item.page));
+  const gaps: number[] = [];
+  const headers: PageHeader[] = [];
+  for (const { row, idx } of rows) {
+    if (!row || idx === undefined) continue;
+    const page = pageOf(idx);
+    if (page < o.pageFrom || page > o.pageTo) continue;
+    const type = str(row.type).toLowerCase();
+    const text = textOf(row).trim();
+    if (['header', 'page_header'].includes(type) && text) headers.push({ page, text });
+    if (present.has(page) || ['page_number', 'page_num', 'page-number', 'footer', 'page_footer', 'discarded', 'phonetic'].includes(type)) continue;
+    const bbox = Array.isArray(row.bbox) && row.bbox.length === 4 && row.bbox.every(v => typeof v === 'number' && Number.isFinite(v)) ? row.bbox as number[] : null;
+    if (!text && !bbox) continue;
+    // content_list 的 bbox 使用 0–1000（部分版本是 0–1）；全画布空文本是空白页占位符。
+    const scale = bbox && Math.max(...bbox) > 1 ? 1000 : 1;
+    if (type === 'text' && !text && bbox && bbox[0] === 0 && bbox[1] === 0 && bbox[2] >= scale * 0.995 && bbox[3] >= scale * 0.995) continue;
+    items.push({ kind: 'block', type: 'img', text: '此页未生成独立的可读内容。', page, sourcePage: true });
+    gaps.push(page);
+    present.add(page);
+  }
+  if (gaps.length) {
+    let sortPage = o.pageFrom;
+    const sorted = items.map(item => {
+      sortPage = item.page ?? sortPage;
+      return { item, page: sortPage };
+    }).sort((a, b) => a.page - b.page);
+    items.splice(0, items.length, ...sorted.map(value => value.item));
+  }
+
   const at = '第 ' + o.pageFrom + '–' + o.pageTo + ' 页：';
   const warnings: string[] = [];
+  if (gaps.length) warnings.push('第 ' + gaps.join('、') + ' 页没有独立的可读内容，请核对原页（可能存在跨页合并）。');
   if (!items.length) {
     warnings.push(at + '没有解析出内容，扫描版 PDF 可以打开 OCR 重新解析');
   }
@@ -329,7 +376,7 @@ export function adaptContentList(
   if (n.unknown.size) {
     warnings.push(at + '跳过了不认识的内容类型：' + [...n.unknown].join('、'));
   }
-  return { items, warnings };
+  return { items, warnings, headers };
 }
 
 /** 各片的结果按片号顺序接起来（每片内部已按页排好）。 */
