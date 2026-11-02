@@ -9,7 +9,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 ## QuantWise
 
-当前正式版 **v1.1.3**：修复中文、空格和长文件名导致的书籍导入失败，保留原书名；包含 v1.1.2 的本地 PDF 原页查看、阅读排版和书架状态更新。见 [发布说明](docs/releases/v1.1.3.md)。
+当前正式版 **v1.1.4**：修复 PDF 上传中断后一直停在“排队中 / 上传中”；恢复时核对云端并补传未收到的分片，区分上传、排队和解析状态。包含此前的书籍导入与阅读修复。见 [发布说明](docs/releases/v1.1.4.md)。
 
 桌面名称、启动页、通知、iOS 工程和原型已统一命名。Android 包名 `com.quantwise`、数据库与服务配置保持兼容，可直接覆盖 v1.0.0 及更早版本，保留已有数据。
 
@@ -24,7 +24,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 内置入门体验无需网络或 AI Key。自由问答需要自己的 AI 服务（「我的 → 供应商与模型」）；导入 PDF 时需要 MinerU Token（「我的 → 解析服务（MinerU）」）。
 
-已发布安装包：[下载 v1.1.3 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.1.3/QuantWise-v1.1.3-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
+已发布安装包：[下载 v1.1.4 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.1.4/QuantWise-v1.1.4-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
 
 开发：和下面 AShareSim 的一样（`npm run check`、`npm run android`）。`npm install` 会把离线 MathJax 复制进 `android/app/src/main/assets/math/`。没有 AI Key 时可以在电脑上运行 `node scripts/mock-ai.cjs`，再在调试版「我的 → 调试页 → 接本地模拟 AI」，用固定脚本走听讲流程。
 
