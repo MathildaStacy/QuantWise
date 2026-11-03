@@ -135,7 +135,7 @@ test('卡片里点图：十字线画在卡片里，图下写当天读数（收�
   });
   const picked = text();
   expect(picked).not.toContain('点一下或按住拖动，看每一天的数');
-  const line = /"(2026-\d\d-\d\d) 收盘 ([\d.]+)（当日 [+-]?[\d.]+%） · 20 日动量 [^"]+"/.exec(picked);
+  const line = /"(2026-\d\d-\d\d) 收盘 ([\d.]+)（当日 [+-]?[\d.]+%(?:，较前收 [+-]?[\d.]+%)?） · 20 日动量 [^"]+"/.exec(picked);
   expect(line).not.toBeNull();
   const i = c.dates.indexOf(line![1]);
   expect(line![2]).toBe(c.close[i].toFixed(2));
@@ -147,10 +147,34 @@ test('卡片里点图：十字线画在卡片里，图下写当天读数（收�
   expect(picked).toContain('"' + fmtSub('mom20', c.sub!.values[i]!) + '"');
   // 松手了：图顶不浮读数牌（当日涨跌只在图下的读数里）
   expect(picked).not.toContain('"' + dayChange(c, i) + '"');
+  // 不在讲解里（没有 onAsk）时不出「问这一天」
+  expect(tree.root.findAll(n => n.props.accessibilityLabel === '就这一天提问')).toHaveLength(0);
   const close = tree.root.findAll(n => n.props.accessibilityLabel === '收起这一天的读数' && typeof n.props.onPress === 'function')[0];
   await act(async () => close.props.onPress());
   expect(text()).toContain('点一下或按住拖动，看每一天的数');
   expect(text().split(badge).length).toBe(withBadge - 1);
+  await act(async () => tree.unmount());
+});
+
+test('讲解里的卡片：点中一天后「问这一天」带上图名和读数；「怎么看」展开读图说明', async () => {
+  const c = priceChart({ code: 'sz300750', name: '宁德时代', bars: barsOf('sz300750'), sub: 'mom20', focus: SEP }).chart as PriceChart;
+  const ask = jest.fn();
+  const { tree } = await mount(<ChartCard data={c} onAsk={ask} />);
+  const text = () => JSON.stringify(tree.toJSON());
+  const button = (label: string) => tree.root.findAll(n => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function')[0];
+  expect(button('就这一天提问')).toBeUndefined();
+  const { inner } = layers(tree);
+  await act(async () => {
+    inner.props.onResponderGrant(at(200));
+    inner.props.onResponderRelease(at(200));
+  });
+  await act(async () => button('就这一天提问').props.onPress());
+  expect(ask).toHaveBeenCalledTimes(1);
+  expect(ask.mock.calls[0][0]).toMatch(/^看图中这一天：宁德时代 · 20 日动量，2026-\d\d-\d\d 收盘 [\d.]+（当日 .+。$/);
+  expect(text()).not.toContain('下面的柱子是 20 日动量');
+  await act(async () => button('怎么看这张图').props.onPress());
+  expect(text()).toContain('下面的柱子是 20 日动量');
+  expect(text()).toContain('黄色区间是讲解里说到的那段');
   await act(async () => tree.unmount());
 });
 

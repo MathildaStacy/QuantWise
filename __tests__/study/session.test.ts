@@ -115,6 +115,8 @@ test('伴读一节：请求结构、真实行情图、岔路、因子检验、�
   await askStudy(core, quickAsk(s(), 'real'));
   const plot = toolUis().find(t => t.name === 'plot_chart')!;
   expect(plot.charts?.[0]).toMatchObject({ kind: 'price', code: 'sz300750' });
+  // 从原文某一段发起的真实行情举例，和快捷按钮一样要求画图并标出那段行情
+  expect(quickAsk(s(), 'realBlock', s().blocks[0]).question).toContain('用 plot_chart 画图，讲到哪段行情就用 focus 标出那段');
   expect(sent[sent.length - 1].messages.some((m: any) => JSON.stringify(m).includes('20 日动量：最高'))).toBe(true);
 
   // 岔路：读 4.2 之后能引用 4.2，没读过的 5.1 不行；回到主线折叠并记进 4.2 的笔记

@@ -346,6 +346,8 @@ export interface StudyAsk {
   pinSeq?: number;
   /** 实验快照解读只能解释已有数据，不开放重新计算的工具。 */
   snapshot?: boolean;
+  /** 从读书模式某一段发起的：对话里在问题上方显示这一段。 */
+  source?: NonNullable<StoredMessage['ui']>['studySource'];
 }
 
 export function quickAsk(s: StudySession, kind: QuickKind, block?: BookBlock): StudyAsk {
@@ -361,6 +363,7 @@ export function quickAsk(s: StudySession, kind: QuickKind, block?: BookBlock): S
     step: q.step,
     skip: kind === 'skip' ? s.state.step + 1 : undefined,
     pinSeq: kind === 'explainBlock' ? block?.seq : undefined,
+    ...(block ? { source: { sectionId: s.section.id, no: block.no, seq: block.seq, label: citeLabel(s.section, block), text: block.text.slice(0, 320) } } : {}),
   };
 }
 
@@ -457,7 +460,7 @@ export async function askStudy(core: AppCore, a: StudyAsk): Promise<boolean> {
     (results.length ? '\n<action_results>\n' + results.join('\n') + '\n</action_results>' : '');
   const userMsg = await aiRepo.addMessage(
     core.db,
-    { threadId, role: 'user', parts: [{ t: 'text', text: ctx }, { t: 'text', text: a.question.trim() }], ui: { question: a.label.trim(), ...(divider ? { divider } : {}) } },
+    { threadId, role: 'user', parts: [{ t: 'text', text: ctx }, { t: 'text', text: a.question.trim() }], ui: { question: a.label.trim(), ...(a.source ? { studySource: a.source } : {}), ...(divider ? { divider } : {}) } },
     now,
   );
   await aiRepo.updateThread(core.db, threadId, { config: cfg, lastConfig: cfg }, now);

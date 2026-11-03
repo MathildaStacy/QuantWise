@@ -41,6 +41,7 @@ import * as bookRepo from '../../src/data/bookRepo';
 import { BlockInline } from '../../src/ui/components/BookBlock';
 import { MathView } from '../../src/ui/math/MathView';
 import { ShelfView } from '../../src/ui/screens/ShelfView';
+import { ChartCard } from '../../src/ui/charts/ChartCard';
 import { importMarkdownText } from '../../src/study/library';
 import { loadTranslations } from '../../src/data/translationRepo';
 import { secLabel } from '../../src/book/book';
@@ -230,6 +231,15 @@ test('相邻小节连续阅读保留中文对照，打开步骤面板不请求 A
     expect((await loadReadingState(core.db, bookId, second.id)).translation).toBe(true);
     await r.press('上一节：' + secLabel(first));
     expect(useStudy.getState().s?.section.id).toBe(first.id);
+    await r.press('本书目录');
+    expect(r.text()).toContain('共 2 个小节 · 当前 1/2');
+    await r.type('搜索本书目录', 'second');
+    expect(r.text()).toContain('找到 1 个小节');
+    const row = r.tree.root.findAll(n => typeof n.props.onPress === 'function' && n.props.accessibilityLabel === secLabel(second))[0];
+    await act(async () => { row.props.onPress(); await new Promise(done => setTimeout(done, 60)); });
+    expect(useStudy.getState().s?.section.id).toBe(second.id);
+    expect((await loadReadingState(core.db, bookId, second.id)).translation).toBe(true);
+    await r.press('上一节：' + secLabel(first));
     await r.press('AI 讲解');
     await r.press('本节讲解步骤');
     expect(r.text()).toContain('本节讲解步骤');
@@ -306,6 +316,78 @@ test('草稿跨退出重进；失败后问题可重试，进度不提前推进',
   await next.press('重试上次的问题');
   expect(next.text()).toContain('已恢复的回答');
   expect((await loadReadingState(core.db, SAMPLE_BOOK_ID, '3.2')).pending).toBeNull();
+});
+
+test('从原文发起讲解：对话保留引用片段，点开回到原文', async () => {
+  const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '3.1', mode: 'read' });
+  const block = r.tree.root.findAll(n => typeof n.props.onPress === 'function' && String(n.props.accessibilityLabel).startsWith('3.1 ¶2：'))[0];
+  await act(async () => { block.props.onPress(); });
+  replies = [{ model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '这一段讲动量怎么算。' }], usage }];
+  await r.press('解释这一段');
+  expect(r.text()).toContain('这一段讲动量怎么算。');
+  expect(r.text()).toContain('提问原文 · 3.1 ¶2');
+  await r.press('查看提问原文 3.1 ¶2');
+  expect(r.text()).toContain('原文 · 3.1 动量因子 ¶2');
+});
+
+test('发送后清空输入框；没问完的问题留在重试区，可改了再问', async () => {
+  setAiDeps({ fetch: async () => { throw new Error('测试断网'); } });
+  try {
+    const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '3.3', mode: 'lecture' });
+    const input = () => r.tree.root.findAll(n => n.props.accessibilityLabel === '提问草稿' && typeof n.props.onChangeText === 'function')[0];
+    await r.type('提问草稿', '低波动为什么反而收益高？');
+    await r.press('发送');
+    expect(input().props.value).toBe('');
+    expect(r.text()).toContain('低波动为什么反而收益高？');
+    expect(r.text()).toContain('重试上次的问题');
+    await r.press('修改后再问');
+    expect(input().props.value).toBe('低波动为什么反而收益高？');
+    expect(r.text()).not.toContain('重试上次的问题');
+    expect((await loadReadingState(core.db, SAMPLE_BOOK_ID, '3.3')).pending).toBeNull();
+  } finally { setAiDeps({ fetch: fetchMock }); }
+});
+
+test('生成中状态固定在输入框上方，可直接停止，问题不丢', async () => {
+  let stopped = false;
+  setAiDeps({ fetch: (_url, init) => new Promise((_resolve, reject) => { init.signal?.addEventListener('abort', () => { stopped = true; reject(new Error('stop')); }); }) });
+  try {
+    const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '3.4', mode: 'lecture' });
+    await r.type('提问草稿', '换手率高说明什么？');
+    await r.press('发送');
+    expect(r.text()).toContain('停止讲解');
+    expect(r.text()).not.toContain('更多讲解方式');
+    await r.press('停止讲解');
+    expect(stopped).toBe(true);
+    expect(r.text()).not.toContain('停止讲解');
+    expect(r.text()).toContain('换手率高说明什么？');
+    expect(r.text()).toContain('重试上次的问题');
+  } finally { setAiDeps({ fetch: fetchMock }); }
+});
+
+test('没调用过行情工具时「真实行情」标成未核对；画过图之后照常；图上「问这一天」带到输入框', async () => {
+  const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '2.1', mode: 'lecture' });
+  replies = [{ model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '[[real]]茅台去年涨了 30%。[[/real]]' }], usage }];
+  await r.type('提问草稿', '横截面是什么意思？');
+  await r.press('发送');
+  expect(r.text()).toContain('行情未核对');
+  expect(r.text()).toContain('没有经过行情工具计算');
+  replies = [
+    { model: 'm', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'p21', name: 'plot_chart', input: { code: 'sz300750', focus: [{ from: '2026-09', to: '2026-09' }] } }], usage },
+    { model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '[[real]]图中黄色区间是 9 月。[[/real]]' }], usage },
+  ];
+  await r.type('提问草稿', '用宁德时代画一下');
+  await r.press('发送');
+  // 新的一问有工具数据撑着；之前那一问仍标未核对
+  expect(r.text().split('没有经过行情工具计算').length - 1).toBe(1);
+  expect(r.text()).toContain('图中黄色区间是 9 月。');
+  const card = r.tree.root.findAll(n => n.type === ChartCard)[0];
+  await act(async () => { card.props.onAsk('看图中这一天：宁德时代，2026-09-15 收盘 316.36。'); });
+  const input = r.tree.root.findAll(n => n.props.accessibilityLabel === '提问草稿' && typeof n.props.onChangeText === 'function')[0];
+  expect(input.props.value).toBe('看图中这一天：宁德时代，2026-09-15 收盘 316.36。');
+  await r.type('提问草稿', input.props.value + '为什么这天跌这么多？');
+  await act(async () => { card.props.onAsk('看图中这一天：宁德时代，2026-09-16 收盘 300.00。'); });
+  expect(r.tree.root.findAll(n => n.props.accessibilityLabel === '提问草稿' && typeof n.props.onChangeText === 'function')[0].props.value)
+    .toBe('看图中这一天：宁德时代，2026-09-16 收盘 300.00。为什么这天跌这么多？');
 });
 
 test('离线入门能完成检查题，保存小结后停在本节并展示真实复习日期', async () => {
@@ -424,6 +506,9 @@ test('读书对照翻译：显式请求、错误重试、原文切换和离线�
     expect(fetcher).not.toHaveBeenCalled();
     expect(r.text()).toContain('翻译本节');
     await r.press('翻译本节');
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(r.text()).toContain('待译 2 段');
+    await r.press('开始翻译 2 段');
     expect(r.text()).toContain('收益具有不确定性。');
     expect(r.text()).toContain('测试断网');
     expect(r.text()).toContain('重试翻译');
@@ -461,6 +546,7 @@ test('关闭对照即停止：迟到响应不显示、不缓存，保留继续�
     const r = await render('Study', StudyScreen, { bookId, sectionId: secs[0].id, mode: 'read' });
     await r.press('中文对照');
     await r.press('翻译本节');
+    await r.press('开始翻译 1 段');
     expect(r.text()).toContain('停止翻译');
     await r.press('原文');
     expect(stopped).toBe(true);

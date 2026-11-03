@@ -27,7 +27,7 @@ import { useCore } from '../hooks';
 import type { RootScreenProps, RootStackParamList } from '../navigation/types';
 import { rc } from '../readTheme';
 import { toast } from '../toast';
-import { turnsOf } from './StudyThread';
+import { realChecked, turnsOf } from './StudyThread';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -272,6 +272,8 @@ export function StudyRoundScreen({ route }: RootScreenProps<'StudyRound'>) {
       if (thread) setD({ title: thread.title, createdAt: thread.createdAt, messages, sections });
     })().catch(() => undefined);
   }, [core, threadId, bookId]));
+  const turns = useMemo(() => (d ? turnsOf(d.messages) : []), [d]);
+  const checked = useMemo(() => realChecked(turns), [turns]);
   const check: CiteCheck = useCallback((sec: string, no: number) => {
     const s = d?.sections.find(x => x.id === sec);
     return s ? citeLabel(s, { no, page: null }) : null;
@@ -291,7 +293,7 @@ export function StudyRoundScreen({ route }: RootScreenProps<'StudyRound'>) {
             <Button title="回到当前讲解" small onPress={() => nav.navigate('Study', { bookId, sectionId, mode: 'lecture' })} />
           </View>
         ) : null}
-        {d ? turnsOf(d.messages).map(t => (
+        {turns.map(t => (
           <View key={t.first}>
             {t.question ? <View style={st.uRow}><Text style={st.u}>{t.question}</Text></View> : null}
             {t.tools.map(x => <Text key={x.id} style={st.meta}>↳ {x.label}</Text>)}
@@ -300,10 +302,10 @@ export function StudyRoundScreen({ route }: RootScreenProps<'StudyRound'>) {
                 return x.charts.map((c, i) => <ChartCard key={'c' + x.id + ':' + i} data={c} />);
               }
               const text = x.m.parts.map(p => (p.t === 'text' ? p.text : '')).join('');
-              return text.trim() ? <StudyText key={x.m.id} text={text} check={check} onLink={onLink} /> : null;
+              return text.trim() ? <StudyText key={x.m.id} text={text} check={check} onLink={onLink} realChecked={!!checked.get(t.first)} /> : null;
             })}
           </View>
-        )) : null}
+        ))}
       </LockScroll>
     </View>
   );

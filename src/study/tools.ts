@@ -103,6 +103,9 @@ export const STUDY_TOOL_DEFS: ToolDef[] = [
 
 const STUDY_TOOL_NAMES = new Set(STUDY_TOOL_DEFS.map(t => t.name));
 
+/** 能拿到真实行情、因子数据的工具：讲解里的「真实行情」要有它们算出的数撑着。 */
+export const MARKET_TOOLS: ReadonlySet<string> = new Set([...QUANT_TOOL_DEFS.map(t => t.name), ...MARKET_READ_TOOLS]);
+
 export interface StudyToolEnv {
   core: AppCore;
   threadId: number;
