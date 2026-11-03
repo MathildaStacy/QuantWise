@@ -9,13 +9,13 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 ## QuantWise
 
-当前正式版 **v1.5.0**：改进电子书正文与中英对照排版，新增字体、字号和行距设置；扫描书里的折线图、柱状图、流程图和图片表格可用 AI 识别后清晰重绘。见 [发布说明](docs/releases/v1.5.0.md)。
+当前正式版 **v1.6.0**：AI 讲解里的行情图有了价格和月份坐标轴，讲到哪段行情就用黄色标出那段并写明区间涨跌；卡片里按住拖动看每一天，图滚出屏幕时小图钉在讲解页顶部。见 [发布说明](docs/releases/v1.6.0.md)。
 
 桌面名称、启动页、通知、iOS 工程和原型已统一命名。Android 包名 `com.quantwise`、数据库与服务配置保持兼容，可直接覆盖 v1.0.0 及更早版本，保留已有数据。
 
 - **书架和导入**：内置示例教材《因子投资入门》（5 章 19 节，自己写的短教材）；导入 Markdown、EPUB（本机解析）和 PDF（MinerU 精准解析，超过 200 页按页码范围自动分片，App 被杀后接着轮询）。
 - **听讲**：每节在本机切成 1–5 步，点「开始讲」才请求 AI。讲解里的引用点开看原文；AI 自己补的推导、编的例子、工具算出的真实数据分别用不同底色标出；问到别的小节时走岔路，回到主线折叠成一行并记进那一节的笔记。
-- **真实行情举例**：AI 调用 `plot_chart`（前复权日 K、均线、布林带、动量 / 波动 / 回撤 / RSI 副图、对比图）、`get_factor_values`、`factor_test`（分组回测 + Rank IC），图存在消息里，能全屏看十字线读数。结论按 t 值和期数说。
+- **真实行情举例**：AI 调用 `plot_chart`（前复权日 K、均线、布林带、动量 / 波动 / 回撤 / RSI 副图、对比图）、`get_factor_values`、`factor_test`（分组回测 + Rank IC），图存在消息里，排在讲它的文字前面。图有整数价格刻度和月份横轴；讲到某段行情时黄色标出那段，前收、末日收盘、区间涨跌和副图两端值写在图上，和 AI 拿到的摘要同一份数。卡片里点一下或按住拖动看每一天，图滚出屏幕时小图钉在讲解页顶部，全屏有数据表。结论按 t 值和期数说。
 - **读书模式**：宋体 / 黑体、16–22 号及两档行距可选，标题、正文和图注有独立层次；保留合并表格、图片比例、代码与公式。讲过的段落和当前这一步有标记；段落菜单支持解释、从这里开始讲、用真实行情举例和高亮，图表操作有独立入口。
 - **扫描图表重绘**：图片下点「AI 清晰重绘」，由本节的图片模型识别后显示原生图表、流程图或文字表格；支持放大、原图对照、识别说明与本机缓存。曲线标明读图估值，无法可靠识别时保留原图。
 - **讲解设置与记录**：讲解输入区可选模型、思考强度和联网搜索，按小节保存，和 AI 助手分开；改设置前提示要重建多少缓存，可以改回。网页资料单独标出并附来源。导航栏「讲解记录」按小节列出问过的内容，可搜索、按目录看，能新开一轮（旧的一轮只读保留）。聊得长了自动把较早的讲解整理成摘要。
@@ -28,7 +28,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 内置入门体验无需网络或 AI Key。自由问答需要自己的 AI 服务（「我的 → 供应商与模型」）；导入 PDF 时需要 MinerU Token（「我的 → 解析服务（MinerU）」）。
 
-已发布安装包：[下载 v1.5.0 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.5.0/QuantWise-v1.5.0-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
+已发布安装包：[下载 v1.6.0 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.6.0/QuantWise-v1.6.0-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
 
 开发：和下面 AShareSim 的一样（`npm run check`、`npm run android`）。`npm install` 会把离线 MathJax 复制进 `android/app/src/main/assets/math/`。没有 AI Key 时可以在电脑上运行 `node scripts/mock-ai.cjs`，再在调试版「我的 → 调试页 → 接本地模拟 AI」，用固定脚本走听讲流程。
 
