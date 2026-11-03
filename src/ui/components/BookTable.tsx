@@ -15,16 +15,23 @@ export function BookTable({ text, html }: { text: string; html: string | null })
   const measureKey = [text, html, width, fontScale, caption.fontSize, caption.lineHeight, caption.fontFamily].join('|');
   const [measurements, setMeasurements] = useState<{ key: string; cells: Record<number, number> }>({ key: '', cells: {} });
   if (!table) return <BlockInline text={text} />;
-  const column = Math.max(width / table.columns, (caption.fontSize! * 6 + 24) * fontScale);
+  const columns = Array<number>(table.columns).fill(Math.max(width / table.columns, (caption.fontSize! * 6 + 24) * fontScale));
+  // Keep financial values on one line; a decimal tail on the next line looks like a different value.
+  for (const cell of table.cells) {
+    if (cell.colSpan === 1 && /^[-+−]?[\d,.]+[%％‰]?$/.test(cell.text)) {
+      columns[cell.col] = Math.max(columns[cell.col], (cell.text.length * caption.fontSize! * 0.65 + 24) * fontScale);
+    }
+  }
+  const left = (col: number) => columns.slice(0, col).reduce((a, b) => a + b, 0);
   const heights = tableRowHeights(table, measurements.key === measureKey ? measurements.cells : {}, caption.lineHeight! * fontScale + 20);
   const top = (row: number) => heights.slice(0, row).reduce((a, b) => a + b, 0);
   return <View onLayout={e => setWidth(e.nativeEvent.layout.width)} style={s.wrap}>
     {notes.caption ? <BlockInline text={notes.caption} style={caption} /> : null}
     <ScrollView horizontal nestedScrollEnabled accessibilityLabel="表格，可横向滚动">
-      <View style={[s.table, { width: column * table.columns, height: top(table.rows) }]}>
+      <View style={[s.table, { width: left(table.columns), height: top(table.rows) }]}>
         {table.cells.map((cell, i) => <View key={i} style={[s.cell, cell.header && s.header, {
-          left: cell.col * column, top: top(cell.row), width: cell.colSpan * column,
-          height: top(cell.row + cell.rowSpan) - top(cell.row),
+          left: left(cell.col), top: top(cell.row), width: left(cell.col + cell.colSpan) - left(cell.col),
+          minHeight: top(cell.row + cell.rowSpan) - top(cell.row),
         }]}>
           <View key={measureKey} style={s.words} onLayout={e => {
             const height = Math.ceil(e.nativeEvent.layout.height);

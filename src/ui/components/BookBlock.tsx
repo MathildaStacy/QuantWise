@@ -1,8 +1,8 @@
 /**
  * 原书内容块：跟随阅读字号，表格保留合并单元格，插图按原始比例显示。
  */
-import { memo, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { memo } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { BookBlock } from '../../book/types';
 import { bookListItem } from '../../book/presentation';
 import { MathView } from '../math/MathView';
@@ -10,16 +10,8 @@ import { rc } from '../readTheme';
 import { useBookTypography } from '../readerTypography';
 import { BlockInline } from './BookInline';
 import { BookTable } from './BookTable';
+import { ScannedFigure } from './ScannedFigure';
 export { BlockInline } from './BookInline';
-
-/** 插图和原页按实际比例展开，引用预览保留紧凑高度。 */
-function BookImage({ uri, label, sourcePage, compact }: { uri: string; label: string; sourcePage: boolean; compact: boolean }) {
-  const [ratio, setRatio] = useState(sourcePage ? 0.707 : 1.5);
-  return <Image source={{ uri }} accessibilityLabel={label} resizeMode="contain" style={[s.image, compact ? s.imgSmall : { aspectRatio: ratio }]} onLoad={({ nativeEvent }) => {
-    const { width, height } = nativeEvent.source;
-    if (width > 0 && height > 0) setRatio(width / height);
-  }} />;
-}
 
 export const BookBlockView = memo(function BlockView({
   b,
@@ -51,10 +43,11 @@ export const BookBlockView = memo(function BlockView({
     case 'img':
       return (
         <View style={s.fig}>
-          {b.image && dir ? <BookImage
+          {b.image && dir ? <ScannedFigure
             key={b.image}
+            b={b}
             uri={(/^\w+:/.test(b.image) ? '' : 'file://' + dir.replace(/\/$/, '') + '/') + b.image}
-            label={b.text || '书中插图'} sourcePage={b.image.startsWith('source-pages/')} compact={compact}
+            compact={compact}
           /> : null}
           {b.text ? <BlockInline text={b.text} style={caption} /> : null}
         </View>
@@ -72,6 +65,4 @@ const s = StyleSheet.create({
   liText: { flex: 1 },
   pre: { backgroundColor: rc.soft, borderRadius: 4, padding: 14 },
   fig: { gap: 12, marginVertical: 8 },
-  image: { width: '100%' },
-  imgSmall: { height: 140 },
 });

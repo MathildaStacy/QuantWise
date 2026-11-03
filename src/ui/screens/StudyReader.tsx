@@ -24,6 +24,8 @@ import { color } from '../theme';
 import { DEFAULT_READER, loadReaderPreferences, saveReaderPreferences, type ReaderPreferences } from '../../study/readerPreferences';
 import { ReaderAppearance, useBookTypography } from '../readerTypography';
 import { ReaderSettings } from '../components/ReaderSettings';
+import { ReaderFigures } from '../components/ScannedFigure';
+import { redrawFigure } from '../../study/redrawFigure';
 import { toast } from '../toast';
 
 type StudyReaderProps = {
@@ -166,6 +168,7 @@ function ReaderBody({
           </View>
           {tr.error ? <Text accessibilityRole="alert" style={st.translationError}>{tr.error}</Text> : null}
       </View> : null}
+      <ReaderFigures.Provider value={{ book: s.book, blocks: s.blocks, active, onConfigure, redraw: (b, signal) => redrawFigure(core, s.book, s.section, b, s.blocks, signal, undefined, true) }}>
       <ScrollView ref={scroll} contentContainerStyle={st.page} scrollEventThrottle={200}
         maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
         onScrollBeginDrag={() => { userMoved.current = true; restored.current = true; reflowAnchor.current = null; }}
@@ -179,6 +182,9 @@ function ReaderBody({
         </View>
         {s.blocks.map(b => {
           const isCur = p.taught >= 0 && cur && b.no >= cur.from && b.no <= cur.to;
+          // Keep horizontal figure gestures and text selection outside a paragraph press target.
+          const figure = b.type === 'img' || b.type === 'table';
+          const Frame = figure ? View : Pressable;
           return (
             <View
               key={b.seq}
@@ -187,17 +193,20 @@ function ReaderBody({
                 restore();
               }}
             >
-              <Pressable
-                onPress={() => setMenu(b)}
+              <Frame
+                onPress={figure ? undefined : () => setMenu(b)}
                 style={[st.blk, b.no <= taughtTo && st.taught, isCur && st.cur, hl.has(b.seq) && st.hl, b.seq === focusSeq && st.focus]}
-                accessibilityRole="button"
-                accessibilityLabel={citeLabel(s.section, b) + '：' + (bilingual && tr.entries[b.seq]
+                accessibilityRole={figure ? undefined : 'button'}
+                accessibilityLabel={figure ? undefined : citeLabel(s.section, b) + '：' + (bilingual && tr.entries[b.seq]
                   ? tr.entries[b.seq].pairs.map(pair => '原文：' + pair.source + '译文：' + pair.translation).join('\n')
                   : b.text)}
               >
                 {bilingual && tr.entries[b.seq] ? <TranslatedBlock b={b} pairs={tr.entries[b.seq].pairs} dir={s.book.body.dir} /> : <BookBlockView b={b} dir={s.book.body.dir} />}
                 {bilingual && tr.current === b.seq ? <Text style={st.translating}>正在翻译这一段…</Text> : null}
-              </Pressable>
+                {figure ? <Pressable style={st.figureAction} accessibilityRole="button" accessibilityLabel={citeLabel(s.section, b) + ' 图表操作'} onPress={() => setMenu(b)}>
+                  <Text style={st.toolText}>图表操作</Text>
+                </Pressable> : null}
+              </Frame>
               {pins(b.seq).map(m => (
                 <Text key={m.id} style={st.pin}>已问：{m.text}</Text>
               ))}
@@ -208,6 +217,7 @@ function ReaderBody({
           <Text style={st.finishT}>读完这一节</Text>
         </Pressable>
       </ScrollView>
+      </ReaderFigures.Provider>
       <AiSheet title={menu ? citeLabel(s.section, menu) : ''} visible={!!menu} onClose={() => setMenu(null)}>
         {menu ? (
           <View>
@@ -252,6 +262,7 @@ function ReaderBody({
 }
 
 const st = StyleSheet.create({
+  figureAction: { minHeight: 48, justifyContent: 'center', alignSelf: 'flex-start' },
   preparing: { padding: 20 },
   toolbar: { minHeight: 48, paddingHorizontal: 20, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   tool: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4 },
