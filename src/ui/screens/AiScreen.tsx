@@ -26,7 +26,6 @@ import {
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -103,6 +102,7 @@ import {
   type BriefDue,
 } from '../../ai/flows';
 import { ChartCard } from '../charts/ChartCard';
+import { LockScroll } from '../charts/scrub';
 import { ChatProcess, conversationTurns } from '../components/ChatProcess';
 import { Button } from '../components/ui';
 import { useCore } from '../hooks';
@@ -513,7 +513,7 @@ export function AiScreen() {
           </Pressable>
         </View>
       </View>
-      <ScrollView
+      <LockScroll
         ref={scroll}
         style={s.list}
         contentContainerStyle={s.listPad}
@@ -729,7 +729,7 @@ export function AiScreen() {
           <ChatProcess messages={[]} busy={busy} onLink={onLink} />
         ) : null}
         {error ? <Text style={s.error}>{error}</Text> : null}
-      </ScrollView>
+      </LockScroll>
       <View style={[s.bottom, { paddingBottom: bottomInset }]}>
         {!atEnd && live.length ? (
           <Pressable

@@ -147,7 +147,7 @@ describe('价格图和对比图', () => {
         { code: 'sh600036', name: '招商银行', bars: barsOf('sh600036') },
         { code: 'sh510300', name: '沪深300ETF', bars: barsOf('sh510300') },
       ],
-      120,
+      { n: 120 },
     );
     expect(chart.kind === 'compare' && chart.series.map(s => s.values[0])).toEqual([100, 100]);
     expect(chart.kind === 'compare' && chart.dates).toHaveLength(120);

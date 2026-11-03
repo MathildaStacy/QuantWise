@@ -62,16 +62,43 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
   {
     name: 'plot_chart',
     description:
-      '在对话里画一张真实行情图（前复权日 K）：价格 + 可选均线、布林带、副图（mom20 / mom60 20、60 日动量，vol20 20 日年化波动，dd 回撤，rsi14，volume 成交量），可标出副图的最高最低点；compare 给 1–4 只代码时改成起点 = 100 的对比图。讲概念举例时用，回答里的数字以返回的摘要为准。',
+      '在对话里画一张真实行情图（前复权日 K）：价格 + 可选均线、布林带、副图（mom20 / mom60 20、60 日动量，vol20 20 日年化波动，dd 回撤，rsi14，volume 成交量），可标出副图的最高最低点；compare 给 1–4 只代码时改成起点 = 100 的对比图。讲到某一段行情（「9 月」「这波上涨」）时用 focus 标出那段：图上高亮、自动缩放到区间附近，区间两端（前收那天和最后一天）的收盘和副图值自动标在图上，摘要给出区间涨跌、最高最低和副图起止值；区间里另外要讲的某一天用 points；takeaway 写一句看点。讲概念举例时用，回答里的数字以返回的摘要为准。',
     schema: obj(
       {
         code: CODE,
-        bars: { type: 'integer', description: '画多少根，20–750，默认 250' },
+        bars: { type: 'integer', description: '画多少根，20–750；不给时默认 250，给了 focus 时按区间自动取（区间前后留出对比）' },
+        end: { type: 'string', description: 'YYYY-MM-DD，图的最后一天（默认最新）；讲过去某段行情、又不想标区间时用' },
         ma: { type: 'integer', description: '均线天数，5–120' },
         band: { type: 'boolean', description: '画 20 日布林带' },
         sub: { type: 'string', enum: Object.keys(SUB_NAME) },
         marks: { type: 'boolean', description: '标出副图（没有副图时是价格）的最高、最低点' },
-        compare: { type: 'array', items: { type: 'string' }, description: '一起对比的代码或名称（最多 4 只）' },
+        focus: {
+          type: 'array',
+          maxItems: 2,
+          items: obj(
+            {
+              from: { type: 'string', description: 'YYYY-MM-DD；整月写 YYYY-MM' },
+              to: { type: 'string', description: 'YYYY-MM-DD；整月写 YYYY-MM（例如 9 月：from 和 to 都写 2026-09）' },
+              label: { type: 'string', description: '区间名，6 字以内，例如「9 月」「急跌段」；不给按日期起名' },
+            },
+            ['from', 'to'],
+          ),
+          description: '要讲的时间段，最多 2 段（例如「8 月 vs 9 月」）：区间涨跌 = 区间最后一天收盘 ÷ 区间前一个交易日收盘 − 1',
+        },
+        points: {
+          type: 'array',
+          maxItems: 3,
+          items: obj(
+            {
+              date: { type: 'string', description: 'YYYY-MM-DD' },
+              label: { type: 'string', description: '8 字以内，写事件（「放量下跌」「政策发布」），不写数字；日期 App 会加' },
+            },
+            ['date', 'label'],
+          ),
+          description: '在收盘线上标出某几天，最多 3 个；摘要给出那天的收盘和当日涨跌',
+        },
+        takeaway: { type: 'string', description: '看点：一句话告诉读者这张图看哪里（24 字以内，不写价格和涨跌幅，这些图上会算好），显示在图的上方' },
+        compare: { type: 'array', items: { type: 'string' }, description: '一起对比的代码或名称（最多 4 只）；对比图也能用 focus、takeaway' },
       },
       ['code'],
     ),

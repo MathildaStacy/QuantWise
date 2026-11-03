@@ -1,17 +1,20 @@
 /**
- * 听讲的对话（QUANTWISE_DESIGN.md §6）：按「一次提问」分组画：你的问题 → 工具步骤 → 讲解 → 图表 → 检查题 / 小结草稿
+ * 听讲的对话（QUANTWISE_DESIGN.md §6）：按「一次提问」分组画：你的问题 → 工具步骤 → 讲解和图表（按消息顺序：
+ * 图画在调用它的地方、讲这张图的文字之前，见 docs/design/ai-lecture-charts.md §4）→ 检查题 / 小结草稿
  * → 网页来源和用量（默认收起）。回到主线后的岔路折叠成一行，正在进行的岔路左侧紫线；较早整理成摘要的部分上方一条说明。
  * 只画，不请求模型。
  */
-import { useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { prettyModel } from '../../ai/models';
 import { addUsage, ZERO_USAGE } from '../../ai/prompt';
 import type { SearchSource, StoredMessage, ToolUi, Usage } from '../../ai/types';
 import { secLabel } from '../../book/book';
+import type { ChartData } from '../../quant/charts';
 import type { CiteCheck } from '../../book/markup';
 import { citeCheck, progressNow, type StudySession } from '../../study/session';
 import { ChartCard } from '../charts/ChartCard';
+import { pinnable, type PinSpot, type TurnInfo } from '../charts/ChartPin';
 import { StudyText } from '../components/StudyText';
 import { rc } from '../readTheme';
 import { usageText } from './AiScreen';
@@ -25,6 +28,8 @@ interface Turn {
   compacted: boolean;
   tools: ToolUi[];
   answers: StoredMessage[];
+  /** 讲解文字和图按消息顺序：工具结果里的图排在它后面那段讲解之前。 */
+  flow: ({ m: StoredMessage } | { id: number; charts: ChartData[] })[];
   /** 检查题和小结草稿要知道在哪条消息上。 */
   cards: { msgId: number; tool: ToolUi }[];
 }
@@ -33,7 +38,7 @@ export function turnsOf(messages: StoredMessage[]): Turn[] {
   const out: Turn[] = [];
   for (const m of messages) {
     if (m.role === 'user' || !out.length) {
-      out.push({ first: m.id, question: m.role === 'user' ? m.ui?.question ?? null : null, divider: m.role === 'user' ? m.ui?.divider : undefined, compacted: m.compacted, tools: [], answers: [], cards: [] });
+      out.push({ first: m.id, question: m.role === 'user' ? m.ui?.question ?? null : null, divider: m.role === 'user' ? m.ui?.divider : undefined, compacted: m.compacted, tools: [], answers: [], flow: [], cards: [] });
       if (m.role === 'user') {
         continue;
       }
@@ -46,14 +51,39 @@ export function turnsOf(messages: StoredMessage[]): Turn[] {
           t.cards.push({ msgId: m.id, tool: x });
         }
       }
+      const charts = (m.ui?.tools ?? []).flatMap(x => x.charts ?? []);
+      if (charts.length) {
+        t.flow.push({ id: m.id, charts });
+      }
     } else {
       t.answers.push(m);
+      t.flow.push({ m });
     }
   }
   return out;
 }
 
 const textOf = (m: StoredMessage) => m.parts.map(p => (p.t === 'text' ? p.text : '')).join('');
+
+/** 每一问的文字（问题 + 讲解）和画了几张图：讲解页决定钉哪张图（ChartPin 的 pinOf）。 */
+export function turnInfo(messages: StoredMessage[]): Map<number, TurnInfo> {
+  return new Map(
+    turnsOf(messages).map(t => [
+      t.first,
+      { text: [t.question ?? '', ...t.answers.map(textOf)].join('\n'), charts: t.flow.reduce((n, x) => n + ('charts' in x ? x.charts.length : 0), 0) },
+    ]),
+  );
+}
+
+type TurnBox = { y: number; height: number };
+
+/** 一问（或折叠起来的岔路）在对话里的位置：量出来报给外面；卸下时（岔路折叠起来）报 null，外面不留过期的位置。 */
+function Slot({ id, report, children }: { id: number; report?: (id: number, box: TurnBox | null) => void; children: ReactElement }) {
+  const ref = useRef(report);
+  ref.current = report;
+  useEffect(() => () => ref.current?.(id, null), [id]);
+  return <View onLayout={e => report?.(id, e.nativeEvent.layout)}>{children}</View>;
+}
 
 export interface ThreadActions {
   onLink: (href: string) => void;
@@ -66,7 +96,14 @@ export interface ThreadActions {
   onSummary?: () => void;
 }
 
-export function StudyThread({ s, busy, a, onTurnLayout }: { s: StudySession; busy: string | null; a: ThreadActions; onTurnLayout?: (id: number, box: { y: number; height: number }) => void }) {
+export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
+  s: StudySession;
+  busy: string | null;
+  a: ThreadActions;
+  onTurnLayout?: (id: number, box: TurnBox | null) => void;
+  /** 价格图和对比图的画线区域在它那一问里的位置（讲解页滚过去之后钉小图用）；图卸下时报 null。折叠的岔路里的图不报。 */
+  onChartBox?: (key: string, spot: PinSpot | null) => void;
+}) {
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const p = progressNow(s);
   // 引用校验只在读过的小节变了时重建，StudyText 才不会每次重画都重新解析
@@ -101,18 +138,17 @@ export function StudyThread({ s, busy, a, onTurnLayout }: { s: StudySession; bus
       continue;
     }
     const detour = !!p.detour && t.first >= p.detour.fromMsg;
-    out.push({ id: t.first, node: <TurnView t={t} detour={detour} a={a} check={check} streaming={!!busy && i === turns.length - 1} /> });
+    out.push({ id: t.first, node: <TurnView t={t} detour={detour} a={a} check={check} streaming={!!busy && i === turns.length - 1} onChartBox={onChartBox} /> });
   }
   return (
     <View>
-      {out.map(({ id, node }) => <View key={id} onLayout={e => onTurnLayout?.(id, e.nativeEvent.layout)}>{node}</View>)}
+      {out.map(({ id, node }) => <Slot key={id} id={id} report={onTurnLayout}>{node}</Slot>)}
       {busy ? <Text style={st.busy}>{busy}</Text> : null}
     </View>
   );
 }
 
-function TurnView({ t, detour, a, check, streaming }: { t: Turn; detour: boolean; a: ThreadActions; check: CiteCheck; streaming: boolean }) {
-  const charts = t.tools.flatMap(x => x.charts ?? []);
+function TurnView({ t, detour, a, check, streaming, onChartBox }: { t: Turn; detour: boolean; a: ThreadActions; check: CiteCheck; streaming: boolean; onChartBox?: (key: string, spot: PinSpot | null) => void }) {
   const offer = t.answers.map(m => m.ui?.searchOffer).find(Boolean);
   return (
     <View style={detour && st.detour}>
@@ -131,7 +167,15 @@ function TurnView({ t, detour, a, check, streaming }: { t: Turn; detour: boolean
           ))}
         </View>
       ) : null}
-      {t.answers.map(m => {
+      {t.flow.map(x => {
+        if ('charts' in x) {
+          return x.charts.map((c, k) => {
+            const key = x.id + ':' + k;
+            const box = onChartBox && pinnable(c) ? (b: { y: number; h: number } | null) => onChartBox(key, b && { turn: t.first, ...b, data: c }) : undefined;
+            return <ChartCard key={'c' + key} data={c} onBox={box} />;
+          });
+        }
+        const m = x.m;
         const text = textOf(m);
         return (
           <View key={m.id}>
@@ -140,9 +184,6 @@ function TurnView({ t, detour, a, check, streaming }: { t: Turn; detour: boolean
           </View>
         );
       })}
-      {charts.map((c, k) => (
-        <ChartCard key={k} data={c} />
-      ))}
       {t.cards.map(({ msgId, tool }) => (tool.quiz ? <Quiz key={tool.id} msgId={msgId} tool={tool} a={a} check={check} /> : <Wrap key={tool.id} tool={tool} a={a} />))}
       {offer && a.onSearch && !streaming ? (
         <Pressable onPress={() => a.onSearch!(offer)} style={st.small} accessibilityRole="button">

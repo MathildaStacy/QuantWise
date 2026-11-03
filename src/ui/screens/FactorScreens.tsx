@@ -4,7 +4,7 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { universeEnv } from '../../ai/tools/quant';
 import { SAMPLE_BOOK_ID } from '../../book/sample';
 import * as quantRepo from '../../data/quantRepo';
@@ -12,9 +12,10 @@ import { runFactorTest, SampleError } from '../../quant/backtest';
 import { chartTitle, factorCharts } from '../../quant/charts';
 import { FACTOR_IDS, FACTORS, type FactorId } from '../../quant/factors';
 import { loadPanel, prepareBars, refreshHs300, universeCodes, UNIVERSE_NAME, type PrepareProgress, type UniverseId } from '../../quant/universe';
-import { ChartCard } from '../charts/ChartCard';
+import { ChartCard, FocusReadout, Takeaway } from '../charts/ChartCard';
 import { QuantChart } from '../charts/QuantChart';
-import { howComputed, pointCount, readout } from '../charts/quantDraw';
+import { LockScroll } from '../charts/scrub';
+import { focusAt, howComputed, pointCount, readout } from '../charts/quantDraw';
 import { Button, Details, NavBar, Note } from '../components/ui';
 import { useAiContext, useCore } from '../hooks';
 import type { RootScreenProps, RootStackParamList } from '../navigation/types';
@@ -143,7 +144,7 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
   return (
     <View style={st.page}>
       <NavBar title="因子实验室" back />
-      <ScrollView contentContainerStyle={st.pad}>
+      <LockScroll contentContainerStyle={st.pad}>
         <View style={st.card}>
           <Text style={st.h}>{f.name}</Text><Text style={st.k}>{UNIVERSE_NAME[cfg.universe]} · 每 {cfg.hold} 日调仓 · {cfg.groups} 组 · 单边成本 {cfg.costBp}bp</Text>
           <Button title={paramsOpen ? '收起参数' : '调整参数'} onPress={() => setParamsOpen(v => !v)} />
@@ -201,7 +202,7 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
             </View>
           </>
         ) : null}
-      </ScrollView>
+      </LockScroll>
     </View>
   );
 }
@@ -213,11 +214,14 @@ export function ChartFullScreen({ route }: RootScreenProps<'ChartFull'>) {
   return (
     <View style={st.page}>
       <NavBar title={chartTitle(c)} back />
-      <ScrollView contentContainerStyle={st.pad}>
+      <LockScroll contentContainerStyle={st.pad}>
         <View style={st.card}>
+          <Takeaway data={c} />
           <QuantChart data={c} full onPick={setI} />
-          <Details title="查看数据表">{Array.from({ length: pointCount(c) }, (_, index) => <Text key={index} selectable style={[st.body, num]}>{readout(c, index)}</Text>)}</Details>
           <Text style={[st.readout, num]}>{i == null ? '在图上按住或拖动，看每一天的数' : readout(c, i)}</Text>
+          <FocusReadout data={c} full />
+          {/* 区间里的行前面一条竖线，和图上的黄色区间对应 */}
+          <Details title="查看数据表">{Array.from({ length: pointCount(c) }, (_, index) => <Text key={index} selectable style={[st.body, num, focusAt(c, index) && st.inFocus]}>{(focusAt(c, index) ? '▍' : '') + readout(c, index, false)}</Text>)}</Details>
         </View>
         <View style={st.card}>
           <Text style={st.h}>怎么算的</Text>
@@ -226,7 +230,7 @@ export function ChartFullScreen({ route }: RootScreenProps<'ChartFull'>) {
           ))}
         </View>
         {c.kind === 'price' ? <Button title={'打开' + c.name + '个股页'} onPress={() => nav.navigate('Stock', { code: c.code, name: c.name })} style={st.btn} /> : null}
-      </ScrollView>
+      </LockScroll>
     </View>
   );
 }
@@ -259,5 +263,6 @@ const st = StyleSheet.create({
   weak: { color: color.ink2 },
   charts: { paddingHorizontal: 10 },
   readout: { fontSize: 12, color: color.ink2, minHeight: 36 },
+  inFocus: { color: rc.focusInk },
   btn: { marginHorizontal: 12 },
 });

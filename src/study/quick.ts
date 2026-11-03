@@ -49,7 +49,7 @@ export function quick(
     case 'example':
       return { kind, label: '举个例子', question: '给' + name(o.step) + '举个例子。' };
     case 'real':
-      return { kind, label: '用真实行情举例', question: '用真实的 A 股行情给' + name(o.step) + '举个例子：用 plot_chart 画图，数字以工具结果为准。' };
+      return { kind, label: '用真实行情举例', question: '用真实的 A 股行情给' + name(o.step) + '举个例子：用 plot_chart 画图，讲到哪段行情就用 focus 标出那段，数字以工具结果为准。' };
     case 'factor':
       return { kind, label: '这个因子在 A 股有效吗？', question: '这一节讲的因子在 A 股有效吗？用 factor_test 在示例池上检验一次，按结果说结论。' };
     case 'quiz':
