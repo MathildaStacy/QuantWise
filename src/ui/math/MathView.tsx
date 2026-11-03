@@ -19,9 +19,11 @@ const mono = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
 export function MathView({
   tex,
   renderer = mathRenderer,
+  fontSize = BODY_SIZE,
 }: {
   tex: string;
   renderer?: MathRenderer;
+  fontSize?: number;
 }) {
   const { fontScale } = useWindowDimensions();
   const [done, setDone] = useState<{
@@ -53,7 +55,7 @@ export function MathView({
     () => result?.svg.replace(/currentColor/g, c.ink),
     [result],
   );
-  const ex = BODY_SIZE * fontScale * 0.5;
+  const ex = fontSize * fontScale * 0.5;
 
   return (
     <ScrollView
@@ -71,7 +73,7 @@ export function MathView({
           height={result.height * ex}
         />
       ) : (
-        <Text selectable style={s.fallback}>
+        <Text selectable style={{ ...s.fallback, fontSize: fontSize - 2, lineHeight: fontSize + 6 }}>
           {tex}
         </Text>
       )}
