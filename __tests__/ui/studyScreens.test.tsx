@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import ReactTestRenderer, { act } from 'react-test-renderer';
+import ReactTestRenderer, { act, type ReactTestInstance } from 'react-test-renderer';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { setAiDeps } from '../../src/ai/chat';
 import type { FetchLike } from '../../src/ai/http';
@@ -74,6 +74,7 @@ beforeAll(async () => {
     quotes: async (codes: string[]) => quotes.filter(q => codes.includes(q.snapshot.code)),
     search: async () => [],
     kline: async (code: string, _t: string, _p: string, n: number) => barsOf(code).slice(-n),
+    klineRange: async (code: string, _t: string, start: string, end: string) => barsOf(code).filter(k => k.date >= start && (!end || k.date <= end)),
   } as unknown as MarketClient;
   const sim = await Simulator.open(db, client, () => ({ date: '2026-10-26', t: T(14, 53) }));
   await sim.ingest(quotes);
@@ -441,4 +442,107 @@ test('关闭对照即停止：迟到响应不显示、不缓存，保留继续�
     expect(r.text()).toContain('翻译本节');
     expect(await loadTranslations(core.db, bookId, await bookRepo.sectionBlocks(core.db, bookId, secs[0].id))).toEqual({});
   } finally { setAiDeps({ fetch: fetchMock }); }
+});
+
+test('讲到某一段行情：图紧跟在调用的地方、讲解之前；黄色区间、前收、横轴日期、区间读数和看点；全屏有区间最高最低', async () => {
+  const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '1.3' });
+  replies = [
+    { model: 'm', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tf', name: 'plot_chart', input: { code: 'sz300750', sub: 'dd', focus: [{ from: '2026-09', to: '2026-09' }], points: [{ date: '2026-09-15', label: '放量急跌' }], takeaway: '9 月一路走低，回撤加深' } }], usage },
+    { model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '[[real]]图中黄色区间是 9 月：从前收 363.55 跌到 291.11。[[/real]]' }], usage },
+  ];
+  await r.press('开始讲第 1 步');
+  const page = r.text();
+  expect(page).toContain('9 月一路走低，回撤加深');
+  expect(page).toContain('9 月 · 9/1–9/30 · 21 个交易日');
+  expect(page).toContain('-19.93%');
+  expect(page).toContain('收盘 363.55（8/31）→ 291.11（9/30）');
+  expect(page).toContain('2026-07-27 至 10-26');
+  // 图在讲这张图的文字之前
+  expect(page.indexOf('宁德时代 · 回撤')).toBeGreaterThan(0);
+  expect(page.indexOf('宁德时代 · 回撤')).toBeLessThan(page.indexOf('图中黄色区间是 9 月'));
+  // 量出宽度后画 SVG：区间标签、前收、横轴上的区间起止日、标注事件、副图名字
+  // （测试里系统字号是 2 倍，标注日 9/15 在横轴上挤不下，让给区间起止日；事件名照样写在图上）
+  const plot = r.tree.root.findAll(n => n.props.accessibilityRole === 'image' && typeof n.props.onLayout === 'function')[0];
+  expect(plot.props.accessibilityLabel).toContain('重点区间 9 月 -19.93%');
+  await act(async () => { plot.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 268 } } }); });
+  const svg = r.text();
+  for (const t of ['前收 363.55', '291.11', '"9/1"', '"9/30"', '放量急跌', '"回撤"', '239.52']) {
+    expect(svg).toContain(t);
+  }
+  const chart = r.tree.root.findAll(n => n.props.data?.kind === 'price')[0].props.data;
+  const full = await render('ChartFull', ChartFullScreen, { chart });
+  expect(full.text()).toContain('区间最高收盘 358.10（9/1）· 最低 286.80（9/29）');
+  expect(full.text()).toContain('区间最后一天收盘 ÷ 区间前一个交易日收盘 − 1');
+});
+
+test('图文同屏：图卡滚出去、还在读这一问时，小图盖在步骤栏上；滚回图卡或收起后不钉', async () => {
+  const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '1.4' });
+  replies = [
+    { model: 'm', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tp', name: 'plot_chart', input: { code: 'sz300750', focus: [{ from: '2026-09', to: '2026-09' }] } }], usage },
+    { model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '[[real]]图中黄色区间是 9 月。[[/real]]' }], usage },
+  ];
+  await r.press('开始讲第 1 步');
+  const pinned = () => r.tree.root.findAll(n => n.props.accessibilityLabel === '收起钉住的图').length > 0;
+  expect(pinned()).toBe(false);
+  // 量出各层位置：对话顶部在内容里 y = 200；这一问 0–1400；图卡在这一问里 y = 90，画线区域在卡片里 y = 60、高 274
+  const handlers = (n: ReactTestInstance) => [...new Set(n.findAll(x => typeof x.props.onLayout === 'function').map(x => x.props.onLayout as (e: unknown) => void))];
+  const up = (n: ReactTestInstance) => {
+    let p = n.parent;
+    while (p && (typeof p.props.onLayout !== 'function' || p.props.onLayout === n.props.onLayout)) {
+      p = p.parent;
+    }
+    return p!;
+  };
+  const layout = async (f: (e: unknown) => void, y: number, height: number) => act(async () => f({ nativeEvent: { layout: { x: 0, y, width: 368, height } } }));
+  const card = r.tree.root.findAll(n => n.props.data?.kind === 'price' && typeof n.props.onBox === 'function')[0];
+  const turn = up(card);
+  const thread = up(turn);
+  const [cardBox, plotBox] = handlers(card);
+  const scroller = r.tree.root.findAll(n => typeof n.props.onMomentumScrollEnd === 'function')[0];
+  await layout(scroller.props.onLayout, 0, 380);
+  await layout(thread.props.onLayout, 200, 1400);
+  await layout(turn.props.onLayout, 0, 1400);
+  await layout(cardBox, 90, 520);
+  await layout(plotBox, 60, 274);
+  const scrollTo = async (y: number) => act(async () => scroller.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y }, layoutMeasurement: { width: 368, height: 380 }, contentSize: { width: 368, height: 1700 } } }));
+  // 画线区域还露出一半：不钉
+  await scrollTo(200 + 150 + 120);
+  expect(pinned()).toBe(false);
+  // 滚过六成：钉住，标题行写名字和区间涨跌；步骤栏对读屏隐藏
+  await scrollTo(200 + 150 + 200);
+  expect(pinned()).toBe(true);
+  const page = r.text();
+  expect(page).toContain('宁德时代');
+  expect(page).toContain(' 9 月 ');
+  expect(page).toContain('-19.93% ');
+  expect(r.tree.root.findAll(n => n.props.importantForAccessibility === 'no-hide-descendants').length).toBeGreaterThan(0);
+  // 滚回图卡：不钉
+  await scrollTo(200);
+  expect(pinned()).toBe(false);
+  // 读到这一问的末尾（这一问只占视窗上面不到三成）：不钉
+  await scrollTo(200 + 1400 - 100);
+  expect(pinned()).toBe(false);
+  // 收起之后，这一问再滚过去也不钉
+  await scrollTo(200 + 150 + 200);
+  expect(pinned()).toBe(true);
+  await r.press('收起钉住的图');
+  expect(pinned()).toBe(false);
+  await scrollTo(200 + 150 + 260);
+  expect(pinned()).toBe(false);
+  // 下一问没画图、讲的是前面那张图（模型直接引用前面的数）：读这一问时钉前面那张
+  replies = [{ model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '[[real]]宁德时代 9 月的跌幅里，前半段跌得最急。[[/real]]' }], usage }];
+  await r.type('提问草稿', '9 月前半段呢？');
+  await r.press('发送');
+  const slots = r.tree.root.findAll(n => typeof n.props.report === 'function' && typeof n.props.id === 'number');
+  const ids = [...new Set(slots.map(n => n.props.id as number))].sort((a, b) => a - b);
+  expect(ids).toHaveLength(2);
+  await act(async () => {
+    slots[0].props.report(ids[0], { y: 0, height: 1400 });
+    slots[0].props.report(ids[1], { y: 1400, height: 600 });
+  });
+  await scrollTo(200 + 1400 + 50);
+  expect(pinned()).toBe(true);
+  expect(r.text()).toContain('-19.93% ');
+  await r.press('收起钉住的图');
+  expect(pinned()).toBe(false);
 });

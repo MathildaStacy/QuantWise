@@ -18,6 +18,7 @@ import * as bookRepo from '../../data/bookRepo';
 import * as studyRepo from '../../data/studyRepo';
 import { deleteStudyThread, newStudyRound } from '../../study/session';
 import { ChartCard } from '../charts/ChartCard';
+import { LockScroll } from '../charts/scrub';
 import { AiSheet } from '../components/AiOptions';
 import { ConfirmDialog } from '../components/Dialog';
 import { StudyText } from '../components/StudyText';
@@ -283,7 +284,7 @@ export function StudyRoundScreen({ route }: RootScreenProps<'StudyRound'>) {
   return (
     <View style={st.page}>
       <NavBar title={d?.title ?? '讲解'} sub="历史轮次 · 只读" back />
-      <ScrollView contentContainerStyle={st.pad}>
+      <LockScroll contentContainerStyle={st.pad}>
         {d ? (
           <View style={st.banner}>
             <Text style={st.sub}>这是 {when(d.createdAt)} 开始的一轮讲解，只读。</Text>
@@ -294,14 +295,16 @@ export function StudyRoundScreen({ route }: RootScreenProps<'StudyRound'>) {
           <View key={t.first}>
             {t.question ? <View style={st.uRow}><Text style={st.u}>{t.question}</Text></View> : null}
             {t.tools.map(x => <Text key={x.id} style={st.meta}>↳ {x.label}</Text>)}
-            {t.answers.map(m => {
-              const text = m.parts.map(x => (x.t === 'text' ? x.text : '')).join('');
-              return text.trim() ? <StudyText key={m.id} text={text} check={check} onLink={onLink} /> : null;
+            {t.flow.map(x => {
+              if ('charts' in x) {
+                return x.charts.map((c, i) => <ChartCard key={'c' + x.id + ':' + i} data={c} />);
+              }
+              const text = x.m.parts.map(p => (p.t === 'text' ? p.text : '')).join('');
+              return text.trim() ? <StudyText key={x.m.id} text={text} check={check} onLink={onLink} /> : null;
             })}
-            {t.tools.flatMap(x => x.charts ?? []).map((c, i) => <ChartCard key={i} data={c} />)}
           </View>
         )) : null}
-      </ScrollView>
+      </LockScroll>
     </View>
   );
 }

@@ -24,6 +24,14 @@ export const rc = {
   webInk: '#5B5470',
   grid: '#ECEAE4',
   bench: '#77736A',
+  // 行情图的重点区间（docs/design/ai-lecture-charts.md §2.6）：和读书高亮同一族的浅黄底，琥珀色边线
+  focus: '#FFF1BF',
+  focusEdge: '#D19A12',
+  focusTag: '#FCE4A0',
+  focusInk: '#6B4A00',
+  /** 均线：紫色，在白底和黄色区间上都看得清。 */
+  maLine: '#7B4FC4',
+  bandLine: '#8FA8D0',
 } as const;
 
 /** 原书正文：Android 的 serif 是思源宋体 / Noto Serif CJK（系统有就用）。 */

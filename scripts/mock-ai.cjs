@@ -52,10 +52,14 @@ http
           const t = /t 值 ([+-]?[\d.]+)/.exec(r)?.[1];
           return sse(res, text('[[real]]示例池上 20 日动量的 Rank IC 均值 ' + ic + '，t 值 ' + t + '。[[/real]]\n\n' + (Math.abs(Number(t)) < 2 ? 't 值不到 2：样本太少，不能下结论 [[b:3.1#5]]。' : 't 值超过 2，在这个样本里显著。') + '股票池是当前成分，有幸存者偏差。'));
         }
+        const f = /重点区间「([^」]+)」[^：]*：前收 ([\d.]+)（[^）]+）→ 末日收盘 ([\d.]+)，区间 ([+-][\d.]+%)/.exec(r);
+        if (f) {
+          return sse(res, text('[[real]]图中黄色区间是' + f[1] + '：从前收 ' + f[2] + ' 一路跌到 ' + f[3] + '，区间 ' + f[4] + '。[[/real]]\n\n动量是拿过去的涨跌排队，单看一只股票说明不了什么，要看同一天的排名 [[b:2.1#2]]。'));
+        }
         return sse(res, text('[[real]]' + (/20 日动量：最高 ([^（]+)（([\d-]+)）/.exec(r)?.slice(1).join('，') ?? '图已画好') + '。[[/real]]\n\n单看一只股票的动量说明不了什么，要看同一天的排名 [[b:2.1#2]]。'));
       }
       if (/真实/.test(q)) {
-        return sse(res, tool('plot_chart', { code: 'sz300750', bars: 250, ma: 20, sub: 'mom20', marks: true }));
+        return sse(res, tool('plot_chart', { code: 'sz300750', ma: 20, sub: 'mom20', focus: [{ from: '2026-09', to: '2026-09', label: '9 月' }], points: [{ date: '2026-09-15', label: '放量急跌' }], takeaway: '9 月一路走低，20 日动量由正转负' }));
       }
       if (/有效/.test(q)) {
         return sse(res, tool('factor_test', { factor: 'mom20', universe: 'sample', hold: 20, groups: 5 }));

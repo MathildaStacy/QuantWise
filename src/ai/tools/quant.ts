@@ -4,11 +4,15 @@
  */
 import type { AppCore } from '../../app/boot';
 import * as quantRepo from '../../data/quantRepo';
+import { addDays, type DateStr } from '../../engine/calendar';
 import { beijingIso } from '../../market/clock';
 import { runFactorTest, SampleError, testSummary } from '../../quant/backtest';
 import {
   compareChart,
   factorCharts,
+  parseDay,
+  parseFocus,
+  parsePoints,
   priceChart,
   type ChartData,
   type SubKind,
@@ -51,12 +55,36 @@ const int = (v: unknown, def: number, lo: number, hi: number) => {
   return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : def;
 };
 
+/**
+ * 取日 K：没给日期时取最近 n + 80 根（前面 80 根给均线和动量预热）；给了区间、标注或 end 时按日期段取，
+ * 3 年前的行情也能画。接口一次最多 2,000 根，所以两头都框住：最早的日期往前留出视窗和预热，最晚的往后一年多。
+ */
+function barsFetcher(core: AppCore, n: number | undefined, anchors: DateStr[]) {
+  if (!anchors.length) {
+    return (x: { code: string; type: string }) => core.client.kline(x.code, x.type, 'day', Math.min(800, (n ?? 250) + 80), 'qfq');
+  }
+  const sorted = [...anchors].sort();
+  const start = addDays(sorted[0], -Math.ceil(((n ?? 250) + 140) * 1.5));
+  const late = addDays(sorted[sorted.length - 1], 400);
+  const end = late < beijingIso().slice(0, 10) ? late : '';
+  return (x: { code: string; type: string }) => core.client.klineRange(x.code, x.type, start, end, 'qfq');
+}
+
 async function needCode(core: AppCore, v: unknown) {
   const r = await resolveCode(core, v);
   if (!r) {
     throw new Error('找不到证券「' + String(v ?? '') + '」');
   }
-  return r;
+  if (r.name !== r.code) {
+    return r;
+  }
+  // 不在自选和持仓里的证券本地没有名字（图的标题会只剩代码）：现拉一次行情取名字，取不到就用代码
+  try {
+    const q = (await core.client.quotes([r.code]))[0];
+    return q ? { ...r, name: q.info.name, type: r.type || q.info.type } : r;
+  } catch {
+    return r;
+  }
 }
 
 /** 股票池 → 代码；自动准备示例池和自选，沪深 300 没准备好时返回提示（不是错误）。 */
@@ -90,22 +118,30 @@ export async function runQuantTool(
 ): Promise<QuantOutcome> {
   if (name === 'plot_chart') {
     const r = await needCode(core, args.code);
-    const n = int(args.bars, 250, 20, 750);
+    const n = args.bars == null ? undefined : int(args.bars, 250, 20, 750);
+    const focus = parseFocus(args.focus);
+    const points = parsePoints(args.points);
+    const end = parseDay(args.end, 'to');
+    const takeaway = typeof args.takeaway === 'string' ? args.takeaway : undefined;
+    const fetch = barsFetcher(core, n, [...focus.flatMap(f => [f.from, f.to]), ...points.map(p => p.date), ...(end ? [end] : [])]);
+    const what = (c: ChartData) =>
+      (c.kind === 'price' || c.kind === 'compare') && c.focus ? ' · 标出' + c.focus.map(f => '「' + f.label + '」').join('') : '';
     const compare = Array.isArray(args.compare) ? args.compare.slice(0, 4) : [];
     if (compare.length) {
       const all = [r, ...(await Promise.all(compare.map(c => needCode(core, c))))];
-      const bars = await Promise.all(all.map(x => core.client.kline(x.code, x.type, 'day', n, 'qfq')));
-      const c = compareChart(all.map((x, i) => ({ code: x.code, name: x.name, bars: bars[i] })), n);
-      return { output: c.text, label: '画图：' + all.map(x => x.name).join(' / ') + ' 对比 · 近 ' + n + ' 根日 K', charts: [c.chart] };
+      const bars = await Promise.all(all.map(fetch));
+      const c = compareChart(all.map((x, i) => ({ code: x.code, name: x.name, bars: bars[i] })), { n, end, focus, takeaway });
+      return { output: c.text, label: '画图：' + all.map(x => x.name).join(' / ') + ' 对比' + what(c.chart), charts: [c.chart] };
     }
     const sub = Object.keys(SUB_NAME).includes(String(args.sub)) ? (args.sub as SubKind) : undefined;
     const ma = args.ma == null ? undefined : int(args.ma, 20, 5, 120);
-    const bars = await core.client.kline(r.code, r.type, 'day', Math.min(800, n + 80), 'qfq');
+    const bars = await fetch(r);
     if (bars.length < 2) {
       throw new Error('没有拿到 ' + r.name + ' 的日 K');
     }
-    const c = priceChart({ code: r.code, name: r.name, bars, n, ma, band: args.band === true, sub, marks: args.marks === true });
-    return { output: c.text, label: '画图：' + r.name + ' 近 ' + Math.min(n, bars.length) + ' 根日 K' + (sub ? ' + ' + SUB_NAME[sub] : ''), charts: [c.chart] };
+    const c = priceChart({ code: r.code, name: r.name, bars, n, end, ma, band: args.band === true, sub, marks: args.marks === true, focus, points, takeaway });
+    // 一行：日期范围和根数在卡片底部写着
+    return { output: c.text, label: '画图：' + r.name + (sub ? ' · ' + SUB_NAME[sub] : '') + what(c.chart), charts: [c.chart] };
   }
   const factor = String(args.factor) as FactorId;
   if (!FACTORS[factor]) {

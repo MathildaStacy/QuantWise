@@ -211,20 +211,21 @@ ALTER TABLE ai_thread ADD context_snapshot TEXT;                    -- 伴读的
 ```ts
 type ChartData =
   | { kind: 'price'; code; name; dates; close; ma?: {n; values}; band?: {upper; lower};
-      sub?: {kind: 'mom20'|'mom60'|'vol20'|'dd'|'rsi14'|'volume'; values}; marks?: {date; label; below?}[] }
-  | { kind: 'compare'; dates; series: {code; name; values /* 起点 = 100 */}[] }
+      sub?: {kind: 'mom20'|'mom60'|'vol20'|'dd'|'rsi14'|'volume'; values}; marks?: {date; label; below?; kind?: 'point'}[];
+      focus?: {from; to; label}[]; takeaway? }
+  | { kind: 'compare'; dates; series: {code; name; values /* base 那天 = 100 */}[]; base? /* 不写 = 第一天 */; focus?; takeaway? }
   | { kind: 'factor'; factor; universe; dates; groups: number[][]; bench: number[]; longShort: number[] }
   | { kind: 'ic'; dates; ic: number[] }
   | { kind: 'groups'; means: number[] };
 ```
 
-同一个 `QuantChart` 组件（react-native-svg）画对话里的卡片和全屏图，全屏时支持十字线读数（沿用 AShareSim 的 `ChartInspector`）。
+同一个 `QuantChart` 组件（react-native-svg）画对话里的卡片和全屏图：卡片里点一下、按住或左右拖动出十字线，跟着手指走、页面不滚（和个股页 `ChartInspector` 同一套手势），全屏一按下就跟手。讲解页读到图卡滚出屏幕时，小图钉在页顶对照讲解（图文同屏）。讲解里的行情图怎么标重点区间、坐标轴和读数怎么画，见 [ai-lecture-charts.md](design/ai-lecture-charts.md)。
 
 ## 8. AI：两个入口共用一套行情与因子工具
 
 | 工具 | 参数 | 返回给模型 |
 | --- | --- | --- |
-| `plot_chart` | `code`、`bars`（20–750，默认 250）、`ma?`（5–120）、`band?`（布林带）、`sub?`（mom20 / mom60 / vol20 / dd / rsi14 / volume）、`compare?: code[]`（最多 4 只，起点 = 100）、`marks?: 'extremes'` | 起止日期、首末价格、区间涨跌、副图的最高 / 最低 / 最新值和日期、极值标注 |
+| `plot_chart` | `code`、`bars?`（20–750；不给时无区间画 250 根、有区间按区间自动缩放）、`end?`（图的最后一天）、`ma?`（5–120）、`band?`（布林带）、`sub?`（mom20 / mom60 / vol20 / dd / rsi14 / volume）、`compare?: code[]`（最多 4 只，= 100 对比）、`marks?: 'extremes'`、`focus?: {from, to, label?}[]`（重点区间，最多 2 段，可写整月 `2026-09`）、`points?: {date, label}[]`（标注某天，最多 3 个）、`takeaway?`（一句看点） | 起止日期、首末价格、区间涨跌、副图的最高 / 最低 / 最新值和日期、极值标注；有区间时加区间读数（前收 → 末日收盘、区间涨跌、区间最高最低、副图起止值），标注日的收盘、当日涨跌和副图值；画不出来的区间和标注写明原因 |
 | `factor_test` | `factor`、`universe`（sample / watch / hs300 / 代码列表 ≤ 300）、`hold`（5 / 10 / 20 / 60）、`groups`（3 / 5 / 10）、`cost_bp`（0–50） | §7.3 的全部统计（带口径说明和样本是否足够），三张图 |
 | `get_factor_values` | `factor`、`universe`、`date?`、`code?`、`n?` | 某天的因子值排名（前后各 n 只）；给了 `code` 时写明它排第几 |
 

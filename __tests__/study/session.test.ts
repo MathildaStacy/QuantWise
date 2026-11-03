@@ -9,6 +9,7 @@ import { setAiDeps, useChat } from '../../src/ai/chat';
 import type { FetchLike } from '../../src/ai/http';
 import { loadProviders, saveProviders, saveServices, type KeyStore } from '../../src/ai/services';
 import type { AiService } from '../../src/ai/types';
+import { runQuantTool } from '../../src/ai/tools/quant';
 import type { AppCore } from '../../src/app/boot';
 import { SAMPLE_BOOK_ID } from '../../src/book/sample';
 import { openMemoryDb } from '../../src/data/drivers/nodeSqlite';
@@ -75,6 +76,7 @@ async function setup() {
     quotes: async (codes: string[]) => quotes.filter(q => codes.includes(q.snapshot.code)),
     search: async () => [],
     kline: async (code: string, _t: string, _p: string, count: number) => barsOf(code).slice(-count),
+    klineRange: async (code: string, _t: string, start: string, end: string) => barsOf(code).filter(k => k.date >= start && (!end || k.date <= end)),
   } as unknown as MarketClient;
   const sim = await Simulator.open(db, client, () => ({ date: '2026-10-26', t: T(14, 53) }));
   await sim.ingest(quotes);
@@ -160,6 +162,41 @@ test('伴读一节：请求结构、真实行情图、岔路、因子检验、�
   expect(await studyRepo.cards(core.db, SAMPLE_BOOK_ID)).toEqual([expect.objectContaining({ sectionId: '3.1', box: 1, front: 'MOM 怎么算' })]);
   expect((await studyRepo.stuckOf(core.db, SAMPLE_BOOK_ID)).map(x => x.text)).toEqual(['IC 的含义']);
   expect(wrapDraft(s()).from).toBeNull();
+  await core.db.close();
+});
+
+test('讲到某一段行情：plot_chart 标出 9 月，图里存区间、看点和标注，摘要给区间读数；协议和快捷问题提到 focus', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  replies = [
+    tool('plot_chart', { code: 'sz300750', sub: 'mom20', ma: 20, focus: [{ from: '2026-09', to: '2026-09' }], points: [{ date: '2026-09-15', label: '放量急跌' }], takeaway: '9 月一路走低' }),
+    text('[[real]]图中黄色区间是 9 月：前收 363.55 → 291.11，区间 -19.93%。[[/real]]'),
+  ];
+  await askStudy(core, quickAsk(s(), 'real'));
+  expect(lastUser(sent[0])).toContain('讲到哪段行情就用 focus 标出那段');
+  expect(JSON.stringify(sent[0].system)).toContain('plot_chart 用 focus 标出那段');
+  expect(sent[0].tools.find((t: any) => t.name === 'plot_chart').input_schema.properties).toHaveProperty('focus');
+  const plot = toolUis().find(t => t.name === 'plot_chart')!;
+  expect(plot.label).toContain('标出「9 月」');
+  expect(plot.charts?.[0]).toMatchObject({
+    kind: 'price',
+    focus: [{ from: '2026-09-01', to: '2026-09-30', label: '9 月' }],
+    takeaway: '9 月一路走低',
+    marks: [{ date: '2026-09-15', label: '放量急跌', kind: 'point' }],
+  });
+  const result = JSON.stringify(sent[1].messages);
+  expect(result).toContain('重点区间「9 月」2026-09-01 到 2026-09-30，21 个交易日：前收 363.55（2026-08-31）→ 末日收盘 291.11，区间 -19.93%');
+  expect(result).toContain('标注 2026-09-15「放量急跌」：收盘 316.36');
+});
+
+test('不在自选和持仓里的证券：plot_chart 现拉一次行情取名字，图的标题不只剩代码；取不到时用代码', async () => {
+  const core = await setup();
+  const blind = { client: core.client, sim: { quote: () => null, security: () => null } } as unknown as AppCore;
+  const r = await runQuantTool(blind, 'plot_chart', { code: '300750', focus: [{ from: '2026-09', to: '2026-09' }] });
+  expect(r.label).toContain('画图：宁德时代 ');
+  expect(r.charts?.[0]).toMatchObject({ kind: 'price', code: 'sz300750', name: '宁德时代' });
+  const offline = { client: { ...core.client, quotes: async () => { throw new Error('断网'); } }, sim: blind.sim } as unknown as AppCore;
+  expect((await runQuantTool(offline, 'plot_chart', { code: '300750' })).charts?.[0]).toMatchObject({ name: 'sz300750' });
   await core.db.close();
 });
 

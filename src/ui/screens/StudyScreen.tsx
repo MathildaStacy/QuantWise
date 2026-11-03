@@ -5,7 +5,7 @@
 import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ArrowDown, ArrowUp, Brain, ChevronDown, Globe, MessagesSquare, Square } from 'lucide-react-native';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance } from 'react-native';
 import { EFFORT_NAME, normaliseConfig, prettyModel, protocolNotice, resolvedService, searchAvailability } from '../../ai/models';
 import { loadProviders } from '../../ai/services';
@@ -35,6 +35,8 @@ import {
   type StudySession,
 } from '../../study/session';
 import { notesOf, stuckOf } from '../../data/studyRepo';
+import { ChartPin, pinnable, pinOf, type PinSpot } from '../charts/ChartPin';
+import { LockScroll } from '../charts/scrub';
 import { EffortPicker, ModelPicker, SearchUnavailable } from '../components/AiOptions';
 import { Button, NavBar } from '../components/ui';
 import { color } from '../theme';
@@ -44,7 +46,7 @@ import { rc } from '../readTheme';
 import { toast } from '../toast';
 import { CiteSheet, ContextSheet, type CiteTarget } from './StudySheets';
 import { StudyReader } from './StudyReader';
-import { StudyThread } from './StudyThread';
+import { StudyThread, turnInfo } from './StudyThread';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -65,6 +67,12 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
   const [auth, setAuth] = useState(false);
   const restored = useRef(false);
   const turnLayouts = useRef(new Map<number, { y: number; height: number }>());
+  // 图文同屏：图卡的画线区域在哪一问的哪里、视窗在哪，滚过图卡后把小图钉在步骤栏上（ChartPin）
+  const chartSpots = useRef(new Map<string, PinSpot>());
+  const viewport = useRef({ y: 0, h: 0 });
+  const [pin, setPin] = useState<{ key: string; reading: number } | null>(null);
+  const [unpinned, setUnpinned] = useState<ReadonlySet<number>>(() => new Set());
+  const [cover, setCover] = useState(0);
   const threadTop = useRef<number | null>(null);
   const threadContentReady = useRef(false);
   const threadUserMoved = useRef(false);
@@ -114,6 +122,9 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
       readingRef.current = ui;
       dirty.current = {};
       turnLayouts.current.clear();
+      chartSpots.current.clear();
+      setPin(null);
+      setUnpinned(new Set());
       threadTop.current = null;
       threadContentReady.current = false;
       threadUserMoved.current = false;
@@ -154,6 +165,8 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     lines: s ? ['《' + s.book.title + '》第 ' + (s.state.step + 1) + ' / ' + s.steps.length + ' 步：' + (s.steps[s.state.step]?.title ?? '')] : [],
     tip: '这一节的讲解在本页；通用助手是独立会话。',
   }));
+  // 钉图要知道每一问说了什么、画了几张图（这一问没画图、讲的是前面那张图时钉前面那张）
+  const turnTexts = useMemo(() => turnInfo(s?.messages ?? []), [s?.messages]);
 
   const remember = (changes: Partial<Pick<ReadingState, 'draft' | 'reader' | 'thread' | 'follow' | 'translation'>>) => {
     readingRef.current = { ...readingRef.current, ...changes };
@@ -243,7 +256,18 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
       } else if (!anchor) restored.current = true;
     }
   };
+  /** 视窗或图的位置变了：重新算钉哪张图（流式讲解自动滚动时也算）。 */
+  const updatePin = (closed: ReadonlySet<number> = unpinned) => {
+    if (threadTop.current == null || viewport.current.h <= 0) return;
+    const k = pinOf(chartSpots.current, turnLayouts.current, { top: viewport.current.y - threadTop.current, height: viewport.current.h }, closed, id => turnTexts.get(id));
+    setPin(prev => (prev?.key === k?.key && prev?.reading === k?.reading ? prev : k));
+  };
+  const trackPin = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    viewport.current = { y: e.nativeEvent.contentOffset.y, h: e.nativeEvent.layoutMeasurement.height };
+    updatePin();
+  };
   const rememberThreadScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    trackPin(e);
     if (!restored.current || !threadUserMoved.current) return;
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
     const atEnd = contentSize.height - contentOffset.y - layoutMeasurement.height < 60;
@@ -306,6 +330,16 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     send({ label: q, question: q });
   };
   const bar = quickBar({ steps: s.steps, step: s.state.step, taught: p.taught, detour: !!p.detour, factor: factorish(s.section.title + s.blocks.map(b => b.text).join('')) });
+  // 展开了步骤列表时不钉（用户要看的就是步骤）
+  const pinSpot = pin && !stepsOpen ? chartSpots.current.get(pin.key) : undefined;
+  const pinned = pin && pinSpot && pinnable(pinSpot.data) ? { reading: pin.reading, data: pinSpot.data } : null;
+  /** 收起钉图：正在读的这一问不再钉，读到下一问照常钉。 */
+  const closePin = (turn: number) => {
+    const next = new Set(unpinned).add(turn);
+    setUnpinned(next);
+    setPin(null);
+    updatePin(next);
+  };
   return (
     <KeyboardAvoidingView style={st.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <NavBar
@@ -331,7 +365,8 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
           onConfigure={() => nav.navigate('AiServices', { returnToStudy: { bookId, sectionId: s.section.id } })} />
       ) : (
         <>
-          <View style={st.head}>
+          <View style={pinned && st.pinHost}>
+          <View style={st.head} importantForAccessibility={pinned ? 'no-hide-descendants' : 'auto'}>
             <Pressable style={st.stepToggle} onPress={() => setStepsOpen(v => !v)} accessibilityRole="button" accessibilityState={{ expanded: stepsOpen }}>
               <Text style={st.stepTitle}>第 {s.state.step + 1} / {s.steps.length} 步 · {s.steps[s.state.step]?.title}</Text><ChevronDown size={18} color={rc.secondary} />
             </Pressable>
@@ -345,7 +380,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
                 </Pressable>
               ))}
             </View> : null}
-            <Pressable style={st.seen} onPress={() => setCtx(true)} accessibilityRole="button" accessibilityLabel="AI 现在看到了什么">
+            <Pressable style={st.seen} onLayout={e => setCover(e.nativeEvent.layout.y + e.nativeEvent.layout.height)} onPress={() => setCtx(true)} accessibilityRole="button" accessibilityLabel="AI 现在看到了什么">
               <Text style={st.seenK}>AI 现在看到</Text>
               <Text style={st.chip}>{s.section.id} 原文</Text>
               {s.loaded.size > 1 ? <Text style={st.chip}>+{[...s.loaded].filter(x => !x.includes('#')).length - 1} 节</Text> : null}
@@ -361,21 +396,34 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
               </View>
             ) : null}
           </View>
-          <ScrollView
+          {/* 图文同屏：读讲解时图卡滚出去了，小图盖在步骤栏和「AI 现在看到」上（岔路条照常露出来），对话区不变小 */}
+          {pinned ? <ChartPin data={pinned.data} style={[st.pin, { minHeight: cover }]} onClose={() => closePin(pinned.reading)} /> : null}
+          </View>
+          <LockScroll
             ref={scroll}
             style={st.thread}
             contentContainerStyle={st.threadIn}
             scrollEventThrottle={200}
+            onLayout={e => { viewport.current = { ...viewport.current, h: e.nativeEvent.layout.height }; updatePin(); }}
             onScrollBeginDrag={() => { threadUserMoved.current = true; restored.current = true; follow.current = false; }}
             onScroll={rememberThreadScroll}
             onScrollEndDrag={rememberThreadScroll}
             onMomentumScrollEnd={rememberThreadScroll}
-            onContentSizeChange={() => { threadContentReady.current = true; restoreThread(); }}
+            onContentSizeChange={(_, h) => {
+              threadContentReady.current = true;
+              restoreThread();
+              // 跟随最新时视窗贴着底部（程序滚动不一定发滚动事件）
+              if (follow.current) viewport.current = { ...viewport.current, y: Math.max(0, h - viewport.current.h) };
+              updatePin();
+            }}
           >
             {(!s.messages.length || (recap && s.awayDays >= 1)) ? <Intro s={s} onReviewStuck={q => send({ label: '先复习卡点：' + q, question: '先帮我弄懂上次的卡点：' + q + '。如果它属于别的小节，先 load_section 读那一节（detour: true）。' })} /> : null}
             {recap && s.awayDays >= 1 ? <Button title="收起回顾" onPress={() => setRecap(false)} /> : null}
-            <View onLayout={e => { threadTop.current = e.nativeEvent.layout.y; restoreThread(); }}>
-            <StudyThread onTurnLayout={(id, box) => { turnLayouts.current.set(id, box); restoreThread(); }} s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true) }} />
+            <View onLayout={e => { threadTop.current = e.nativeEvent.layout.y; restoreThread(); updatePin(); }}>
+            <StudyThread
+              onTurnLayout={(id, box) => { if (box) turnLayouts.current.set(id, box); else turnLayouts.current.delete(id); restoreThread(); updatePin(); }}
+              onChartBox={(key, spot) => { if (spot) chartSpots.current.set(key, spot); else chartSpots.current.delete(key); updatePin(); }}
+              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true) }} />
             </View>
             {ask && reading.pending && !busy ? <Button title={askLabel ?? '发送刚才的问题'} onPress={() => { nav.setParams({ ask: undefined, askLabel: undefined, askSnapshot: undefined }); send({ label: askLabel ?? ask, question: ask, snapshot: askSnapshot }); }} /> : null}
             {reading.pending && !busy ? <View style={st.retry}>
@@ -384,7 +432,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
               <Button title={auth ? '连接 AI，保留问题' : '重试上次的问题'} tone="learn" onPress={() => auth ? nav.navigate('AiServices', { returnToStudy: { bookId, sectionId: s.section.id } }) : send(reading.pending!)} />
               <Button title="稍后再问" onPress={() => { saveReadingState(core.db, bookId, s.section.id, { pending: null }).catch(() => toast.show('暂存失败，请重试', 'bad')); setReading(v => ({ ...v, pending: null })); useStudy.setState({ error: null }); }} />
             </View> : null}
-          </ScrollView>
+          </LockScroll>
           {latest ? <Pressable style={st.latest} accessibilityRole="button" accessibilityLabel="回到最新" onPress={() => { follow.current = true; remember({ follow: true }); setLatest(false); scroll.current?.scrollToEnd({ animated: true }); }}><ArrowDown size={18} color={rc.main} /><Text style={st.smallT}>回到最新</Text></Pressable> : null}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={st.chips} contentContainerStyle={st.chipsIn} keyboardShouldPersistTaps="handled">
             {bar.map((k, i) => {
@@ -526,6 +574,8 @@ const st = StyleSheet.create({
   modeT: { fontSize: 14, color: rc.secondary },
   modeTOn: { color: rc.ink, fontWeight: '600' },
   head: { backgroundColor: rc.page, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rc.line },
+  pinHost: { zIndex: 2 },
+  pin: { position: 'absolute', top: 0, left: 0, right: 0 },
   steps: { paddingHorizontal: 10, paddingTop: 8, gap: 6 },
   step: { minHeight: 48, paddingVertical: 8, gap: 4 },
   stepBar: { height: 3, borderRadius: 2, backgroundColor: rc.line },
