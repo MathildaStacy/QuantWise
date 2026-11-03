@@ -43,6 +43,7 @@ import { MathView } from '../../src/ui/math/MathView';
 import { ShelfView } from '../../src/ui/screens/ShelfView';
 import { importMarkdownText } from '../../src/study/library';
 import { loadTranslations } from '../../src/data/translationRepo';
+import { secLabel } from '../../src/book/book';
 import { translationUnits } from '../../src/study/translation';
 
 jest.mock('../../src/data/drivers/opSqlite', () => ({ openDeviceDb: () => { throw new Error('测试里不用设备数据库'); } }));
@@ -199,6 +200,8 @@ test('听讲：进来不请求模型；开讲后显示讲解、引用和真实�
     { model: 'm', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'quiz-live', name: 'ask_quiz', input: { question: '10 元涨到 11 元的动量？', options: ['过去上涨 10%', '未来上涨 10%', '过去上涨 1%'], answer: 0, explain: '[[example]]11 ÷ 10 − 1 = 10%，描述过去。[[b:3.1#2]][[/example]]' } }], usage },
     { model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '请选择一个答案。' }], usage },
   ];
+  expect(r.text()).not.toContain('考考我');
+  await r.press('更多讲解方式');
   await r.press('考考我');
   expect(r.text()).not.toContain('11 ÷ 10');
   await r.press('过去上涨 10%');
@@ -209,6 +212,30 @@ test('听讲：进来不请求模型；开讲后显示讲解、引用和真实�
   expect(r.text()).not.toContain('[[b:');
   await r.press('原文 3.1 ¶2');
   expect(r.text()).toContain('原文 · 3.1 动量因子 ¶2');
+});
+
+test('相邻小节连续阅读保留中文对照，打开步骤面板不请求 AI', async () => {
+  const stateBefore = useStudy.getState();
+  const transport = jest.fn(async () => { throw new Error('此路径不应请求 AI'); });
+  setAiDeps({ fetch: transport });
+  try {
+    const { bookId } = await importMarkdownText(core.db, '# 1 First\n\nRead this first.\n\n# 2 Second\n\nThen continue here.', 'sections.md', 'section-navigation', beijingIso());
+    const sections = await bookRepo.sections(core.db, bookId);
+    const [first, second] = sections.filter(x => x.leaf);
+    const r = await render('Study', StudyScreen, { bookId, sectionId: first.id, mode: 'read' });
+    await r.press('中文对照');
+    await r.press('下一节：' + secLabel(second));
+    expect(useStudy.getState().s?.section.id).toBe(second.id);
+    expect((await loadReadingState(core.db, bookId, first.id)).translation).toBe(true);
+    expect((await loadReadingState(core.db, bookId, second.id)).translation).toBe(true);
+    await r.press('上一节：' + secLabel(first));
+    expect(useStudy.getState().s?.section.id).toBe(first.id);
+    await r.press('AI 讲解');
+    await r.press('本节讲解步骤');
+    expect(r.text()).toContain('本节讲解步骤');
+    expect(r.text()).toContain('当前步骤');
+    expect(transport).not.toHaveBeenCalled();
+  } finally { setAiDeps({ fetch: fetchMock }); await act(async () => { useStudy.setState(stateBefore); }); }
 });
 
 test('本节小结、复习、笔记', async () => {
@@ -475,7 +502,7 @@ test('讲到某一段行情：图紧跟在调用的地方、讲解之前；黄�
   expect(full.text()).toContain('区间最后一天收盘 ÷ 区间前一个交易日收盘 − 1');
 });
 
-test('图文同屏：图卡滚出去、还在读这一问时，小图盖在步骤栏上；滚回图卡或收起后不钉', async () => {
+test('图文同屏：小图占位不盖住回答，滚回图卡或收起后不钉', async () => {
   const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '1.4' });
   replies = [
     { model: 'm', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tp', name: 'plot_chart', input: { code: 'sz300750', focus: [{ from: '2026-09', to: '2026-09' }] } }], usage },

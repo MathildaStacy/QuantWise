@@ -2,7 +2,7 @@
 version: 1
 slug: "src-ui-screens-studyreader-tsx"
 primary_target: "src/ui/screens/StudyReader.tsx"
-related_targets: ["src/ui/screens/StudyScreen.tsx","src/ui/components/TranslatedBlock.tsx"]
+related_targets: ["src/ui/screens/StudyScreen.tsx","src/ui/components/TranslatedBlock.tsx","src/ui/screens/StudySheets.tsx","src/ui/screens/StudyThread.tsx"]
 ---
 
 # Ebook reading and translation
@@ -22,5 +22,7 @@ FIRST VIEWPORT: Existing book header and 原文 / 中文对照 / AI 讲解 row, 
 FORM: Established reader extension, fixed by the current implementation and confirmed brief; code-led. No concept roll because the surface identity is already settled. No comp or shipping raster.
 
 FINISH: Native Assessment A completed against six real books, paragraph and sentence translation, tables, figures, code and formulas. Verdict: ready for integration review on the tested Android phone sizes; see `docs/design/ebook-reading-20261103.md`. The five-issue PM follow-up is recorded in `docs/design/reader-polish-20261103.md`, including small-screen settings, partial translation recovery and source-position checks after merging main v1.6.0. No web detector applies and no generated raster ships. Existing OCR content defects remain separately recorded.
+
+READING AND LECTURE FOLLOW-UP: The ten-issue PM pass is recorded in `docs/design/reader-lecture-polish-20261103.md`. Guide and lecture steps use independent scrollable sheets. PDF tools expose the visible physical page; section-end links preserve bilingual mode. Failed translation location takes priority over earlier pending text, and unread cache state has a local-read retry. Citation previews lead with the target block and disclose neighbors. Lecture context uses section names with optional request details; successful tools collapse while errors, charts and learning cards remain visible. Quick actions use one primary action plus a More sheet. Expanding inline details suspends automatic follow. Verified at approximately 411dp/normal type and 360dp/1.3× type on Android emulator; native Assessment A ready for integration review.
 
 SCANNED FIGURES: For the two Chinese scan books, AI 清晰重绘 reads one figure into validated chart/table/diagram data. The reader renders native vector geometry and selectable text; reuse the local result on reopen. Always distinguish estimated chart samples from exact source data, retain original comparison and recognition notes, and show an unsupported reason when needed. Fit width first, expose enlargement on request. Long table cells grow and monetary decimals stay together. Separate 图表操作 from the scrollable figure to avoid gesture conflicts. Five real samples were verified at normal type, with chart/diagram/table checks at 360dp and 1.3× type; see `docs/design/scanned-figures-20261103.md`.

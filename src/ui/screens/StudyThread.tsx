@@ -5,6 +5,7 @@
  * 只画，不请求模型。
  */
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { prettyModel } from '../../ai/models';
 import { addUsage, ZERO_USAGE } from '../../ai/prompt';
@@ -94,6 +95,8 @@ export interface ThreadActions {
   onSearch?: (question: string) => void;
   /** 点「较早的 n 问已整理成摘要」。 */
   onSummary?: () => void;
+  /** 用户展开详情前暂停跟随，避免内容增高把当前回答推走。 */
+  onDisclosure?: () => void;
 }
 
 export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
@@ -126,7 +129,7 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
       const inside = turns.filter(x => x.first >= f.fromMsg && x.first <= f.toMsg);
       out.push({ id: f.fromMsg, node:
         <View>
-          <Pressable style={st.fold} onPress={() => setOpen(o => ({ ...o, [f.fromMsg]: !o[f.fromMsg] }))} accessibilityRole="button" accessibilityState={{ expanded: !!open[f.fromMsg] }}>
+          <Pressable style={st.fold} onPress={() => { a.onDisclosure?.(); setOpen(o => ({ ...o, [f.fromMsg]: !o[f.fromMsg] })); }} accessibilityRole="button" accessibilityState={{ expanded: !!open[f.fromMsg] }}>
             <Text style={st.foldT} numberOfLines={1}>已解决：{f.title}（{inside.length} 问）</Text>
             <Text style={st.foldS}>岔路 · {f.sectionId} {open[f.fromMsg] ? '▴' : '▾'}</Text>
           </Pressable>
@@ -158,15 +161,7 @@ function TurnView({ t, detour, a, check, streaming, onChartBox }: { t: Turn; det
           <Text style={st.u}>{t.question}</Text>
         </View>
       ) : null}
-      {t.tools.length ? (
-        <View style={st.tools}>
-          {t.tools.map(x => (
-            <Text key={x.id} style={[st.tool, x.error && st.toolErr]} numberOfLines={2}>
-              ↳ {x.label}
-            </Text>
-          ))}
-        </View>
-      ) : null}
+      <ToolRecords tools={t.tools} onDisclosure={a.onDisclosure} />
       {t.flow.map(x => {
         if ('charts' in x) {
           return x.charts.map((c, k) => {
@@ -190,15 +185,32 @@ function TurnView({ t, detour, a, check, streaming, onChartBox }: { t: Turn; det
           <Text style={st.smallT}>开启搜索并重问</Text>
         </Pressable>
       ) : null}
-      {streaming ? null : <TurnFooter answers={t.answers} onLink={a.onLink} />}
+      {streaming ? null : <TurnFooter answers={t.answers} onLink={a.onLink} onDisclosure={a.onDisclosure} />}
     </View>
   );
+}
+
+function ToolRecords({ tools, onDisclosure }: { tools: ToolUi[]; onDisclosure?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const done = tools.filter(x => !x.error);
+  if (!tools.length) return null;
+  return <View style={st.tools}>
+    {tools.filter(x => x.error).map(x => <Text key={x.id} style={[st.tool, st.toolErr]} accessibilityRole="alert">执行失败 · {x.label}</Text>)}
+    {done.length ? <>
+      <Pressable style={st.toolToggle} accessibilityRole="button" accessibilityLabel={'工具记录，' + done.length + ' 项成功'} accessibilityState={{ expanded: open }}
+        onPress={() => { onDisclosure?.(); setOpen(v => !v); }}>
+        <Text style={st.tool}>工具记录 · {done.length} 项成功</Text>
+        {open ? <ChevronUp size={16} color={rc.secondary} /> : <ChevronDown size={16} color={rc.secondary} />}
+      </Pressable>
+      {open ? done.map(x => <Text key={x.id} style={st.tool}>{x.label}</Text>) : null}
+    </> : null}
+  </View>;
 }
 
 const hostOf = (url: string) => /^https?:\/\/([^/]+)/.exec(url)?.[1]?.replace(/^www\./, '') ?? url;
 
 /** 一问的网页来源和用量：默认收起成一行，点开看明细（只显示接口实际返回的数据）。 */
-function TurnFooter({ answers, onLink }: { answers: StoredMessage[]; onLink: (href: string) => void }) {
+function TurnFooter({ answers, onLink, onDisclosure }: { answers: StoredMessage[]; onLink: (href: string) => void; onDisclosure?: () => void }) {
   const [open, setOpen] = useState(false);
   const sources: SearchSource[] = [];
   let usage: Usage | null = null;
@@ -213,7 +225,7 @@ function TurnFooter({ answers, onLink }: { answers: StoredMessage[]; onLink: (hr
   const model = last?.ui?.config ? prettyModel(last.ui.config.model) : last?.ui?.service?.split(' · ').pop() ?? '';
   return (
     <View style={st.footer}>
-      <Pressable onPress={() => setOpen(v => !v)} style={st.footerRow} accessibilityRole="button" accessibilityState={{ expanded: open }}>
+      <Pressable onPress={() => { onDisclosure?.(); setOpen(v => !v); }} style={st.footerRow} accessibilityRole="button" accessibilityState={{ expanded: open }}>
         <Text style={st.meta} numberOfLines={1}>
           {[model, sources.length ? '来源 ' + sources.length + ' 个' : '', '用量'].filter(Boolean).join(' · ')} {open ? '▴' : '▾'}
         </Text>
@@ -286,6 +298,7 @@ const st = StyleSheet.create({
   uRow: { alignItems: 'flex-end', marginTop: 14, marginBottom: 6 },
   u: { backgroundColor: rc.user, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 8, maxWidth: '85%', fontSize: 15, lineHeight: 24, color: rc.ink, overflow: 'hidden' },
   tools: { marginVertical: 6, gap: 2 },
+  toolToggle: { minHeight: 48, flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 8 },
   tool: { fontSize: 12, color: rc.muted, lineHeight: 18 },
   toolErr: { color: '#B5462F' },
   err: { fontSize: 13, color: '#B5462F', marginVertical: 6 },

@@ -323,3 +323,13 @@ This extension governs `StudyReader`, source blocks and Chinese translations. Bo
 Native finish review: [real-book acceptance](docs/design/ebook-reading-20261103.md), with 411dp/normal-type and 360dp/1.3×-type evidence. System-dark testing verifies the existing light reader, not a separate dark theme. Verdict: ready for integration review on these Android phone sizes. Existing OCR defects, iOS, tablets and physical-device validation are outside this evidence.
 
 Scanned-figure follow-up: [five real figures and native interaction checks](docs/design/scanned-figures-20261103.md). Reconstruction is on demand per image; these examples do not certify every figure in either book or recover the original underlying time series.
+
+### Reader and lecture disclosures · 2026-11-03
+
+Guide and lecture steps open in scrollable bottom sheets so the reading or conversation viewport stays available. The PDF toolbar shows the physical page at the source anchor. Section-end previous/next links retain the chosen bilingual mode. Translation progress distinguishes unread cache, failure and pending text; location prioritizes the active or failed paragraph.
+
+Citation previews begin with the cited block; neighboring blocks expand on request. Lecture context uses section titles, progress and model preferences first, with request estimates behind a disclosure. Successful tool records start collapsed; errors, charts, quizzes and wrap-up cards remain visible. Expanding inline records, sources or solved detours pauses automatic following. The lecture action row shows its primary action, source access and a More sheet for the remaining available actions.
+
+Native acceptance: [ten-issue PM follow-up](docs/design/reader-lecture-polish-20261103.md), approximately 411dp/normal type and 360dp/1.3× type. The existing light surface remains in use under system-dark settings.
+
+Pinned lecture charts occupy their rendered height in place of the step row; the conversation begins below the chart. Keep hidden step controls out of layout and accessibility while pinned, and retain the detour return action.
