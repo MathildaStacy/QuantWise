@@ -1,7 +1,9 @@
 module.exports = {
   preset: '@react-native/jest-preset',
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
-  testPathIgnorePatterns: ['/node_modules/', '/__tests__/.*/helpers/'],
+  // Local Claude worktrees contain separate source, tests and mocks; keep them outside this checkout's run.
+  modulePathIgnorePatterns: ['<rootDir>/.claude/'],
+  testPathIgnorePatterns: ['/node_modules/', '/__tests__/.*/helpers/', '/\\.claude/'],
   // lucide 的 ESM 入口是 .mjs，Jest 不转译，改用 CommonJS 版本
   moduleNameMapper: {
     '^lucide-react-native$':
