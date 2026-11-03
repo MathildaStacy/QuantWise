@@ -60,6 +60,17 @@ test('跳过中文、独立公式、代码、表格和原页截图，保留外�
   expect(canTranslate({ ...block('Source page', 0, 'img'), image: 'source-pages/1.png' })).toBe(false);
 });
 
+test('中文段落中的外文术语不重复整段翻译，外文正文和日文仍可翻译', () => {
+  const chinese = '一种定义趋势的方法是用移动平均线交叉（moving average crossover）来判断，即用一个短周期指标和一个长周期指标进行比较。当短周期指标在长周期指标下方，则可以认为市场将会开始出现下跌趋势。';
+  expect(canTranslate(block(chinese))).toBe(false);
+  expect(canTranslate(block('A股的 IC 和 IR 分别用于衡量预测能力及其稳定性。'))).toBe(false);
+  expect(canTranslate(block('协方差矩阵（covariance matrix）'))).toBe(false);
+  expect(canTranslate(block('The model estimates 收益 from historical observations.'))).toBe(true);
+  expect(canTranslate(block('日本語の投資戦略を説明します。'))).toBe(true);
+  expect(canTranslate(block('Diversification reduces portfolio risk.'))).toBe(true);
+  expect(canTranslate(block('(Figure: Returns)'))).toBe(true);
+});
+
 test('按本地 ID 对齐乱序回复；拒绝缺句、重复、未知 ID、空译文和公式改写', () => {
   const units = translationUnits(fixture[0]);
   const rows = [{ id: '0:1', text: '分散投资。' }, { id: '0:0', text: '收益不确定。' }];

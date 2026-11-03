@@ -6,6 +6,8 @@ import type { StudyAsk, WrapDraft } from './session';
 export interface ReadingAnchor {
   id: number;
   offset: number;
+  /** Reader-only position in the original text, stable across bilingual grouping. */
+  text?: { offset: number; lane: 'source' | 'translation' };
 }
 
 export interface ReadingState {

@@ -2,8 +2,8 @@
  * 读书模式（QUANTWISE_DESIGN.md §6.6）：重排显示当前小节的块。讲过的块左侧细线，当前这一步浅色底，
  * 高亮浅黄，问过的段落下面贴便签。点一段出菜单：解释、从这里开始讲、用真实行情举例、高亮。
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { BookOpen, FileText, SlidersHorizontal } from 'lucide-react-native';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { BookOpen, ChevronDown, FileText, SlidersHorizontal } from 'lucide-react-native';
 import { Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance } from 'react-native';
 import { citeLabel, secLabel } from '../../book/book';
 import type { BookBlock } from '../../book/types';
@@ -16,7 +16,8 @@ import { BlockInline, BookBlockView } from '../components/BookBlock';
 import { PdfSourceSheet } from '../components/PdfSourceSheet';
 import { useCore } from '../hooks';
 import { rc, serif } from '../readTheme';
-import { anchorAt, anchorY, type ReadingAnchor } from '../../study/readingState';
+import type { ReadingAnchor } from '../../study/readingState';
+import { readerAnchorAt, readerAnchorY, type ReaderBlockLayout } from '../../study/readerPosition';
 import { canTranslate } from '../../study/translation';
 import { useTranslation } from '../../study/useTranslation';
 import { TranslatedBlock } from '../components/TranslatedBlock';
@@ -77,12 +78,14 @@ function ReaderBody({
   const core = useCore();
   const { prefs, title } = useBookTypography();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [parallelOpen, setParallelOpen] = useState(false);
   const bilingual = translation;
   const tr = useTranslation(core, s.book, s.section, s.blocks, active);
   const stopTranslation = tr.stop;
   useEffect(() => { if (!bilingual) stopTranslation(); }, [bilingual, stopTranslation]);
   const eligible = s.blocks.filter(canTranslate);
   const done = eligible.filter(b => tr.entries[b.seq]).length;
+  const nextPending = eligible.find(b => !tr.entries[b.seq]);
   const showTranslation = (enabled: boolean) => {
     onTranslation?.(enabled);
     if (!enabled) tr.stop();
@@ -93,10 +96,12 @@ function ReaderBody({
   const [sourcePage, setSourcePage] = useState<number | null>(null);
   const scroll = useRef<ScrollViewInstance>(null);
   const layouts = useRef(new Map<number, { y: number; height: number }>());
+  const textLayouts = useRef(new Map<number, ReaderBlockLayout>());
   const restored = useRef(false);
   const initialAnchor = useRef(anchor);
   const contentReady = useRef(false);
   const userMoved = useRef(false);
+  const lastScrollY = useRef<number | null>(null);
   const visibleAnchor = useRef(focusSeq == null ? anchor : { id: focusSeq, offset: 0 });
   const reflowAnchor = useRef<ReadingAnchor | null>(null);
   const restore = useCallback(() => {
@@ -106,14 +111,34 @@ function ReaderBody({
     if (seq == null) { restored.current = true; return; }
     const box = layouts.current.get(seq);
     if (!box) return;
-    scroll.current?.scrollTo({ y: target ? anchorY(target, box) : Math.max(0, box.y - 40), animated: false });
+    scroll.current?.scrollTo({ y: target ? readerAnchorY(target, box, textLayouts.current.get(seq)) : Math.max(0, box.y - 40), animated: false });
     restored.current = true;
   }, [focusSeq]);
   useEffect(() => {
+    reflowAnchor.current = null;
+    lastScrollY.current = null;
+    visibleAnchor.current = focusSeq == null ? initialAnchor.current : { id: focusSeq, offset: 0 };
     restored.current = false;
     userMoved.current = false;
     restore();
-  }, [restore]);
+  }, [focusSeq, restore]);
+  const presentation = [bilingual, prefs.face, prefs.size, prefs.leading, prefs.parallel, Object.keys(tr.entries).join(',')].join(':');
+  const previousPresentation = useRef(presentation);
+  // Native block anchoring handles late formula layout while reading. During
+  // reflow the source-text anchor owns scrolling until the next user drag.
+  const [nativePresentation, setNativePresentation] = useState(presentation);
+  useLayoutEffect(() => {
+    if (previousPresentation.current === presentation) return;
+    previousPresentation.current = presentation;
+    // Carry the intended text position through successive reflows. A shorter source
+    // page can clamp a programmatic scroll; that must not erase the bilingual anchor.
+    const current = userMoved.current && lastScrollY.current != null
+      ? readerAnchorAt(layouts.current, textLayouts.current, lastScrollY.current) : reflowAnchor.current;
+    reflowAnchor.current = current ?? visibleAnchor.current ?? { id: -1, offset: 0 };
+    userMoved.current = false;
+    restored.current = false;
+    restore();
+  }, [presentation, restore]);
   const reload = useCallback(() => {
     marksOf(core.db, s.book.id).then(setMarks).catch(() => undefined);
   }, [core, s.book.id]);
@@ -129,15 +154,26 @@ function ReaderBody({
     onQuick(k, b);
   };
   const rememberScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    lastScrollY.current = e.nativeEvent.contentOffset.y;
     // 公式异步改变高度时，程序恢复的滚动事件不能反过来改写原锚点。
     if (!restored.current || !userMoved.current) return;
-    const next = anchorAt(layouts.current, e.nativeEvent.contentOffset.y);
+    const next = readerAnchorAt(layouts.current, textLayouts.current, e.nativeEvent.contentOffset.y);
     if (next) { visibleAnchor.current = next; onAnchor?.(next); }
   };
   const changeAppearance = (next: ReaderPreferences) => {
     reflowAnchor.current = visibleAnchor.current ?? { id: -1, offset: 0 };
     userMoved.current = false;
     onAppearance(next);
+  };
+  const locateTranslation = () => {
+    const id = tr.current ?? nextPending?.seq;
+    if (id == null) return;
+    const target: ReadingAnchor = { id, offset: 0, text: { offset: 0, lane: 'source' } };
+    visibleAnchor.current = target;
+    reflowAnchor.current = target;
+    userMoved.current = false;
+    onAnchor?.(target);
+    restore();
   };
   return (
     <>
@@ -150,28 +186,38 @@ function ReaderBody({
           <BookOpen size={16} color={rc.secondary} /><Text style={st.toolText}>{guide ? '收起导读' : '导读'}</Text>
         </Pressable>
         <Pressable style={st.tool} accessibilityRole="button" accessibilityLabel="阅读排版" accessibilityState={{ expanded: appearanceOpen }} onPress={() => setAppearanceOpen(v => !v)}>
-          <SlidersHorizontal size={16} color={rc.secondary} /><Text style={st.toolText}>{appearanceOpen ? '收起排版' : '排版'}</Text>
+          <SlidersHorizontal size={16} color={rc.secondary} /><Text style={st.toolText}>排版</Text>
         </Pressable>
       </View>
-      {appearanceOpen ? <ReaderSettings value={prefs} onChange={changeAppearance} bilingual={bilingual} /> : null}
+      {appearanceOpen ? <ReaderSettings value={prefs} onChange={changeAppearance} bilingual={bilingual} onClose={() => setAppearanceOpen(false)} /> : null}
       {bilingual ? <View style={st.translationBar}>
           <View style={st.translationActions}>
-            <Text style={st.translationStatus} accessibilityLiveRegion="polite">{tr.loading ? '正在读取译文…' : eligible.length ?
-              (tr.busy ? '翻译中 · ' : tr.stopped ? '已停止 · ' : 'AI 译文 · ') + done + '/' + eligible.length + ' 段' : '本节没有需要翻译的外文段落'}</Text>
+            {eligible.length > 0 ? <Pressable style={st.parallelButton} accessibilityRole="button" accessibilityLabel={'对照方式：' + (prefs.parallel === 'paragraph' ? '按段阅读' : '逐句核对')}
+              accessibilityState={{ expanded: parallelOpen }} onPress={() => setParallelOpen(true)}>
+              <Text style={st.toolText}>{prefs.parallel === 'paragraph' ? '按段阅读' : '逐句核对'}</Text><ChevronDown size={14} color={rc.secondary} />
+            </Pressable> : null}
+            <Pressable style={st.translationProgress} disabled={tr.loading || !nextPending && tr.current == null}
+              accessibilityRole={nextPending || tr.current != null ? 'button' : undefined}
+              accessibilityLabel={tr.loading ? '正在读取译文' : eligible.length ? (tr.busy ? '定位正在翻译的段落，' : nextPending ? '定位下一待译段落，' : '') + `已译 ${done}/${eligible.length} 段` : '本节无需翻译'}
+              onPress={locateTranslation}>
+              <Text style={st.translationStatus} accessibilityLiveRegion="polite">{tr.loading ? '读取译文…' : eligible.length ?
+                (tr.busy ? '翻译中 ' : tr.stopped ? '已停止 ' : 'AI 译文 ') + done + '/' + eligible.length : '本节无需翻译'}</Text>
+              {nextPending && !tr.loading ? <Text style={st.locateText}>定位{tr.busy ? '当前' : '待译'}</Text> : null}
+            </Pressable>
             {eligible.length > 0 && !tr.loading && (tr.busy || done < eligible.length || tr.error) ? <Pressable
               style={st.translationButton} accessibilityRole="button" onPress={() => {
                 if (tr.busy) tr.stop();
                 else if (tr.needsConfig && onConfigure) onConfigure();
                 else if (tr.error) tr.retry();
                 else tr.run();
-              }}><Text style={st.translationButtonText}>{tr.busy ? '停止翻译' : tr.needsConfig ? '配置 AI' : tr.error ? '重试翻译' : done ? '继续翻译' : '翻译本节'}</Text></Pressable> : null}
+              }}><Text style={st.translationButtonText}>{tr.busy ? '停止翻译' : tr.cacheError ? '重读译文' : tr.needsConfig ? '配置 AI' : tr.error ? '重试翻译' : done ? '继续翻译' : '翻译本节'}</Text></Pressable> : null}
           </View>
           {tr.error ? <Text accessibilityRole="alert" style={st.translationError}>{tr.error}</Text> : null}
       </View> : null}
       <ReaderFigures.Provider value={{ book: s.book, blocks: s.blocks, active, onConfigure, redraw: (b, signal) => redrawFigure(core, s.book, s.section, b, s.blocks, signal, undefined, true) }}>
       <ScrollView ref={scroll} contentContainerStyle={st.page} scrollEventThrottle={200}
-        maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
-        onScrollBeginDrag={() => { userMoved.current = true; restored.current = true; reflowAnchor.current = null; }}
+        maintainVisibleContentPosition={nativePresentation === presentation ? { minIndexForVisible: 1 } : undefined}
+        onScrollBeginDrag={() => { userMoved.current = true; restored.current = true; reflowAnchor.current = null; setNativePresentation(presentation); }}
         onScroll={rememberScroll}
         onScrollEndDrag={rememberScroll}
         onMomentumScrollEnd={rememberScroll}
@@ -184,6 +230,8 @@ function ReaderBody({
           const isCur = p.taught >= 0 && cur && b.no >= cur.from && b.no <= cur.to;
           // Keep horizontal figure gestures and text selection outside a paragraph press target.
           const figure = b.type === 'img' || b.type === 'table';
+          const translatable = canTranslate(b);
+          const translated = bilingual && translatable ? tr.entries[b.seq] : undefined;
           const Frame = figure ? View : Pressable;
           return (
             <View
@@ -195,18 +243,34 @@ function ReaderBody({
             >
               <Frame
                 onPress={figure ? undefined : () => setMenu(b)}
-                style={[st.blk, b.no <= taughtTo && st.taught, isCur && st.cur, hl.has(b.seq) && st.hl, b.seq === focusSeq && st.focus]}
+                style={[st.blk, bilingual && translatable && !translated && st.awaitingBlock, b.no <= taughtTo && st.taught, isCur && st.cur, hl.has(b.seq) && st.hl, b.seq === focusSeq && st.focus]}
                 accessibilityRole={figure ? undefined : 'button'}
-                accessibilityLabel={figure ? undefined : citeLabel(s.section, b) + '：' + (bilingual && tr.entries[b.seq]
-                  ? tr.entries[b.seq].pairs.map(pair => '原文：' + pair.source + '译文：' + pair.translation).join('\n')
+                accessibilityLabel={figure ? undefined : citeLabel(s.section, b) + '：' + (translated
+                  ? translated.pairs.map(pair => '原文：' + pair.source + '译文：' + pair.translation).join('\n')
                   : b.text)}
               >
-                {bilingual && tr.entries[b.seq] ? <TranslatedBlock b={b} pairs={tr.entries[b.seq].pairs} dir={s.book.body.dir} /> : <BookBlockView b={b} dir={s.book.body.dir} />}
-                {bilingual && tr.current === b.seq ? <Text style={st.translating}>正在翻译这一段…</Text> : null}
+                <View onLayout={e => {
+                  const old = textLayouts.current.get(b.seq);
+                  textLayouts.current.set(b.seq, { top: e.nativeEvent.layout.y,
+                    parts: translated ? old?.parts ?? [] : !figure ? [{ start: 0, end: b.text.length, lane: 'source', y: 0, height: e.nativeEvent.layout.height }] : [] });
+                  restore();
+                }}>
+                  {translated ? <TranslatedBlock key={prefs.parallel} b={b} pairs={translated.pairs} dir={s.book.body.dir} onTextLayout={figure ? undefined : parts => {
+                    textLayouts.current.set(b.seq, { top: textLayouts.current.get(b.seq)?.top ?? 2, parts });
+                    restore();
+                  }} /> : <BookBlockView b={b} dir={s.book.body.dir} />}
+                </View>
                 {figure ? <Pressable style={st.figureAction} accessibilityRole="button" accessibilityLabel={citeLabel(s.section, b) + ' 图表操作'} onPress={() => setMenu(b)}>
                   <Text style={st.toolText}>图表操作</Text>
                 </Pressable> : null}
               </Frame>
+              {bilingual && translatable && !translated ? <View style={st.pendingTranslation}>
+                  <Text style={st.pendingText}>{tr.loading ? '正在读取译文…' : tr.current === b.seq ? '正在翻译这一段…' : tr.failed === b.seq ? '这一段翻译失败' : tr.busy ? '等待翻译' : '尚无译文'}</Text>
+                  {!tr.busy && !tr.loading && !tr.cacheError ? <Pressable style={st.paragraphTranslate} accessibilityRole="button" accessibilityLabel={(tr.failed === b.seq ? '重试这一段，' : '翻译这一段，') + citeLabel(s.section, b)} onPress={() => {
+                    if (tr.needsConfig && onConfigure) onConfigure();
+                    else tr.run([b]);
+                  }}><Text style={st.translationButtonText}>{tr.needsConfig ? '配置 AI' : tr.failed === b.seq ? '重试本段' : '翻译此段'}</Text></Pressable> : null}
+              </View> : null}
               {pins(b.seq).map(m => (
                 <Text key={m.id} style={st.pin}>已问：{m.text}</Text>
               ))}
@@ -218,6 +282,12 @@ function ReaderBody({
         </Pressable>
       </ScrollView>
       </ReaderFigures.Provider>
+      <AiSheet title="对照方式" visible={parallelOpen} onClose={() => setParallelOpen(false)}>
+        {([['paragraph', '按段阅读', '完整原文后接中文，适合连续阅读'], ['sentence', '逐句核对', '每句原文后接译文，适合精读']] as const).map(([value, label, detail]) =>
+          <Pressable key={value} style={st.item} accessibilityRole="radio" accessibilityState={{ checked: prefs.parallel === value }} onPress={() => {
+            changeAppearance({ ...prefs, parallel: value }); setParallelOpen(false);
+          }}><Text style={[st.itemT, prefs.parallel === value && st.selectedMode]}>{label}</Text><Text style={st.itemD}>{detail}</Text></Pressable>)}
+      </AiSheet>
       <AiSheet title={menu ? citeLabel(s.section, menu) : ''} visible={!!menu} onClose={() => setMenu(null)}>
         {menu ? (
           <View>
@@ -268,17 +338,24 @@ const st = StyleSheet.create({
   tool: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4 },
   toolText: { fontSize: 13, color: rc.secondary },
   translationBar: { backgroundColor: rc.page, paddingHorizontal: 18, paddingTop: 8, paddingBottom: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rc.line },
-  translationActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: 12 },
-  translationStatus: { color: rc.secondary, fontSize: 13, lineHeight: 22, paddingVertical: 8, flexShrink: 1 },
-  translationButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 12 },
+  translationActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: 8 },
+  parallelButton: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 4 },
+  translationProgress: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 4, flexShrink: 1 },
+  translationStatus: { color: rc.secondary, fontSize: 13, lineHeight: 22, flexShrink: 1 },
+  locateText: { color: rc.main, fontSize: 12, lineHeight: 18 },
+  translationButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 4 },
   translationButtonText: { fontSize: 15, color: rc.main, fontWeight: '600' },
   translationError: { color: color.upText, fontSize: 13, lineHeight: 21, paddingBottom: 8 },
-  translating: { color: rc.main, fontSize: 13, lineHeight: 22, paddingVertical: 6 },
+  pendingTranslation: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10, marginBottom: 20, paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: rc.line },
+  pendingText: { color: rc.secondary, fontSize: 13, lineHeight: 22 },
+  paragraphTranslate: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 },
+  selectedMode: { color: rc.main, fontWeight: '600' },
   page: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 48, backgroundColor: rc.page, width: '100%', maxWidth: 740, alignSelf: 'center' },
   h: { marginBottom: 24 },
   guideContent: { gap: 8, paddingBottom: 20 },
   guideI: { fontSize: 13, color: rc.secondary, lineHeight: 20 },
   blk: { paddingLeft: 8, marginLeft: -9, paddingVertical: 2, marginBottom: 20, borderLeftWidth: 1, borderLeftColor: 'transparent' },
+  awaitingBlock: { marginBottom: 0 },
   taught: { borderLeftColor: 'rgba(45,91,168,0.35)' },
   cur: { backgroundColor: rc.mainBg, borderLeftColor: rc.main },
   hl: { backgroundColor: rc.highlight },

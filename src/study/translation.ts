@@ -15,7 +15,13 @@ const numbersOf = (text: string) => (text.replace(protectedPattern, '').match(/(
 export function canTranslate(b: BookBlock): boolean {
   if (!['p', 'li', 'img'].includes(b.type) || b.image?.startsWith('source-pages/')) return false;
   const prose = b.text.replace(protectedPattern, '').replace(/<[^>]*>/g, '');
-  return /[A-Za-z\u00c0-\u02af\u0370-\u052f\u0600-\u06ff\u3040-\u30ff\uac00-\ud7af]/.test(prose);
+  const outside = prose.replace(/[（(][^()（）]*[）)]/g, '');
+  const language = /\p{Script=Han}/u.test(outside) ? outside : prose;
+  const foreign = language.match(/[A-Za-z\u00c0-\u02af\u0370-\u052f\u0600-\u06ff\u3040-\u30ff\uac00-\ud7af]/g)?.length ?? 0;
+  const chinese = language.match(/\p{Script=Han}/gu)?.length ?? 0;
+  // A Chinese paragraph with English terms already reads in the target language.
+  // Kana/Hangul distinguish Japanese/Korean prose that also contains Han characters.
+  return foreign > 0 && (/[\u3040-\u30ff\uac00-\ud7af]/.test(language) || chinese * 2 < foreign);
 }
 
 /** 保留全部字符（含空白），缩写和小数不拆；异常长句在安全空白处分行。 */

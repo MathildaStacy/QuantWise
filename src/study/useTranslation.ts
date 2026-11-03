@@ -14,36 +14,41 @@ export function useTranslation(core: AppCore, book: Book, section: BookSection, 
   const [error, setError] = useState('');
   const [needsConfig, setNeedsConfig] = useState(false);
   const [stopped, setStopped] = useState(false);
+  const [cacheError, setCacheError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [failed, setFailed] = useState<number | null>(null);
   const task = useRef<AbortController | null>(null);
   const alive = useRef(true);
   const targets = useRef(blocks);
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
-    setLoading(true);
+    setLoading(true); setCacheError(false); setError('');
     loadTranslations(core.db, book.id, blocks).then(result => {
       if (!cancelled) setEntries(result);
-    }).catch(() => { if (!cancelled) setError('译文读取失败，请重试'); })
+    }).catch(() => { if (!cancelled) { setCacheError(true); setError('译文读取失败，请重试'); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; alive.current = false; task.current?.abort(); };
-  }, [core, book.id, blocks]);
+  }, [core, book.id, blocks, loadAttempt]);
   const stop = useCallback(() => { task.current?.abort(); }, []);
   useEffect(() => { if (!active) stop(); }, [active, stop]);
 
   const run = async (selected: BookBlock[] = blocks) => {
-    if (!active || task.current || loading) return;
+    if (!active || task.current || loading || cacheError) return;
     const controller = new AbortController();
     task.current = controller;
     targets.current = selected;
-    setBusy(true); setStopped(false); setError(''); setNeedsConfig(false);
+    setBusy(true); setStopped(false); setError(''); setNeedsConfig(false); setFailed(null);
+    let inFlight: number | null = null;
     try {
       await translateBlocks(core, book, section, selected, entries, controller.signal,
         (seq, result) => { if (alive.current) setEntries(old => ({ ...old, [seq]: result })); },
-        seq => { if (alive.current) setCurrent(seq); });
+        seq => { inFlight = seq; if (alive.current) setCurrent(seq); });
     } catch (e) {
       if (!alive.current) return;
       if (controller.signal.aborted) setStopped(true);
       else {
+        setFailed(inFlight);
         setError(e instanceof Error ? e.message : String(e));
         setNeedsConfig(e instanceof AiError && e.code === 'auth');
       }
@@ -52,5 +57,6 @@ export function useTranslation(core: AppCore, book: Book, section: BookSection, 
       if (alive.current) { setBusy(false); setCurrent(null); }
     }
   };
-  return { entries, loading, busy, current, error, needsConfig, stopped, run, retry: () => run(targets.current), stop };
+  return { entries, loading, busy, current, error, needsConfig, stopped, failed, cacheError, run,
+    retry: () => cacheError ? setLoadAttempt(n => n + 1) : run(targets.current), stop };
 }
