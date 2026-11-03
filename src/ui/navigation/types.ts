@@ -2,6 +2,8 @@ import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { OrderKind } from '../../engine/types';
 import type { ChartData } from '../../quant/charts';
+import type { ConceptId } from '../../learning/types';
+import type { QuizMode } from '../../learning/progress';
 
 export type TabParamList = {
   Watch: undefined;
@@ -105,6 +107,14 @@ export type RootStackParamList = {
   MineruSettings: undefined;
   StudyPrefs: undefined;
   StudyIntro: undefined;
+  LearningPlan: undefined;
+  Knowledge: undefined;
+  Concept: { id: ConceptId };
+  QuantQuiz: { mode: QuizMode; conceptId?: ConceptId };
+  ResearchNotes: undefined;
+  ResearchEdit: { id?: string; conceptId?: ConceptId };
+  LearningCoach: { conceptId?: ConceptId; noteId?: string };
+  LearningReport: undefined;
 };
 
 export type RootScreenProps<K extends keyof RootStackParamList> =
