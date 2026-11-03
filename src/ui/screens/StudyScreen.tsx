@@ -4,7 +4,7 @@
  */
 import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { ArrowDown, ArrowUp, Brain, ChevronDown, Globe, MessagesSquare, Square } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Brain, ChevronDown, Globe, Info, MessagesSquare, Square } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance } from 'react-native';
 import { EFFORT_NAME, normaliseConfig, prettyModel, protocolNotice, resolvedService, searchAvailability } from '../../ai/models';
@@ -37,7 +37,7 @@ import {
 import { notesOf, stuckOf } from '../../data/studyRepo';
 import { ChartPin, pinnable, pinOf, type PinSpot } from '../charts/ChartPin';
 import { LockScroll } from '../charts/scrub';
-import { EffortPicker, ModelPicker, SearchUnavailable } from '../components/AiOptions';
+import { AiSheet, EffortPicker, ModelPicker, SearchUnavailable } from '../components/AiOptions';
 import { Button, NavBar } from '../components/ui';
 import { color } from '../theme';
 import { useAiContext, useCore } from '../hooks';
@@ -63,6 +63,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [latest, setLatest] = useState(false);
   const [stepsOpen, setStepsOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [recap, setRecap] = useState(true);
   const [auth, setAuth] = useState(false);
   const restored = useRef(false);
@@ -277,6 +278,14 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     remember({ ...(anchor ? { thread: anchor } : {}), follow: atEnd });
   };
 
+  const holdThread = () => {
+    threadUserMoved.current = true;
+    restored.current = true;
+    follow.current = false;
+    setLatest(true);
+    remember({ follow: false });
+  };
+
   if (!s || s.book.id !== bookId || (sectionId && s.section.id !== sectionId) || !reading) {
     return (
       <View style={st.page}>
@@ -330,7 +339,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     send({ label: q, question: q });
   };
   const bar = quickBar({ steps: s.steps, step: s.state.step, taught: p.taught, detour: !!p.detour, factor: factorish(s.section.title + s.blocks.map(b => b.text).join('')) });
-  // 展开了步骤列表时不钉（用户要看的就是步骤）
+  // 步骤面板打开时先露出步骤入口。
   const pinSpot = pin && !stepsOpen ? chartSpots.current.get(pin.key) : undefined;
   const pinned = pin && pinSpot && pinnable(pinSpot.data) ? { reading: pin.reading, data: pinSpot.data } : null;
   /** 收起钉图：正在读的这一问不再钉，读到下一问照常钉。 */
@@ -362,31 +371,29 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
       {read ? (
         <StudyReader key={s.book.id + ':' + s.section.id} s={s} anchor={readingRef.current.reader} onAnchor={reader => remember({ reader })} focusSeq={blockSeq} onQuick={runQuick} onFinish={() => runQuick('finish')}
           translation={readingRef.current.translation} onTranslation={setTranslation} active={focused}
+          onSection={async id => {
+            flush();
+            try {
+              await saveReadingState(core.db, bookId, id, { translation: readingRef.current.translation ?? false });
+              nav.replace('Study', { bookId, sectionId: id, mode: 'read' });
+            } catch (e) { fail(e); }
+          }}
           onConfigure={() => nav.navigate('AiServices', { returnToStudy: { bookId, sectionId: s.section.id } })} />
       ) : (
         <>
           <View style={pinned && st.pinHost}>
-          <View style={st.head} importantForAccessibility={pinned ? 'no-hide-descendants' : 'auto'}>
-            <Pressable style={st.stepToggle} onPress={() => setStepsOpen(v => !v)} accessibilityRole="button" accessibilityState={{ expanded: stepsOpen }}>
+          <View style={[st.head, pinned && st.coveredHead]} pointerEvents={pinned ? 'none' : 'auto'} importantForAccessibility={pinned ? 'no-hide-descendants' : 'auto'}>
+            <View style={st.headRow} onLayout={e => setCover(e.nativeEvent.layout.y + e.nativeEvent.layout.height)}>
+            <Pressable style={st.stepToggle} onPress={() => setStepsOpen(v => !v)} accessibilityRole="button" accessibilityLabel="本节讲解步骤" accessibilityValue={{ text: '第 ' + (s.state.step + 1) + ' / ' + s.steps.length + ' 步，' + s.steps[s.state.step]?.title }} accessibilityState={{ expanded: stepsOpen }}>
               <Text style={st.stepTitle}>第 {s.state.step + 1} / {s.steps.length} 步 · {s.steps[s.state.step]?.title}</Text><ChevronDown size={18} color={rc.secondary} />
             </Pressable>
-            {stepsOpen ? <View style={st.steps}>
-              {s.steps.map((x, i) => (
-                <Pressable key={i} style={st.step} onPress={() => !busy && send({ ...quickAsk(s, 'start'), label: '从第 ' + (i + 1) + ' 步讲', step: i, question: '讲第 ' + (i + 1) + ' 步「' + x.title + '」。' })} accessibilityRole="button" accessibilityLabel={'第 ' + (i + 1) + ' 步 ' + x.title}>
-                  <View style={[st.stepBar, i <= p.taught && st.stepDone, i === s.state.step && p.taught >= 0 && st.stepCur]} />
-                  <Text style={[st.stepT, i === s.state.step && st.stepTCur, p.skipped.includes(i) && st.skip]}>
-                    {i + 1} · {x.title}
-                  </Text>
-                </Pressable>
-              ))}
-            </View> : null}
-            <Pressable style={st.seen} onLayout={e => setCover(e.nativeEvent.layout.y + e.nativeEvent.layout.height)} onPress={() => setCtx(true)} accessibilityRole="button" accessibilityLabel="AI 现在看到了什么">
-              <Text style={st.seenK}>AI 现在看到</Text>
-              <Text style={st.chip}>{s.section.id} 原文</Text>
-              {s.loaded.size > 1 ? <Text style={st.chip}>+{[...s.loaded].filter(x => !x.includes('#')).length - 1} 节</Text> : null}
-              <Text style={st.chip}>书的地图</Text>
-              <Text style={st.seenK}>›</Text>
+            <Pressable style={st.seen} onPress={() => setCtx(true)} accessibilityRole="button" accessibilityLabel="AI 现在看到了什么">
+              <Info size={18} color={rc.secondary} /><Text style={st.seenK}>上下文</Text>
             </Pressable>
+            </View>
+          </View>
+          {/* 小图按自身高度占位；紧凑的步骤栏保留测量，但不遮住对话。 */}
+          {pinned ? <ChartPin data={pinned.data} style={{ minHeight: cover }} onClose={() => closePin(pinned.reading)} /> : null}
             {p.detour ? (
               <View style={st.detour}>
                 <Text style={st.detourT} numberOfLines={1}>岔路 · {secLabel(s.sections.find(x => x.id === p.detour!.sectionId) ?? { no: '', title: p.detour.sectionId })}</Text>
@@ -395,9 +402,6 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
                 </Pressable>
               </View>
             ) : null}
-          </View>
-          {/* 图文同屏：读讲解时图卡滚出去了，小图盖在步骤栏和「AI 现在看到」上（岔路条照常露出来），对话区不变小 */}
-          {pinned ? <ChartPin data={pinned.data} style={[st.pin, { minHeight: cover }]} onClose={() => closePin(pinned.reading)} /> : null}
           </View>
           <LockScroll
             ref={scroll}
@@ -423,7 +427,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             <StudyThread
               onTurnLayout={(id, box) => { if (box) turnLayouts.current.set(id, box); else turnLayouts.current.delete(id); restoreThread(); updatePin(); }}
               onChartBox={(key, spot) => { if (spot) chartSpots.current.set(key, spot); else chartSpots.current.delete(key); updatePin(); }}
-              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true) }} />
+              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread }} />
             </View>
             {ask && reading.pending && !busy ? <Button title={askLabel ?? '发送刚才的问题'} onPress={() => { nav.setParams({ ask: undefined, askLabel: undefined, askSnapshot: undefined }); send({ label: askLabel ?? ask, question: ask, snapshot: askSnapshot }); }} /> : null}
             {reading.pending && !busy ? <View style={st.retry}>
@@ -434,19 +438,22 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             </View> : null}
           </LockScroll>
           {latest ? <Pressable style={st.latest} accessibilityRole="button" accessibilityLabel="回到最新" onPress={() => { follow.current = true; remember({ follow: true }); setLatest(false); scroll.current?.scrollToEnd({ animated: true }); }}><ArrowDown size={18} color={rc.main} /><Text style={st.smallT}>回到最新</Text></Pressable> : null}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={st.chips} contentContainerStyle={st.chipsIn} keyboardShouldPersistTaps="handled">
-            {bar.map((k, i) => {
+          <View style={st.chips}>
+            {bar.slice(0, 1).map(k => {
               const q = quickAsk(s, k);
               return (
-                <Pressable key={k} disabled={!!busy} onPress={() => runQuick(k)} style={[st.q, i === 0 && st.qMain, busy && st.dim]} accessibilityRole="button">
-                  <Text style={[st.qT, i === 0 && st.white]}>{q.label}</Text>
+                <Pressable key={k} disabled={!!busy} onPress={() => runQuick(k)} style={[st.q, st.qMain, busy && st.dim]} accessibilityRole="button" accessibilityState={{ disabled: !!busy }}>
+                  <Text style={[st.qT, st.white]}>{q.label}</Text>
                 </Pressable>
               );
             })}
             <Pressable onPress={() => setStudyMode(core, 'read')} style={st.q} accessibilityRole="button">
               <Text style={st.qT}>看原文</Text>
             </Pressable>
-          </ScrollView>
+            {bar.length > 1 ? <Pressable onPress={() => setActionsOpen(true)} style={st.more} accessibilityRole="button" accessibilityLabel="更多讲解方式" accessibilityState={{ expanded: actionsOpen }}>
+              <Text style={st.qT}>更多</Text><ChevronDown size={14} color={rc.secondary} />
+            </Pressable> : null}
+          </View>
           <View style={[st.composer, { paddingBottom: Math.max(12, safe.bottom) }]}>
             {rebuild && !busy ? (
               <View style={st.cacheWarning}>
@@ -492,6 +499,25 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
           </View>
         </>
       )}
+      {stepsOpen ? <AiSheet title="本节讲解步骤" visible onClose={() => setStepsOpen(false)}>
+        <ScrollView style={st.steps}>
+          {s.steps.map((x, i) => <Pressable key={i} style={st.step} disabled={!!busy}
+            onPress={() => { setStepsOpen(false); send({ ...quickAsk(s, 'start'), label: '从第 ' + (i + 1) + ' 步讲', step: i, question: '讲第 ' + (i + 1) + ' 步「' + x.title + '」。' }); }}
+            accessibilityRole="button" accessibilityLabel={'第 ' + (i + 1) + ' 步 ' + x.title} accessibilityState={{ selected: i === s.state.step, disabled: !!busy }}>
+            <View style={st.stepWords}><Text style={[st.stepT, i === s.state.step && st.stepTCur]}>{i + 1} · {x.title}</Text>
+              <Text style={st.stepStatus}>{i === s.state.step ? '当前步骤' : p.skipped.includes(i) ? '已跳过' : i <= p.taught ? '已讲过' : '未讲解'}</Text></View>
+          </Pressable>)}
+          {busy ? <Text style={st.notice}>讲解结束后可切换步骤。</Text> : null}
+        </ScrollView>
+      </AiSheet> : null}
+      {actionsOpen ? <AiSheet title="更多讲解方式" visible onClose={() => setActionsOpen(false)}>
+        <ScrollView style={st.steps}>
+          {bar.slice(1).map(k => <Pressable key={k} style={st.step} disabled={!!busy} accessibilityRole="button" accessibilityState={{ disabled: !!busy }} onPress={() => { setActionsOpen(false); runQuick(k); }}>
+            <Text style={st.stepT}>{quickAsk(s, k).label}</Text>
+          </Pressable>)}
+          {busy ? <Text style={st.notice}>讲解结束后可继续提问。</Text> : null}
+        </ScrollView>
+      </AiSheet> : null}
       <CiteSheet target={cite} s={s} onClose={() => setCite(null)} onOpen={openCite} />
       <ContextSheet visible={ctx} s={s} onClose={() => setCtx(false)} />
       <ModelPicker
@@ -556,12 +582,8 @@ function Intro({ s, onReviewStuck }: { s: StudySession; onReviewStuck: (q: strin
         </>
       ) : null}
       <Text style={st.cardK}>本节路线图 · {s.steps.length} 步</Text>
-      {s.steps.map(x => (
-        <Text key={x.index} style={st.cardP}>
-          {x.index + 1}. {x.title}
-        </Text>
-      ))}
-      <Text style={st.cardS}>点「开始讲第 1 步」开始；熟悉的步骤可以跳过。只有你点了或提问时才会请求 AI。</Text>
+      <Text style={st.cardP}>{s.steps[s.state.step]?.title}</Text>
+      <Text style={st.cardS}>点「{quickAsk(s, 'start').label}」开始，也可以直接提问。点顶部步骤查看完整路线。</Text>
     </View>
   );
 }
@@ -575,30 +597,28 @@ const st = StyleSheet.create({
   modeTOn: { color: rc.ink, fontWeight: '600' },
   head: { backgroundColor: rc.page, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rc.line },
   pinHost: { zIndex: 2 },
-  pin: { position: 'absolute', top: 0, left: 0, right: 0 },
-  steps: { paddingHorizontal: 10, paddingTop: 8, gap: 6 },
-  step: { minHeight: 48, paddingVertical: 8, gap: 4 },
-  stepBar: { height: 3, borderRadius: 2, backgroundColor: rc.line },
-  stepDone: { backgroundColor: rc.main, opacity: 0.45 },
-  stepCur: { opacity: 1 },
-  stepT: { fontSize: 13, color: rc.muted },
-  stepTCur: { color: rc.ink },
-  skip: { textDecorationLine: 'line-through' },
-  seen: { minHeight: 48, flexWrap: 'wrap', flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6 },
-  seenK: { fontSize: 11, color: rc.muted },
-  chip: { fontSize: 11, color: rc.secondary, backgroundColor: rc.soft, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1, overflow: 'hidden' },
+  coveredHead: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
+  headRow: { flexDirection: 'row', alignItems: 'center' },
+  steps: { flexShrink: 1, paddingHorizontal: 20 },
+  step: { minHeight: 48, justifyContent: 'center', paddingVertical: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rc.line },
+  stepWords: { gap: 4 },
+  stepT: { fontSize: 15, lineHeight: 24, color: rc.ink },
+  stepTCur: { color: rc.main, fontWeight: '600' },
+  stepStatus: { fontSize: 12, lineHeight: 20, color: rc.secondary },
+  seen: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6 },
+  seenK: { fontSize: 12, color: rc.secondary },
   detour: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 10, marginBottom: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: rc.detourBg },
   detourT: { flex: 1, fontSize: 13, fontWeight: '600', color: rc.detour },
   detourB: { minHeight: 48, justifyContent: 'center', backgroundColor: rc.detour, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
   detourBT: { fontSize: 12, color: '#FFFFFF' },
-  stepToggle: { minHeight: 48, paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  stepToggle: { flex: 1, minHeight: 48, paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
   stepTitle: { flex: 1, fontSize: 13, lineHeight: 20, color: rc.ink },
   retry: { padding: 12, backgroundColor: rc.soft, borderRadius: 12, gap: 8 },
   latest: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, paddingHorizontal: 16 },
   thread: { flex: 1 },
   threadIn: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 },
-  chips: { flexGrow: 0, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rc.line },
-  chipsIn: { gap: 6, paddingHorizontal: 10, paddingVertical: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 10, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rc.line },
+  more: { minHeight: 48, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
   q: { minHeight: 48, justifyContent: 'center', borderWidth: 1, borderColor: rc.line, borderRadius: 14, paddingHorizontal: 11, paddingVertical: 5, backgroundColor: rc.paper },
   qMain: { backgroundColor: rc.main, borderColor: rc.main },
   qT: { fontSize: 13, color: rc.secondary },
