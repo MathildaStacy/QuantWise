@@ -1,60 +1,25 @@
 /**
- * 原书的一个内容块（读书模式、原文预览）：段落用宋体，公式用 MathView，表格转成 Markdown 表格，图片从书目录读。
+ * 原书内容块：跟随阅读字号，表格保留合并单元格，插图按原始比例显示。
  */
 import { memo, useState } from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
-import { htmlTableToMarkdown, inlineParts } from '../../book/markup';
+import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { BookBlock } from '../../book/types';
+import { bookListItem } from '../../book/presentation';
 import { MathView } from '../math/MathView';
-import { rc, serif } from '../readTheme';
-import { Markdown } from './Markdown';
+import { rc } from '../readTheme';
+import { useBookTypography } from '../readerTypography';
+import { BlockInline } from './BookInline';
+import { BookTable } from './BookTable';
+export { BlockInline } from './BookInline';
 
-export function BlockInline({ text, style }: { text: string; style?: object }) {
-  const parts = inlineParts(text);
-  // 简单式子可随正文排；矩阵等不能无损转成 Unicode 的式子，完整交给离线 MathJax。
-  if (parts.some(x => x.t === 'math')) {
-    const groups: { tex?: string; parts: typeof parts }[] = [];
-    for (const part of parts) {
-      if (part.t === 'math') groups.push({ tex: part.v, parts: [] });
-      else {
-        const last = groups[groups.length - 1];
-        if (last && !last.tex) last.parts.push(part);
-        else groups.push({ parts: [part] });
-      }
-    }
-    return <View>{groups.map((g, i) => g.tex ? <MathView key={i} tex={g.tex} /> : (
-      <Text key={i} style={[s.p, style]} selectable>{g.parts.map((p, j) => p.t === 'bold' ? <Text key={j} style={s.bold}>{p.v}</Text> : p.v)}</Text>
-    ))}</View>;
-  }
-  return (
-    <Text style={[s.p, style]} selectable>
-      {parts.map((x, i) =>
-        x.t === 'bold' ? (
-          <Text key={i} style={s.bold}>
-            {x.v}
-          </Text>
-        ) : x.t === 'math' ? (
-          <Text key={i} style={s.code}>
-            {x.v}
-          </Text>
-        ) : (
-          x.v
-        ),
-      )}
-    </Text>
-  );
-}
-
-/** 原页截图按实际比例展开，避免完整一页被压进普通插图的 220px 框。 */
-function SourcePageImage({ uri, label }: { uri: string; label: string }) {
-  const [ratio, setRatio] = useState(0.707);
-  return <Image source={{ uri }} accessibilityLabel={label} resizeMode="contain" style={[s.sourcePage, { aspectRatio: ratio }]} onLoad={({ nativeEvent }) => {
+/** 插图和原页按实际比例展开，引用预览保留紧凑高度。 */
+function BookImage({ uri, label, sourcePage, compact }: { uri: string; label: string; sourcePage: boolean; compact: boolean }) {
+  const [ratio, setRatio] = useState(sourcePage ? 0.707 : 1.5);
+  return <Image source={{ uri }} accessibilityLabel={label} resizeMode="contain" style={[s.image, compact ? s.imgSmall : { aspectRatio: ratio }]} onLoad={({ nativeEvent }) => {
     const { width, height } = nativeEvent.source;
     if (width > 0 && height > 0) setRatio(width / height);
   }} />;
 }
-
-const noLink = () => undefined;
 
 export const BookBlockView = memo(function BlockView({
   b,
@@ -66,40 +31,32 @@ export const BookBlockView = memo(function BlockView({
   dir?: string;
   compact?: boolean;
 }) {
+  const { body, caption } = useBookTypography();
+  const list = bookListItem(b);
+  if (list) return <View style={s.li}>
+    <Text style={[body, s.mark]}>{list.marker}</Text>
+    <View style={s.liText}><BlockInline text={list.text} /></View>
+  </View>;
   switch (b.type) {
     case 'eq':
-      return <MathView tex={b.text} />;
-    case 'li':
-      return (
-        <View style={s.li}>
-          <Text style={[s.p, s.mark]}>{b.mark ?? '•'}</Text>
-          <BlockInline text={b.text} style={s.liText} />
-        </View>
-      );
+      return <MathView tex={b.text} fontSize={body.fontSize} />;
     case 'code':
       return (
-        <Text style={s.pre} selectable>
-          {b.text}
-        </Text>
+        <ScrollView horizontal nestedScrollEnabled style={s.pre} accessibilityLabel="代码，可横向滚动">
+          <Text style={[s.code, { fontSize: body.fontSize! - 3, lineHeight: body.lineHeight! - 6 }]} selectable>{b.text}</Text>
+        </ScrollView>
       );
-    case 'table': {
-      const md = /^\s*\|/.test(b.text) ? b.text : b.html ? htmlTableToMarkdown(b.html) : null;
-      return md ? <Markdown text={md} onLink={noLink} /> : <BlockInline text={b.text} />;
-    }
+    case 'table':
+      return <BookTable text={b.text} html={b.html} />;
     case 'img':
       return (
         <View style={s.fig}>
-          {b.image?.startsWith('source-pages/') && dir && !compact ? (
-            <SourcePageImage uri={'file://' + dir.replace(/\/$/, '') + '/' + b.image} label={b.text} />
-          ) : b.image && dir ? (
-            <Image
-              source={{ uri: (/^\w+:/.test(b.image) ? '' : 'file://' + dir.replace(/\/$/, '') + '/') + b.image }}
-              style={compact ? s.imgSmall : s.img}
-              resizeMode="contain"
-              accessibilityLabel={b.text || '图'}
-            />
-          ) : null}
-          {b.text ? <Text style={s.caption}>{b.text}</Text> : null}
+          {b.image && dir ? <BookImage
+            key={b.image}
+            uri={(/^\w+:/.test(b.image) ? '' : 'file://' + dir.replace(/\/$/, '') + '/') + b.image}
+            label={b.text || '书中插图'} sourcePage={b.image.startsWith('source-pages/')} compact={compact}
+          /> : null}
+          {b.text ? <BlockInline text={b.text} style={caption} /> : null}
         </View>
       );
     default:
@@ -108,17 +65,13 @@ export const BookBlockView = memo(function BlockView({
 });
 
 const s = StyleSheet.create({
-  p: { fontFamily: serif, fontSize: 16.5, lineHeight: 30, color: rc.ink },
   small: { fontSize: 15, lineHeight: 26 },
-  bold: { fontWeight: '700' },
-  code: { fontFamily: 'monospace', fontSize: 14, color: rc.code },
-  li: { flexDirection: 'row', gap: 6 },
+  code: { fontFamily: 'monospace', color: rc.ink },
+  li: { flexDirection: 'row', gap: 8 },
   mark: { color: rc.muted, minWidth: 18 },
   liText: { flex: 1 },
-  pre: { fontFamily: 'monospace', fontSize: 13, lineHeight: 21, color: rc.ink, backgroundColor: rc.soft, borderRadius: 8, padding: 10 },
-  fig: { alignItems: 'center', gap: 4 },
-  sourcePage: { width: '100%' },
-  img: { width: '100%', height: 220 },
-  imgSmall: { width: '100%', height: 140 },
-  caption: { fontSize: 12, color: rc.muted, textAlign: 'center' },
+  pre: { backgroundColor: rc.soft, borderRadius: 4, padding: 14 },
+  fig: { gap: 12, marginVertical: 8 },
+  image: { width: '100%' },
+  imgSmall: { height: 140 },
 });

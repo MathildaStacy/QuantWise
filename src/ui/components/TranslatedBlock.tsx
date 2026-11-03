@@ -1,29 +1,39 @@
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import type { BookBlock } from '../../book/types';
+import { bookListItem } from '../../book/presentation';
 import type { TranslationPair } from '../../study/translation';
 import { rc } from '../readTheme';
+import { useBookTypography } from '../readerTypography';
 import { BlockInline, BookBlockView } from './BookBlock';
 
 export function TranslatedBlock({ b, pairs, dir }: { b: BookBlock; pairs: TranslationPair[]; dir?: string }) {
-  return <View>
-    {b.type === 'img' ? <BookBlockView b={{ ...b, text: '' }} dir={dir} /> : null}
-    {pairs.map((pair, i) => <View key={i} style={st.pair}>
-      <View style={st.source}>
-        {b.type === 'li' && i === 0 ? <Text style={st.marker}>{b.mark ?? '•'}</Text> : null}
-        <View style={st.words}><BlockInline text={pair.source} /></View>
-      </View>
-      <View style={st.translation}>
-        <BlockInline text={pair.translation} style={st.chinese} />
-      </View>
-    </View>)}
+  const { prefs, body, caption, translation } = useBookTypography();
+  const list = bookListItem(b);
+  // Display grouping never rewrites cached sentence pairs or the source paragraph.
+  const displayed = prefs.parallel === 'sentence' ? pairs : [{
+    source: b.text,
+    translation: pairs.map(p => p.translation.trim()).join(''),
+  }];
+  const isCaption = b.type === 'img';
+  return <View style={list ? st.list : undefined}>
+    {list ? <Text style={[body, st.marker]}>{list.marker}</Text> : null}
+    <View style={st.words}>
+      {isCaption ? <BookBlockView b={{ ...b, text: '' }} dir={dir} /> : null}
+      {displayed.map((pair, i) => <View key={i} style={[st.pair, i > 0 && st.nextPair]}>
+        <BlockInline text={i === 0 && list ? bookListItem({ ...b, text: pair.source })?.text ?? pair.source : pair.source} style={isCaption ? caption : undefined} />
+        <View style={st.translation}>
+          <BlockInline text={i === 0 && list ? bookListItem({ type: 'p', mark: null, text: pair.translation })?.text ?? pair.translation : pair.translation} style={isCaption ? caption : translation} />
+        </View>
+      </View>)}
+    </View>
   </View>;
 }
 
 const st = StyleSheet.create({
-  pair: { marginBottom: 14, gap: 4 },
-  source: { flexDirection: 'row', gap: 6 },
+  pair: { gap: 10 },
+  nextPair: { marginTop: 20 },
+  list: { flexDirection: 'row', gap: 8 },
   words: { flex: 1 },
-  marker: { minWidth: 18, fontSize: 16, lineHeight: 30, color: rc.secondary },
-  translation: { paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: rc.line },
-  chinese: { fontFamily: Platform.select({ ios: 'System', default: 'sans-serif' }), fontSize: 16, lineHeight: 28, color: rc.secondary },
+  marker: { minWidth: 18, color: rc.secondary },
+  translation: { paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: rc.line },
 });

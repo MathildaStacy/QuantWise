@@ -307,3 +307,15 @@ This extension governs the study shelf, offline introduction, section reader, st
 - Wrap-up starts in reading mode with optional editing. Flashcard selection and editing have separate targets. 保存，今天到这里 and 保存，继续下一节 name the resulting destination. Confirmation dialogs keep actions visible while long content scrolls.
 
 Native evidence: `.impeccable/critique/2026-11-01__implementation-acceptance.md`. Verified Android phone widths are approximately 411dp at normal type and 360dp at 1.3× type; these captures do not establish tablet, iOS, or full screen-reader coverage.
+
+## Ebook reading · 2026-11-03
+
+This extension governs `StudyReader`, source blocks and Chinese translations. Book typography lives in `src/ui/readerTypography.ts`; the AI conversation and lecture/chart type systems retain their own roles.
+
+- Use native serif for both original prose and Chinese by default; offer native sans as a reader preference. Body sizes are 16, 18, 20 or 22sp, default 18sp. Normal leading is rounded 1.7× size; relaxed leading is 1.95×. Section titles are body +6sp at 1.4× leading; captions and table cells are body −3sp at 1.6× leading. Native text and formulas follow OS font scaling.
+- Reading pages have 24dp horizontal gutters, a centered outer width capped at 740dp, 24dp below the section title and 20dp between source blocks. Paragraph spacing provides the rhythm without an additional first-line indent. Do not show a paragraph number beside every paragraph; citation labels remain in accessibility names and paragraph actions.
+- Default bilingual presentation is a complete source paragraph followed by its Chinese translation. Chinese uses `#4D4A44` and a 1dp neutral rule with a 12dp inset. The optional sentence mode uses the same cached pairs in their original order. Grouping is presentation only; it does not rewrite source text, translation cache or citation IDs.
+- Keep PDF 原页, 导读 and 排版 in a quiet toolbar with 48dp touch targets. Appearance settings expand inline, save independently and preserve the visible block during reflow. Keep translation progress, stop, retry and errors visible when applicable.
+- Preserve list markers with a hanging indent, table row/column spans, image aspect ratios, captions and table notes. Wide tables and code scroll horizontally inside the page. Complex formulas retain offline MathJax rendering and scale with the chosen type size.
+
+Native finish review: [real-book acceptance](docs/design/ebook-reading-20261103.md), with 411dp/normal-type and 360dp/1.3×-type evidence. System-dark testing verifies the existing light reader, not a separate dark theme. Verdict: ready for integration review on these Android phone sizes. Existing OCR defects, iOS, tablets and physical-device validation are outside this evidence.

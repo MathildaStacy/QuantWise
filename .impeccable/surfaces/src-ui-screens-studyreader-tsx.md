@@ -5,20 +5,20 @@ primary_target: "src/ui/screens/StudyReader.tsx"
 related_targets: ["src/ui/screens/StudyScreen.tsx","src/ui/components/TranslatedBlock.tsx"]
 ---
 
-# Study reader translation
+# Ebook reading and translation
 
-Mode: Read. Extend the existing Android reader; use the product plan in `docs/design/ai-translation.md`. User confirmed simplified Chinese only. No new visual world or generated artwork.
+Mode: Read. Extend the existing Android reader; use `docs/design/ai-translation.md` and the real-book acceptance record in `docs/design/ebook-reading-20261103.md`. Simplified Chinese translation only. Preserve the warm paper identity and existing learning actions.
 
 ## Direction contract
 
-THESIS: Keep an original sentence and its Chinese translation together so the reader can check meaning without moving between screens.
+THESIS: Read a complete source paragraph and its Chinese translation in a continuous book page; switch to sentence pairs when checking meaning closely.
 
-OWN-WORLD: Inherit warm paper, serif source text, native sans translation, muted ink and blue actions from the existing reader. A fine neutral rule identifies translations; paragraphs remain continuous.
+OWN-WORLD: Warm paper, native serif for both languages by default, quieter translation ink and blue actions. A fine neutral rule identifies Chinese text without a card. Native sans is an optional reading preference; interface controls retain their native sans role.
 
-STORY: Choose 中文对照, explicitly translate the section or one paragraph, read completed pairs, stop or retry remaining work. Cached text survives reopening.
+STORY: Open a real book, adjust font/size/leading if needed, choose 中文对照, explicitly translate the section or one paragraph, read completed paragraphs or sentence pairs, stop or retry remaining work. Settings and cached translations survive reopening. Type changes preserve the visible source block and relative position.
 
-FIRST VIEWPORT: Existing book header, one 原文 / 中文对照 / AI 讲解 row, compact progress with translate/stop action, section heading and first source/translation pairs. No second mode row. Text wraps at narrow phone widths and enlarged system type.
+FIRST VIEWPORT: Existing book header and 原文 / 中文对照 / AI 讲解 row, quiet PDF 原页 / 导读 / 排版 tools, optional translation progress, section heading and continuous prose. Appearance controls expand inline on request. No repeated paragraph numbers. A 24dp gutter, 18sp default body, 31sp line height and 20dp paragraph gap establish the book rhythm. Tables retain merged cells, figures retain their aspect ratio, and captions use a smaller role.
 
 FORM: Established reader extension, fixed by the current implementation and confirmed brief; code-led. No concept roll because the surface identity is already settled. No comp or shipping raster.
 
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+FINISH: Native Assessment A completed against six real books, paragraph and sentence translation, tables, figures, code and formulas. Verdict: ready for integration review on the tested Android phone sizes; see `docs/design/ebook-reading-20261103.md`. No web detector applies and no generated raster ships. Existing OCR content defects remain separately recorded.
