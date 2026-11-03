@@ -11,7 +11,7 @@ import {
   type MathRenderer,
 } from '../../src/ui/math/bridge';
 import { MathHost } from '../../src/ui/math/MathHost';
-import { MathView } from '../../src/ui/math/MathView';
+import { MathView, splitTag } from '../../src/ui/math/MathView';
 import { aiColor } from '../../src/ui/aiTheme';
 
 const result: MathRender = {
@@ -489,6 +489,17 @@ describe('公式视图 MathView', () => {
       minWidth: '100%',
       justifyContent: 'center',
     });
+  });
+
+  test('公式编号拿出来写在公式右边，不让 MathJax 留出整行空白', async () => {
+    const render = jest.fn().mockResolvedValue(result);
+    await act(async () => {
+      tree = create(<MathView tex={'x_i = (a, b).\\tag{1.1}'} renderer={fake(render)} />);
+    });
+    expect(render).toHaveBeenCalledWith('x_i = (a, b).', true);
+    expect(tree!.root.findAllByType(Text).some(n => n.props.children === '(1.1)')).toBe(true);
+    expect(splitTag('a \\tag*{★} + b')).toEqual({ body: 'a  + b', tag: '★' });
+    expect(splitTag('\\sqrt{x}')).toEqual({ body: '\\sqrt{x}', tag: null });
   });
 
   test('渲染失败（含超时）时一直显示原始 TeX', async () => {

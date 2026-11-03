@@ -14,6 +14,7 @@ import { secLabel } from '../../book/book';
 import type { ChartData } from '../../quant/charts';
 import type { CiteCheck } from '../../book/markup';
 import { citeCheck, progressNow, type StudySession } from '../../study/session';
+import { MARKET_TOOLS } from '../../study/tools';
 import { ChartCard } from '../charts/ChartCard';
 import { pinnable, type PinSpot, type TurnInfo } from '../charts/ChartPin';
 import { StudyText } from '../components/StudyText';
@@ -25,6 +26,8 @@ interface Turn {
   question: string | null;
   /** 换了模型 / 思考 / 搜索之后的第一问：「更换模型：从这里起用 GPT-6.1-sol · 思考低」。 */
   divider?: string;
+  /** 从原文某一段发起的提问：那一段的出处和开头。 */
+  source?: NonNullable<StoredMessage['ui']>['studySource'];
   /** 这一问已经整理进摘要（不再发给模型，界面照常显示）。 */
   compacted: boolean;
   tools: ToolUi[];
@@ -39,7 +42,7 @@ export function turnsOf(messages: StoredMessage[]): Turn[] {
   const out: Turn[] = [];
   for (const m of messages) {
     if (m.role === 'user' || !out.length) {
-      out.push({ first: m.id, question: m.role === 'user' ? m.ui?.question ?? null : null, divider: m.role === 'user' ? m.ui?.divider : undefined, compacted: m.compacted, tools: [], answers: [], flow: [], cards: [] });
+      out.push({ first: m.id, question: m.role === 'user' ? m.ui?.question ?? null : null, divider: m.role === 'user' ? m.ui?.divider : undefined, source: m.role === 'user' ? m.ui?.studySource : undefined, compacted: m.compacted, tools: [], answers: [], flow: [], cards: [] });
       if (m.role === 'user') {
         continue;
       }
@@ -60,6 +63,17 @@ export function turnsOf(messages: StoredMessage[]): Turn[] {
       t.answers.push(m);
       t.flow.push({ m });
     }
+  }
+  return out;
+}
+
+/** 每一问讲解里的「真实行情」有没有工具算出的数撑着：这一问或更早成功调用过行情、因子工具才算。 */
+export function realChecked(turns: Turn[]): Map<number, boolean> {
+  const out = new Map<number, boolean>();
+  let ok = false;
+  for (const t of turns) {
+    ok = ok || t.tools.some(x => !x.error && MARKET_TOOLS.has(x.name));
+    out.set(t.first, ok);
   }
   return out;
 }
@@ -97,6 +111,8 @@ export interface ThreadActions {
   onSummary?: () => void;
   /** 用户展开详情前暂停跟随，避免内容增高把当前回答推走。 */
   onDisclosure?: () => void;
+  /** 图上点中某一天后「问这一天」：把这一天的读数带到输入框。 */
+  onAskChart?: (text: string) => void;
 }
 
 export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
@@ -113,6 +129,7 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
   const check = useMemo(() => citeCheck(s), [s.loaded, s.extra, s.sections, s.section, s.blocks]); // eslint-disable-line react-hooks/exhaustive-deps
   const folds = p.folds ?? [];
   const turns = turnsOf(s.messages);
+  const checked = realChecked(turns);
   const out: { id: number; node: ReactElement }[] = [];
   const compacted = turns.filter(t => t.compacted && t.question != null).length;
   for (let i = 0; i < turns.length; i++) {
@@ -133,7 +150,7 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
             <Text style={st.foldT} numberOfLines={1}>已解决：{f.title}（{inside.length} 问）</Text>
             <Text style={st.foldS}>岔路 · {f.sectionId} {open[f.fromMsg] ? '▴' : '▾'}</Text>
           </Pressable>
-          {open[f.fromMsg] ? inside.map(x => <TurnView key={x.first} t={x} detour a={a} check={check} streaming={false} />) : null}
+          {open[f.fromMsg] ? inside.map(x => <TurnView key={x.first} t={x} detour a={a} check={check} streaming={false} realOk={!!checked.get(x.first)} />) : null}
           <Text style={st.sys}>回到 {secLabel(s.section)}：刚才讲到第 {f.step + 1} 步「{s.steps[f.step]?.title ?? ''}」</Text>
         </View>,
       });
@@ -141,23 +158,27 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
       continue;
     }
     const detour = !!p.detour && t.first >= p.detour.fromMsg;
-    out.push({ id: t.first, node: <TurnView t={t} detour={detour} a={a} check={check} streaming={!!busy && i === turns.length - 1} onChartBox={onChartBox} /> });
+    out.push({ id: t.first, node: <TurnView t={t} detour={detour} a={a} check={check} streaming={!!busy && i === turns.length - 1} realOk={!!checked.get(t.first)} onChartBox={onChartBox} /> });
   }
   return (
     <View>
       {out.map(({ id, node }) => <Slot key={id} id={id} report={onTurnLayout}>{node}</Slot>)}
-      {busy ? <Text style={st.busy}>{busy}</Text> : null}
     </View>
   );
 }
 
-function TurnView({ t, detour, a, check, streaming, onChartBox }: { t: Turn; detour: boolean; a: ThreadActions; check: CiteCheck; streaming: boolean; onChartBox?: (key: string, spot: PinSpot | null) => void }) {
+function TurnView({ t, detour, a, check, streaming, realOk, onChartBox }: { t: Turn; detour: boolean; a: ThreadActions; check: CiteCheck; streaming: boolean; realOk: boolean; onChartBox?: (key: string, spot: PinSpot | null) => void }) {
   const offer = t.answers.map(m => m.ui?.searchOffer).find(Boolean);
   return (
     <View style={detour && st.detour}>
       {t.divider ? <Text style={st.sys}>{t.divider}</Text> : null}
       {t.question ? (
         <View style={st.uRow}>
+          {t.source ? <Pressable style={st.sourceQuote} accessibilityRole="button" accessibilityLabel={'查看提问原文 ' + t.source.label}
+            onPress={() => a.onLink('cite:' + t.source!.sectionId + '#' + t.source!.no)}>
+            <Text style={st.sourceLabel}>{'提问原文 · ' + t.source.label}</Text>
+            <Text style={st.sourceExcerpt} numberOfLines={3}>{t.source.text}</Text>
+          </Pressable> : null}
           <Text style={st.u}>{t.question}</Text>
         </View>
       ) : null}
@@ -167,14 +188,14 @@ function TurnView({ t, detour, a, check, streaming, onChartBox }: { t: Turn; det
           return x.charts.map((c, k) => {
             const key = x.id + ':' + k;
             const box = onChartBox && pinnable(c) ? (b: { y: number; h: number } | null) => onChartBox(key, b && { turn: t.first, ...b, data: c }) : undefined;
-            return <ChartCard key={'c' + key} data={c} onBox={box} />;
+            return <ChartCard key={'c' + key} data={c} onBox={box} onAsk={a.onAskChart} />;
           });
         }
         const m = x.m;
         const text = textOf(m);
         return (
           <View key={m.id}>
-            {text.trim() ? <StudyText text={text} check={check} onLink={a.onLink} streaming={streaming && m.id === -1} /> : null}
+            {text.trim() ? <StudyText text={text} check={check} onLink={a.onLink} streaming={streaming && m.id === -1} realChecked={realOk} /> : null}
             {m.ui?.error ? <Text style={st.err}>{m.ui.error}</Text> : null}
           </View>
         );
@@ -303,7 +324,9 @@ const st = StyleSheet.create({
   toolErr: { color: '#B5462F' },
   err: { fontSize: 13, color: '#B5462F', marginVertical: 6 },
   sys: { textAlign: 'center', fontSize: 12, color: rc.muted, marginVertical: 10 },
-  busy: { fontSize: 13, color: rc.accent, marginVertical: 10 },
+  sourceQuote: { maxWidth: '85%', alignSelf: 'flex-end', minHeight: 48, paddingHorizontal: 12, paddingVertical: 10, gap: 4, borderLeftWidth: 1, borderLeftColor: rc.line, marginBottom: 6 },
+  sourceLabel: { fontSize: 12, lineHeight: 20, color: rc.main },
+  sourceExcerpt: { fontSize: 13, lineHeight: 21, color: rc.secondary },
   fold: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginVertical: 10, padding: 10, borderRadius: 10, backgroundColor: rc.detourBg },
   foldT: { flex: 1, fontSize: 13, color: rc.detour },
   foldS: { fontSize: 11, color: rc.detour },

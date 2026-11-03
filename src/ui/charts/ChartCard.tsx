@@ -1,5 +1,6 @@
 /**
- * 对话里的图表卡片：标题、「真实行情」标签、看点、图、点图或按住拖动看某一天的读数、重点区间读数、图例、口径，「全屏」看大图和数据表。
+ * 对话里的图表卡片：标题、「真实行情」标签、看点、图、点图或按住拖动看某一天的读数（讲解里可以带着这一天去提问）、重点区间读数、图例、口径、
+ * 「怎么看」读图说明，「全屏」看大图和数据表。
  * 区间读数和发给 AI 的工具摘要是同一份数（quant/charts.ts 的 focusStats），见 docs/design/ai-lecture-charts.md §2.3。
  */
 import { useNavigation } from '@react-navigation/native';
@@ -27,7 +28,7 @@ import type { RootStackParamList } from '../navigation/types';
 import { groupColor, rc, SERIES_COLORS } from '../readTheme';
 import { color, num } from '../theme';
 import { QuantChart } from './QuantChart';
-import { readout } from './quantDraw';
+import { howToRead, readout } from './quantDraw';
 
 export function legendOf(c: ChartData): { color: string; label: string; dashed?: boolean }[] {
   switch (c.kind) {
@@ -146,8 +147,14 @@ export function Takeaway({ data }: { data: ChartData }) {
   ) : null;
 }
 
-export function ChartCard({ data, onBox }: { data: ChartData; onBox?: (box: { y: number; h: number } | null) => void }) {
+export function ChartCard({ data, onBox, onAsk }: {
+  data: ChartData;
+  onBox?: (box: { y: number; h: number } | null) => void;
+  /** 讲解里：把点中的那一天（图名 + 读数）带到输入框，接着写问题。 */
+  onAsk?: (text: string) => void;
+}) {
   const [extremes, setExtremes] = useState(false);
+  const [guide, setGuide] = useState(false);
   // 点一下或按住拖动看某一天：十字线画在卡片里，读数写在图下（拖动时图顶另有读数牌），不用跳全屏（各组收益图没有日期，不点）
   const [pick, setPick] = useState<number | null>(null);
   const inspect = data.kind !== 'groups';
@@ -176,6 +183,9 @@ export function ChartCard({ data, onBox }: { data: ChartData; onBox?: (box: { y:
           {pick != null ? (
             <>
               <Text style={[s.pickT, num]}>{readout(data, pick)}</Text>
+              {onAsk ? <Pressable style={s.ask} onPress={() => onAsk('看图中这一天：' + chartTitle(data) + '，' + readout(data, pick) + '。')} accessibilityRole="button" accessibilityLabel="就这一天提问">
+                <Text style={s.fullT}>问这一天</Text>
+              </Pressable> : null}
               <Pressable onPress={() => setPick(null)} hitSlop={12} accessibilityRole="button" accessibilityLabel="收起这一天的读数">
                 <X size={15} color={rc.muted} />
               </Pressable>
@@ -199,11 +209,17 @@ export function ChartCard({ data, onBox }: { data: ChartData; onBox?: (box: { y:
         <Text style={s.ft}>
           {chartFoot(data)}
         </Text>
+        <Pressable onPress={() => setGuide(v => !v)} accessibilityRole="button" accessibilityLabel="怎么看这张图" accessibilityState={{ expanded: guide }} style={s.full}>
+          <Text style={s.fullT}>怎么看</Text>
+        </Pressable>
         <Pressable onPress={open} hitSlop={8} accessibilityRole="button" accessibilityLabel="全屏查看图表" style={s.full}>
           <Maximize2 size={13} color={rc.main} />
           <Text style={s.fullT}>全屏</Text>
         </Pressable>
       </View>
+      {guide ? <View style={s.guide}>
+        {howToRead(data).map(line => <Text key={line} style={s.guideT}>{'· ' + line}</Text>)}
+      </View> : null}
     </View>
   );
 }
@@ -216,8 +232,11 @@ const s = StyleSheet.create({
   take: { paddingHorizontal: 12, paddingTop: 2, fontSize: 14, lineHeight: 21, color: rc.ink },
   takeK: { fontSize: 12, color: rc.focusInk, fontWeight: '600' },
   plot: { paddingHorizontal: 6, paddingTop: 6 },
-  pick: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingHorizontal: 12, paddingTop: 2 },
+  pick: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 2 },
   pickT: { flex: 1, fontSize: 12, lineHeight: 18, color: rc.ink },
+  ask: { minHeight: 48, justifyContent: 'center' },
+  guide: { paddingHorizontal: 12, paddingBottom: 10, gap: 4 },
+  guideT: { fontSize: 13, lineHeight: 20, color: rc.secondary },
   hint: { fontSize: 12, lineHeight: 18, color: rc.muted },
   focusBox: { paddingHorizontal: 12, paddingTop: 6, gap: 8 },
   focus: { borderLeftWidth: 3, borderLeftColor: rc.focusEdge, paddingLeft: 8, gap: 1 },

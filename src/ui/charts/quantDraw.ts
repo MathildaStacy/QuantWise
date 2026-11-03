@@ -1,7 +1,7 @@
 /**
  * 因子和行情图的几何（纯函数，可单测）：坐标换算、折线路径、刻度、十字线读数。画图组件在 QuantChart.tsx。
  */
-import { fmtSub, focusSpan, SUB_NAME, type ChartData, type Focus } from '../../quant/charts';
+import { fmtSub, focusSpan, md, SUB_NAME, type ChartData, type Focus } from '../../quant/charts';
 import type { Series } from '../../quant/indicators';
 
 export function bounds(values: Series[], include: number[] = []): [number, number] {
@@ -236,7 +236,10 @@ export function readout(c: ChartData, i: number, focusNote = true): string {
   const inFocus = f ? ' · 在「' + f.label + '」区间内' : '';
   switch (c.kind) {
     case 'price': {
-      const day = i > 0 ? '（当日 ' + pct(c.close[i] / c.close[i - 1] - 1, 2) + '）' : '';
+      // 区间里的一天另写离区间起点走了多少（和图下区间读数同一个基数）
+      const sp = f ? focusSpan(c.dates, f) : null;
+      const sofar = sp && i !== sp.k ? (sp.k < sp.a ? '较前收 ' : '较首日 ') + pct(c.close[i] / c.close[sp.k] - 1, 2) : '';
+      const day = i > 0 || sofar ? '（' + [i > 0 ? '当日 ' + pct(c.close[i] / c.close[i - 1] - 1, 2) : '', sofar].filter(Boolean).join('，') + '）' : '';
       const parts = [c.dates[i] + ' 收盘 ' + c.close[i].toFixed(2) + day];
       const ma = c.ma?.values[i];
       if (ma != null) {
@@ -259,6 +262,56 @@ export function readout(c: ChartData, i: number, focusNote = true): string {
       return c.dates[i] + ' · Rank IC ' + (c.ic[i] > 0 ? '+' : '') + c.ic[i].toFixed(3) + ' · 累计 IC ' + c.ic.slice(0, i + 1).reduce((sum, v) => sum + v, 0).toFixed(3);
     case 'groups':
       return 'Q' + (i + 1) + ' 每期平均 ' + pct(c.means[i], 2);
+  }
+}
+
+/** 「怎么看」：卡片里给刚入门的人的读图说明，只说这张图上真有的东西（口径公式在全屏的「怎么算的」）。 */
+export function howToRead(c: ChartData): string[] {
+  const focus = (c.kind === 'price' || c.kind === 'compare') && c.focus?.length
+    ? ['黄色区间是讲解里说到的那段；顶部标签和图下读数是这段的区间涨跌']
+    : [];
+  switch (c.kind) {
+    case 'price':
+      return [
+        '蓝线是每天的收盘价；前复权把分红、送股折算进过去的价格，前后涨跌才能直接比',
+        ...focus,
+        ...(c.focus?.length ? ['空心点：左边是「前收」（区间开始前一天的收盘，算区间涨跌的基数），右边是区间最后一天'] : []),
+        ...(c.marks?.some(m => m.kind === 'point') ? ['锈红色的点是讲解要你看的那一天，日期写在横轴上'] : []),
+        ...(c.ma ? ['紫线 MA' + c.ma.n + ' 是最近 ' + c.ma.n + ' 天收盘的平均；收盘在它上方，说明这段时间偏强'] : []),
+        ...(c.band ? ['布林带：价格碰到上轨或下轨，说明离 20 日均价偏得比较远'] : []),
+        ...(c.sub
+          ? [
+              {
+                mom20: '下面的柱子是 20 日动量：今天比 20 个交易日前涨了多少；红柱在 0 线上方是在涨，绿柱在下方是在跌',
+                mom60: '下面的柱子是 60 日动量：今天比 60 个交易日前涨了多少；红柱在 0 线上方是在涨，绿柱在下方是在跌',
+                vol20: '下面的线是 20 日年化波动：最近 20 天涨跌有多剧烈，线越高走得越颠簸',
+                dd: '下面的绿色区域是回撤：比之前的最高收盘跌了多少，越深说明离高点越远',
+                rsi14: 'RSI(14) 在 0–100 之间，最近上涨越占上风越高；70 以上常叫超买、30 以下叫超卖，只是参考，不是买卖信号',
+                volume: '下面的柱子是成交量：越高成交越活跃；红柱是当天收盘比前一天高，绿柱是更低',
+              }[c.sub.kind],
+            ]
+          : []),
+        '颜色按 A 股习惯：红涨绿跌',
+      ];
+    case 'compare':
+      return [
+        (c.base ? '每只都换算成 ' + md(c.base) + ' 收盘 = 100' : '每只都换算成第一天收盘 = 100') + '：线越高，说明从那天以来涨得越多，几只可以直接比',
+        ...focus,
+        ...(c.focus?.length ? ['区间右缘写着每只在区间里的涨跌'] : []),
+      ];
+    case 'factor':
+      return [
+        '按因子值把股票从低到高分成几组（Q1 最低），每条线是这一组的净值',
+        '最高组和最低组拉得越开、各组排得越整齐，说明这个因子越能区分股票',
+        '虚线是池子里全部股票等权的基准，多空线是最高组减最低组',
+      ];
+    case 'ic':
+      return [
+        '每根柱子是一期的 Rank IC：因子排名和下一期收益排名有多一致，红柱为正、绿柱为负',
+        '累计 IC 一路向上，说明因子的方向长期稳定',
+      ];
+    case 'groups':
+      return ['每根柱子是一组的每期平均收益，从左到右因子值从低到高；从左到右一路升高或降低，说明因子能区分好坏'];
   }
 }
 

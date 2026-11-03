@@ -68,7 +68,8 @@ async function press(label: string) {
 test('部分译文有独立单段入口；切换分组不发请求，失败重试只补缺失段', async () => {
   await render();
   expect(text()).toContain('收益具有不确定性。');
-  expect(text()).toContain('尚无译文');
+  expect(text()).toContain('还剩 1 段待译，已译内容可离线阅读。');
+  expect(text()).not.toContain('尚无译文');
   await press('对照方式：按段阅读');
   await press('逐句核对');
   expect(fetcher).not.toHaveBeenCalled();

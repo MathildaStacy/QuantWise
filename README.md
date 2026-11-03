@@ -9,7 +9,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 ## QuantWise
 
-当前代码版本 **v1.7.0**：阅读排版与导读使用独立面板，PDF 原页随阅读位置更新，节末可连续读上一节／下一节；中文对照保留原文位置，支持定位失败段和恢复本地译文。AI 讲解精简步骤与操作入口，引用先显示原段，工具记录按需展开，钉住的小图完整占位。见 [发布说明](docs/releases/v1.7.0.md)。
+当前正式版 **v1.8.0**：读书时可以从目录直接换节，宽公式、表格和代码提示可以横向滑动，带编号的公式正常显示；翻译前说明要译几段。AI 讲解保留提问的原文段落，发送即清空输入框，生成状态和停止固定在输入框上方。讲解里的行情图多了「怎么看」读图说明和「问这一天」，区间里的每一天写明较前收涨跌，没有工具数据撑着的「真实行情」会标成未核对。见 [发布说明](docs/releases/v1.8.0.md)。
 
 桌面名称、启动页、通知、iOS 工程和原型已统一命名。Android 包名 `com.quantwise`、数据库与服务配置保持兼容，可直接覆盖 v1.0.0 及更早版本，保留已有数据。
 
@@ -28,7 +28,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 内置入门体验无需网络或 AI Key。自由问答需要自己的 AI 服务（「我的 → 供应商与模型」）；导入 PDF 时需要 MinerU Token（「我的 → 解析服务（MinerU）」）。
 
-已发布安装包：[下载 v1.6.0 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.6.0/QuantWise-v1.6.0-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
+已发布安装包：[下载 v1.8.0 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.8.0/QuantWise-v1.8.0-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
 
 开发：和下面 AShareSim 的一样（`npm run check`、`npm run android`）。`npm install` 会把离线 MathJax 复制进 `android/app/src/main/assets/math/`。没有 AI Key 时可以在电脑上运行 `node scripts/mock-ai.cjs`，再在调试版「我的 → 调试页 → 接本地模拟 AI」，用固定脚本走听讲流程。
 

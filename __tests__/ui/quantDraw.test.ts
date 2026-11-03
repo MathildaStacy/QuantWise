@@ -12,6 +12,7 @@ import {
   bandX,
   focusAt,
   howComputed,
+  howToRead,
   labelWidth,
   niceTicks,
   readout,
@@ -124,10 +125,27 @@ describe('重点区间', () => {
     const i = c.dates.indexOf('2026-09-15');
     expect(focusAt(c, i)?.label).toBe('9 月');
     expect(focusAt(c, c.dates.indexOf('2026-08-31'))).toBeNull();
-    expect(readout(c, i)).toBe('2026-09-15 收盘 316.36（当日 ' + ((316.36 / 337.11 - 1) * 100).toFixed(2) + '%） · MA20 ' + c.ma!.values[i]!.toFixed(2) + ' · 在「9 月」区间内');
+    // 区间里的一天另写离前收（8/31 收盘）走了多少，和区间读数同一个基数
+    const base = c.close[c.dates.indexOf('2026-08-31')];
+    expect(readout(c, i)).toBe('2026-09-15 收盘 316.36（当日 ' + ((316.36 / 337.11 - 1) * 100).toFixed(2) + '%，较前收 ' + ((316.36 / base - 1) * 100).toFixed(2) + '%） · MA20 ' + c.ma!.values[i]!.toFixed(2) + ' · 在「9 月」区间内');
+    // 区间外不写
+    expect(readout(c, c.dates.indexOf('2026-08-31'))).not.toContain('较前收');
     // 图的第一天没有前一天，不写当日涨跌
     expect(readout(c, 0)).not.toContain('当日');
     expect(readout(c, i, false)).not.toContain('区间内');
     expect(howComputed(c).join('\n')).toContain('区间最后一天收盘 ÷ 区间前一个交易日收盘 − 1');
+  });
+
+  it('「怎么看」只讲这张图上有的东西：区间、前收空心点、均线、副图读法', () => {
+    const guide = howToRead(c).join('\n');
+    expect(guide).toContain('黄色区间是讲解里说到的那段');
+    expect(guide).toContain('「前收」');
+    expect(guide).toContain('紫线 MA20');
+    expect(guide).not.toContain('动量');
+    const plain = howToRead(priceChart({ code: 'sz300750', name: '宁德时代', bars, sub: 'rsi14' }).chart).join('\n');
+    expect(plain).not.toContain('黄色区间');
+    expect(plain).not.toContain('MA');
+    expect(plain).toContain('70 以上常叫超买');
+    expect(plain).toContain('红涨绿跌');
   });
 });

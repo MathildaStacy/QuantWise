@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { bookTableNotes, parseBookTable, tableRowHeights } from '../../book/table';
 import { rc } from '../readTheme';
 import { useBookTypography } from '../readerTypography';
 import { BlockInline } from './BookInline';
+import { HorizontalReading } from './HorizontalReading';
 
 export function BookTable({ text, html }: { text: string; html: string | null }) {
   const table = useMemo(() => parseBookTable(text, html), [text, html]);
@@ -27,7 +28,7 @@ export function BookTable({ text, html }: { text: string; html: string | null })
   const top = (row: number) => heights.slice(0, row).reduce((a, b) => a + b, 0);
   return <View onLayout={e => setWidth(e.nativeEvent.layout.width)} style={s.wrap}>
     {notes.caption ? <BlockInline text={notes.caption} style={caption} /> : null}
-    <ScrollView horizontal nestedScrollEnabled accessibilityLabel="表格，可横向滚动">
+    <HorizontalReading label="表格">
       <View style={[s.table, { width: left(table.columns), height: top(table.rows) }]}>
         {table.cells.map((cell, i) => <View key={i} style={[s.cell, cell.header && s.header, {
           left: left(cell.col), top: top(cell.row), width: left(cell.col + cell.colSpan) - left(cell.col),
@@ -44,7 +45,7 @@ export function BookTable({ text, html }: { text: string; html: string | null })
           </View>
         </View>)}
       </View>
-    </ScrollView>
+    </HorizontalReading>
     {notes.footnote ? <BlockInline text={notes.footnote} style={caption} /> : null}
   </View>;
 }

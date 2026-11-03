@@ -61,7 +61,7 @@ export function quick(
     case 'fromBlock':
       return { kind, label: '从 ' + o.block!.label + ' 开始讲', question: '从这一段（' + o.block!.label + '）开始讲' + name(o.step) + '。', step: o.step };
     case 'realBlock':
-      return { kind, label: '用真实行情解释 ' + o.block!.label, question: '用真实的 A 股行情解释这一段（' + o.block!.label + '）：' + o.block!.text.slice(0, 200) };
+      return { kind, label: '用真实行情解释 ' + o.block!.label, question: '用真实的 A 股行情解释这一段（' + o.block!.label + '）：' + o.block!.text.slice(0, 200) + '\n用 plot_chart 画图，讲到哪段行情就用 focus 标出那段，数字以工具结果为准。' };
   }
 }
 

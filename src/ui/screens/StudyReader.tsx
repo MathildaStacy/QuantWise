@@ -3,17 +3,18 @@
  * 高亮浅黄，问过的段落下面贴便签。点一段出菜单：解释、从这里开始讲、用真实行情举例、高亮。
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { BookOpen, ChevronDown, FileText, SlidersHorizontal } from 'lucide-react-native';
+import { BookOpen, ChevronDown, FileText, List, SlidersHorizontal } from 'lucide-react-native';
 import { Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance } from 'react-native';
 import { citeLabel, leavesOf, secLabel } from '../../book/book';
 import type { BookBlock } from '../../book/types';
 import { marksOf, toggleHighlight, type Mark } from '../../data/studyRepo';
 import { beijingIso } from '../../market/clock';
 import type { QuickKind } from '../../study/quick';
-import { progressNow, type StudySession } from '../../study/session';
+import { progressNow, useStudy, type StudySession } from '../../study/session';
 import { AiSheet } from '../components/AiOptions';
 import { BlockInline, BookBlockView } from '../components/BookBlock';
 import { PdfSourceSheet } from '../components/PdfSourceSheet';
+import { StudyContents } from '../components/StudyContents';
 import { useCore } from '../hooks';
 import { rc, serif } from '../readTheme';
 import type { ReadingAnchor } from '../../study/readingState';
@@ -88,6 +89,8 @@ function ReaderBody({
   const eligible = s.blocks.filter(canTranslate);
   const done = eligible.filter(b => tr.entries[b.seq]).length;
   const nextPending = eligible.find(b => !tr.entries[b.seq]);
+  const remaining = eligible.length - done;
+  const [translationPlanOpen, setTranslationPlanOpen] = useState(false);
   const showTranslation = (enabled: boolean) => {
     onTranslation?.(enabled);
     if (!enabled) tr.stop();
@@ -95,6 +98,8 @@ function ReaderBody({
   const [marks, setMarks] = useState<Mark[]>([]);
   const [menu, setMenu] = useState<BookBlock | null>(null);
   const [guide, setGuide] = useState(false);
+  const [contentsOpen, setContentsOpen] = useState(false);
+  const lecturing = !!useStudy(x => x.busy);
   const [sourcePage, setSourcePage] = useState<number | null>(null);
   const [page, setPage] = useState(() => s.blocks.find(b => b.seq === (focusSeq ?? anchor?.id))?.page ?? s.section.pageFrom ?? 1);
   const chapters = leavesOf(s.sections);
@@ -194,6 +199,9 @@ function ReaderBody({
           accessibilityValue={{ text: '第 ' + page + ' 页' }} onPress={() => setSourcePage(page)}>
           <FileText size={16} color={rc.secondary} /><Text style={st.toolText}>原页 {page}</Text>
         </Pressable> : <Text style={st.toolText}>{prefs.face === 'serif' ? '宋体' : '黑体'} · {prefs.size} 号</Text>}
+        {onSection ? <Pressable style={st.tool} onPress={() => setContentsOpen(true)} accessibilityRole="button" accessibilityLabel="本书目录" accessibilityState={{ expanded: contentsOpen }}>
+          <List size={16} color={rc.secondary} /><Text style={st.toolText}>目录</Text>
+        </Pressable> : null}
         <Pressable style={st.tool} onPress={() => setGuide(v => !v)} accessibilityRole="button" accessibilityLabel="本节导读" accessibilityState={{ expanded: guide }}>
           <BookOpen size={16} color={rc.secondary} /><Text style={st.toolText}>导读</Text>
         </Pressable>
@@ -221,9 +229,10 @@ function ReaderBody({
                 if (tr.busy) tr.stop();
                 else if (tr.needsConfig && onConfigure) onConfigure();
                 else if (tr.error) tr.retry();
-                else tr.run();
+                else setTranslationPlanOpen(true);
               }}><Text style={st.translationButtonText}>{tr.busy ? '停止翻译' : tr.cacheError ? '重读译文' : tr.needsConfig ? '配置 AI' : tr.error ? '重试翻译' : done ? '继续翻译' : '翻译本节'}</Text></Pressable> : null}
           </View>
+          {!tr.loading && !tr.cacheError && !tr.error ? <Text style={st.translationDetail}>{!eligible.length ? '原文保留展示，中文内容无需重复翻译。' : !remaining ? '本节译文已保存在本机，可离线阅读。' : tr.busy ? '完整译文逐段保存，停止后可继续。' : `还剩 ${remaining} 段待译${done ? '，已译内容可离线阅读。' : '，点击「翻译本节」开始。'}`}</Text> : null}
           {tr.error ? <Text accessibilityRole="alert" style={st.translationError}>{tr.error}</Text> : null}
       </View> : null}
       <ReaderFigures.Provider value={{ book: s.book, blocks: s.blocks, active, onConfigure, redraw: (b, signal) => redrawFigure(core, s.book, s.section, b, s.blocks, signal, undefined, true) }}>
@@ -276,7 +285,7 @@ function ReaderBody({
                 </Pressable> : null}
               </Frame>
               {bilingual && translatable && !translated ? <View style={st.pendingTranslation}>
-                  <Text style={st.pendingText}>{tr.loading ? '正在读取译文…' : tr.cacheError ? '译文暂未读取' : tr.current === b.seq ? '正在翻译这一段…' : tr.failed === b.seq ? '这一段翻译失败' : tr.busy ? '等待翻译' : '尚无译文'}</Text>
+                  {tr.loading || tr.cacheError || tr.current === b.seq || tr.failed === b.seq ? <Text style={st.pendingText}>{tr.loading ? '正在读取译文…' : tr.cacheError ? '译文暂未读取' : tr.current === b.seq ? '正在翻译这一段…' : '这一段翻译失败'}</Text> : null}
                   {tr.cacheError ? <Pressable style={st.paragraphTranslate} accessibilityRole="button" onPress={tr.retry}><Text style={st.translationButtonText}>重读译文</Text></Pressable> : null}
                   {!tr.busy && !tr.loading && !tr.cacheError ? <Pressable style={st.paragraphTranslate} accessibilityRole="button" accessibilityLabel={(tr.failed === b.seq ? '重试这一段，' : '翻译这一段，') + citeLabel(s.section, b)} onPress={() => {
                     if (tr.needsConfig && onConfigure) onConfigure();
@@ -302,6 +311,15 @@ function ReaderBody({
         </View> : null}
       </ScrollView>
       </ReaderFigures.Provider>
+      {translationPlanOpen ? <AiSheet title={done ? '继续翻译本节' : '翻译本节'} visible onClose={() => setTranslationPlanOpen(false)}>
+        <View style={st.translationPlan}>
+          <Text style={st.planTitle}>{secLabel(s.section)}</Text>
+          <Text style={st.planText}>{`待译 ${remaining} 段${done ? `，跳过已保存的 ${done} 段` : ''}。使用当前讲解模型逐段翻译为简体中文，保留原文、数字与公式。`}</Text>
+          <Text style={st.planText}>只发送待译原文及书名、节名。翻译按模型服务计费；可以随时停止，完成的段落会保存在本机。</Text>
+          <Pressable style={st.planStart} accessibilityRole="button" onPress={() => { setTranslationPlanOpen(false); tr.run(); }}><Text style={st.finishT}>{(done ? '翻译剩余 ' : '开始翻译 ') + remaining + ' 段'}</Text></Pressable>
+        </View>
+      </AiSheet> : null}
+      {contentsOpen && onSection ? <StudyContents s={s} busy={lecturing} onClose={() => setContentsOpen(false)} onSelect={id => { setContentsOpen(false); onSection(id); }} /> : null}
       {guide ? <AiSheet title="本节导读" visible onClose={() => setGuide(false)}>
         <ScrollView style={st.guideContent}>
           <Text style={st.guideTitle}>{secLabel(s.section)}</Text>
@@ -316,8 +334,8 @@ function ReaderBody({
       </AiSheet>
       <AiSheet title={menu ? citeLabel(s.section, menu) : ''} visible={!!menu} onClose={() => setMenu(null)}>
         {menu ? (
-          <View>
-            <Text style={st.quote} numberOfLines={4}>{menu.text}</Text>
+          <ScrollView style={st.menuContent} keyboardShouldPersistTaps="handled">
+            <View style={st.quote}>{menu.type === 'eq' ? <BookBlockView b={menu} compact /> : <BlockInline text={menu.text.length > 320 ? menu.text.slice(0, 320) + '…' : menu.text} style={st.quoteText} />}</View>
             {canTranslate(menu) ? <Pressable style={st.item} accessibilityRole="button" disabled={!tr.entries[menu.seq] && (tr.busy || tr.loading)}
               accessibilityState={{ disabled: !tr.entries[menu.seq] && (tr.busy || tr.loading) }} onPress={() => {
                 const b = menu;
@@ -344,7 +362,7 @@ function ReaderBody({
             <Pressable
               style={st.item}
               onPress={() => {
-                toggleHighlight(core.db, s.book.id, menu.seq, beijingIso()).then(reload);
+                toggleHighlight(core.db, s.book.id, menu.seq, beijingIso()).then(reload).catch(() => toast.show('高亮保存失败，请重试', 'bad'));
                 setMenu(null);
               }}
               accessibilityRole="button"
@@ -352,7 +370,7 @@ function ReaderBody({
               <Text style={st.itemT}>{hl.has(menu.seq) ? '取消高亮' : '高亮'}</Text>
               <Text style={st.itemD}>高亮会出现在笔记里</Text>
             </Pressable>
-          </View>
+          </ScrollView>
         ) : null}
       </AiSheet>
       {sourcePage != null ? <PdfSourceSheet book={s.book} initialPage={sourcePage} onClose={() => setSourcePage(null)} /> : null}
@@ -375,7 +393,12 @@ const st = StyleSheet.create({
   translationButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 4 },
   translationButtonText: { fontSize: 15, color: rc.main, fontWeight: '600' },
   translationError: { color: color.upText, fontSize: 13, lineHeight: 21, paddingBottom: 8 },
-  pendingTranslation: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10, marginBottom: 20, paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: rc.line },
+  translationDetail: { fontSize: 12, lineHeight: 20, color: rc.secondary, paddingBottom: 6 },
+  translationPlan: { paddingHorizontal: 20, gap: 16 },
+  planTitle: { fontSize: 17, lineHeight: 27, fontWeight: '600', color: rc.ink },
+  planText: { fontSize: 15, lineHeight: 24, color: rc.secondary },
+  planStart: { minHeight: 48, justifyContent: 'center', alignItems: 'center', padding: 12, borderRadius: 10, backgroundColor: rc.main },
+  pendingTranslation: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 20, paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: rc.line },
   pendingText: { color: rc.secondary, fontSize: 13, lineHeight: 22 },
   paragraphTranslate: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 },
   selectedMode: { color: rc.main, fontWeight: '600' },
@@ -398,7 +421,9 @@ const st = StyleSheet.create({
   sectionNav: { flexDirection: 'row', gap: 16, marginTop: 20 },
   sectionLink: { flex: 1, minHeight: 48, paddingVertical: 12, gap: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rc.line },
   sectionTitle: { fontSize: 15, lineHeight: 24, color: rc.main },
-  quote: { marginHorizontal: 16, marginBottom: 8, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: rc.line, fontFamily: serif, fontSize: 14, lineHeight: 23, color: rc.secondary },
+  menuContent: { flexShrink: 1 },
+  quote: { marginHorizontal: 16, marginBottom: 8, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: rc.line },
+  quoteText: { fontFamily: serif, fontSize: 14, lineHeight: 23, color: rc.secondary },
   item: { minHeight: 48, paddingHorizontal: 16, paddingVertical: 11, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rc.line },
   itemT: { fontSize: 15, color: rc.ink },
   itemD: { fontSize: 12, color: rc.muted, marginTop: 2 },

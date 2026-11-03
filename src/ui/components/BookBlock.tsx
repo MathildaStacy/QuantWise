@@ -2,7 +2,7 @@
  * 原书内容块：跟随阅读字号，表格保留合并单元格，插图按原始比例显示。
  */
 import { memo } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import type { BookBlock } from '../../book/types';
 import { bookListItem } from '../../book/presentation';
 import { MathView } from '../math/MathView';
@@ -11,6 +11,7 @@ import { useBookTypography } from '../readerTypography';
 import { BlockInline } from './BookInline';
 import { BookTable } from './BookTable';
 import { ScannedFigure } from './ScannedFigure';
+import { HorizontalReading } from './HorizontalReading';
 export { BlockInline } from './BookInline';
 
 export const BookBlockView = memo(function BlockView({
@@ -34,9 +35,9 @@ export const BookBlockView = memo(function BlockView({
       return <MathView tex={b.text} fontSize={body.fontSize} />;
     case 'code':
       return (
-        <ScrollView horizontal nestedScrollEnabled style={s.pre} accessibilityLabel="代码，可横向滚动">
+        <HorizontalReading label="代码" style={s.pre}>
           <Text style={[s.code, { fontSize: body.fontSize! - 3, lineHeight: body.lineHeight! - 6 }]} selectable>{b.text}</Text>
-        </ScrollView>
+        </HorizontalReading>
       );
     case 'table':
       return <BookTable text={b.text} html={b.html} />;

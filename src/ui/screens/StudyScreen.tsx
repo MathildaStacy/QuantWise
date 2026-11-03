@@ -6,7 +6,7 @@ import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/n
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ArrowDown, ArrowUp, Brain, ChevronDown, Globe, Info, MessagesSquare, Square } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance } from 'react-native';
+import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance, type TextInputInstance } from 'react-native';
 import { EFFORT_NAME, normaliseConfig, prettyModel, protocolNotice, resolvedService, searchAvailability } from '../../ai/models';
 import { loadProviders } from '../../ai/services';
 import type { AiProvider, ModelEntry } from '../../ai/types';
@@ -80,6 +80,8 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [openError, setOpenError] = useState('');
   const [text, setText] = useState('');
+  const input = useRef<TextInputInstance>(null);
+  const [keyboard, setKeyboard] = useState(false);
   const [cite, setCite] = useState<CiteTarget | null>(null);
   const [ctx, setCtx] = useState(false);
   const [providers, setProviders] = useState<AiProvider[]>([]);
@@ -100,6 +102,13 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
       saveReadingState(core.db, target.bookId, target.sectionId, changes).catch(() => toast.show('阅读记录保存失败，请重试', 'bad'));
     }
   }, [core]);
+
+  // 打字时收起快捷操作，把高度留给讲解。
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboard(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboard(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   useFocusEffect(useCallback(() => {
     loadProviders(core.db).then(setProviders).then(() => refreshStudyConfig(core)).catch(() => undefined);
@@ -201,6 +210,23 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     }
   };
   sendRef.current = send;
+  /** 发出去就清空输入框；没问完的问题留在重试区（pending），不会丢。 */
+  const sendDraft = () => {
+    const q = text.trim();
+    if (!q || useStudy.getState().busy) return;
+    setText('');
+    remember({ draft: '' });
+    send({ label: q, question: q });
+  };
+  const setDraft = (value: string) => {
+    setText(value);
+    remember({ draft: value });
+  };
+  /** 图上「问这一天」：这一天的读数放在草稿前面（换一天时替换掉上一天的），接着写问题。 */
+  const askChart = (day: string) => {
+    setDraft(day + text.replace(/^看图中这一天：[^。]*。/, ''));
+    input.current?.focus();
+  };
   const runQuick = async (k: QuickKind, block?: BookBlock) => {
     if (!s) {
       return;
@@ -338,6 +364,13 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     await selectStudyConfig(core, { ...cfg, search: true });
     send({ label: q, question: q });
   };
+  /** 自己输入的问题（不是快捷动作）可以改了再问。 */
+  const typed = (a: StudyAsk) => a.label.trim() === a.question.trim();
+  const dropPending = () => {
+    saveReadingState(core.db, bookId, s.section.id, { pending: null }).catch(() => toast.show('暂存失败，请重试', 'bad'));
+    setReading(v => ({ ...v, pending: null }));
+    useStudy.setState({ error: null });
+  };
   const bar = quickBar({ steps: s.steps, step: s.state.step, taught: p.taught, detour: !!p.detour, factor: factorish(s.section.title + s.blocks.map(b => b.text).join('')) });
   // 步骤面板打开时先露出步骤入口。
   const pinSpot = pin && !stepsOpen ? chartSpots.current.get(pin.key) : undefined;
@@ -427,22 +460,32 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             <StudyThread
               onTurnLayout={(id, box) => { if (box) turnLayouts.current.set(id, box); else turnLayouts.current.delete(id); restoreThread(); updatePin(); }}
               onChartBox={(key, spot) => { if (spot) chartSpots.current.set(key, spot); else chartSpots.current.delete(key); updatePin(); }}
-              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread }} />
+              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread, onAskChart: askChart }} />
             </View>
             {ask && reading.pending && !busy ? <Button title={askLabel ?? '发送刚才的问题'} onPress={() => { nav.setParams({ ask: undefined, askLabel: undefined, askSnapshot: undefined }); send({ label: askLabel ?? ask, question: ask, snapshot: askSnapshot }); }} /> : null}
             {reading.pending && !busy ? <View style={st.retry}>
-              <Text style={st.cardP}>{error || '上次的问题还未完成：' + reading.pending.label}</Text>
+              <Text style={st.cardK}>{error ? '这个问题没有问完' : '上次的问题还未完成'}</Text>
+              <Text style={st.retryQ} numberOfLines={4}>{reading.pending.label}</Text>
+              {error ? <Text style={st.retryErr} accessibilityRole="alert">{error}</Text> : null}
               {lastError === TRUNCATED_ERROR && !auth ? <Button title="接着讲" tone="learn" onPress={() => send({ label: '接着讲', question: '你上一条回答因为篇幅停在半截了。从停下的地方接着讲，不要重复已经讲过的内容。', step: reading.pending?.step })} /> : null}
               <Button title={auth ? '连接 AI，保留问题' : '重试上次的问题'} tone="learn" onPress={() => auth ? nav.navigate('AiServices', { returnToStudy: { bookId, sectionId: s.section.id } }) : send(reading.pending!)} />
-              <Button title="稍后再问" onPress={() => { saveReadingState(core.db, bookId, s.section.id, { pending: null }).catch(() => toast.show('暂存失败，请重试', 'bad')); setReading(v => ({ ...v, pending: null })); useStudy.setState({ error: null }); }} />
+              {typed(reading.pending) ? <Button title="修改后再问" onPress={() => { const q = reading.pending!.question; dropPending(); setDraft(q); input.current?.focus(); }} /> : null}
+              <Button title="稍后再问" onPress={() => { const q = reading.pending!; dropPending(); if (typed(q) && !text.trim()) setDraft(q.question); }} />
             </View> : null}
           </LockScroll>
           {latest ? <Pressable style={st.latest} accessibilityRole="button" accessibilityLabel="回到最新" onPress={() => { follow.current = true; remember({ follow: true }); setLatest(false); scroll.current?.scrollToEnd({ animated: true }); }}><ArrowDown size={18} color={rc.main} /><Text style={st.smallT}>回到最新</Text></Pressable> : null}
-          <View style={st.chips}>
+          {/* 生成中：状态和「停止」固定在输入框上方，不随对话滚走；打字时收起快捷操作。 */}
+          {busy ? <View style={st.status}>
+            <ActivityIndicator size="small" color={rc.main} />
+            <Text style={st.statusT} numberOfLines={1} accessibilityLiveRegion="polite">{busy}</Text>
+            <Pressable style={st.stop} onPress={stopStudy} accessibilityRole="button" accessibilityLabel="停止讲解">
+              <Square size={12} color={rc.main} fill={rc.main} /><Text style={st.stopT}>停止</Text>
+            </Pressable>
+          </View> : keyboard ? null : <View style={st.chips}>
             {bar.slice(0, 1).map(k => {
               const q = quickAsk(s, k);
               return (
-                <Pressable key={k} disabled={!!busy} onPress={() => runQuick(k)} style={[st.q, st.qMain, busy && st.dim]} accessibilityRole="button" accessibilityState={{ disabled: !!busy }}>
+                <Pressable key={k} onPress={() => runQuick(k)} style={[st.q, st.qMain]} accessibilityRole="button">
                   <Text style={[st.qT, st.white]}>{q.label}</Text>
                 </Pressable>
               );
@@ -453,7 +496,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             {bar.length > 1 ? <Pressable onPress={() => setActionsOpen(true)} style={st.more} accessibilityRole="button" accessibilityLabel="更多讲解方式" accessibilityState={{ expanded: actionsOpen }}>
               <Text style={st.qT}>更多</Text><ChevronDown size={14} color={rc.secondary} />
             </Pressable> : null}
-          </View>
+          </View>}
           <View style={[st.composer, { paddingBottom: Math.max(12, safe.bottom) }]}>
             {rebuild && !busy ? (
               <View style={st.cacheWarning}>
@@ -466,7 +509,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             {provider && cfg && protocolNotice(provider, cfg.model) ? <Text style={st.notice}>{protocolNotice(provider, cfg.model)}</Text> : null}
             {svc?.capabilities?.tools === false ? <Text style={st.notice}>这个模型不能调用读书工具：不能读其他小节、出检查题、用真实行情举例</Text> : svc?.capabilities?.tools === null ? <Text style={st.notice}>这个模型的工具能力未知，可在供应商里标注</Text> : null}
             <View style={st.box}>
-              <TextInput value={text} onChangeText={value => { setText(value); remember({ draft: value }); }} accessibilityLabel="提问草稿" placeholder="不懂就问，比如「用茅台举例」" placeholderTextColor={rc.muted} style={st.input} multiline maxLength={2000} />
+              <TextInput ref={input} value={text} onChangeText={setDraft} accessibilityLabel="提问草稿" placeholder="不懂就问，比如「用茅台举例」" placeholderTextColor={rc.muted} style={st.input} multiline maxLength={2000} />
               <View style={st.toolbar}>
                 <Pressable style={[st.control, st.modelControl]} onPress={() => setSheet('model')} disabled={!!busy} accessibilityRole="button" accessibilityLabel="选择讲解模型" accessibilityValue={{ text: cfg?.model ?? '未选择' }} accessibilityState={{ disabled: !!busy }}>
                   <Text style={st.controlText} numberOfLines={1}>{cfg ? prettyModel(cfg.model) : '选择模型'}</Text>
@@ -483,7 +526,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
                   <Text style={st.controlText}>{'思考' + (cfg ? EFFORT_NAME[cfg.effort] : '未选')}</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => (busy ? stopStudy() : text.trim() && send({ label: text.trim(), question: text.trim() }))}
+                  onPress={() => (busy ? stopStudy() : sendDraft())}
                   disabled={!busy && !text.trim()}
                   style={st.send}
                   accessibilityRole="button"
@@ -614,6 +657,12 @@ const st = StyleSheet.create({
   stepToggle: { flex: 1, minHeight: 48, paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
   stepTitle: { flex: 1, fontSize: 13, lineHeight: 20, color: rc.ink },
   retry: { padding: 12, backgroundColor: rc.soft, borderRadius: 12, gap: 8 },
+  retryQ: { fontSize: 15, lineHeight: 24, color: rc.ink },
+  retryErr: { fontSize: 13, lineHeight: 21, color: color.upText },
+  status: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, paddingLeft: 16, paddingRight: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rc.line },
+  statusT: { flex: 1, fontSize: 13, lineHeight: 20, color: rc.secondary },
+  stop: { minHeight: 48, minWidth: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 12 },
+  stopT: { fontSize: 14, fontWeight: '600', color: rc.main },
   latest: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, paddingHorizontal: 16 },
   thread: { flex: 1 },
   threadIn: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 },
@@ -623,7 +672,6 @@ const st = StyleSheet.create({
   qMain: { backgroundColor: rc.main, borderColor: rc.main },
   qT: { fontSize: 13, color: rc.secondary },
   white: { color: '#FFFFFF' },
-  dim: { opacity: 0.5 },
   navBtn: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   composer: { paddingHorizontal: 10, paddingBottom: 10 },
   box: { borderWidth: StyleSheet.hairlineWidth, borderColor: rc.line, borderRadius: 18, padding: 4, backgroundColor: rc.paper },
