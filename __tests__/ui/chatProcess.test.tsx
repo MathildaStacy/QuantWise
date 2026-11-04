@@ -159,3 +159,32 @@ test('没有公开摘要来源时隐藏推理；仅渲染明确的 summary_text 
   expect(content()).not.toContain('**');
   expect(content()).not.toContain('不明字段');
 });
+
+test('回答按消息顺序：工具画的图跟在那一步后面、下一段回答之前', () => {
+  const ic = {
+    kind: 'ic' as const,
+    factor: 'mom20' as const,
+    dates: ['2026-10-23', '2026-10-26'],
+    ic: [0.04, 0.06],
+  };
+  const [turn] = conversationTurns([
+    message(1, { role: 'user', ui: { question: '检验一下动量因子' } }),
+    message(2, { parts: [{ t: 'text', text: '先跑一次分组回测。' }] }),
+    message(3, {
+      role: 'tool',
+      ui: {
+        tools: [
+          { id: 'q', name: 'get_quote', label: '读取行情' },
+          { id: 'f', name: 'factor_test', label: '因子检验', charts: [ic, ic] },
+        ],
+      },
+    }),
+    message(4, { parts: [{ t: 'text', text: '看图里的 IC。' }] }),
+  ]);
+  expect(turn.answer.map(m => m.id)).toEqual([2, 3, 4]);
+  expect(
+    turn.flow.map(x =>
+      'charts' in x ? `图 ${x.id}×${x.charts.length}` : `消息 ${x.m.id}`,
+    ),
+  ).toEqual(['消息 2', '消息 3', '图 3×2', '消息 4']);
+});

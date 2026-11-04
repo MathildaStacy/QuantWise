@@ -9,7 +9,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 ## QuantWise
 
-当前正式版 **v1.9.0**：AI 讲解从某一段或某一句提问时带上块号、前后文和段里提到的图表公式，自己输入的问题带上读到哪；书内搜索按相关度排序，用中文也能搜英文书。用真实行情举例时，横截面结论直接在 A 股复现，并和书里的多空收益、t 值对照（可选市值加权）；回撤、大涨、波动最大的那段由工具在数据里找，盘中价不当收盘，个股涨跌附同期沪深 300。复现结果可以存进研究手记。见 [发布说明](docs/releases/v1.9.0.md)。
+当前正式版 **v1.9.1**：AI 助手画的图跟在画图的那一步后面、讲它的文字之前，见 [v1.9.1 发布说明](docs/releases/v1.9.1.md)。v1.9.0 起，AI 讲解从某一段或某一句提问时带上块号、前后文和段里提到的图表公式，自己输入的问题带上读到哪；书内搜索按相关度排序，用中文也能搜英文书。用真实行情举例时，横截面结论直接在 A 股复现，并和书里的多空收益、t 值对照（可选市值加权）；回撤、大涨、波动最大的那段由工具在数据里找，盘中价不当收盘，个股涨跌附同期沪深 300。复现结果可以存进研究手记，见 [v1.9.0 发布说明](docs/releases/v1.9.0.md)。
 
 桌面名称、启动页、通知、iOS 工程和原型已统一命名。Android 包名 `com.quantwise`、数据库与服务配置保持兼容，可直接覆盖 v1.0.0 及更早版本，保留已有数据。
 
@@ -28,7 +28,7 @@ QuantWise 以 [AShareSim](https://github.com/MathildaStacy/AShareSim) 为底座�
 
 内置入门体验无需网络或 AI Key。自由问答需要自己的 AI 服务（「我的 → 供应商与模型」）；导入 PDF 时需要 MinerU Token（「我的 → 解析服务（MinerU）」）。
 
-已发布安装包：[下载 v1.9.0 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.9.0/QuantWise-v1.9.0-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
+已发布安装包：[下载 v1.9.1 Android APK](https://github.com/MathildaStacy/QuantWise/releases/download/v1.9.1/QuantWise-v1.9.1-arm64.apk)，或查看 [Releases](https://github.com/MathildaStacy/QuantWise/releases)。
 
 开发：和下面 AShareSim 的一样（`npm run check`、`npm run android`）。`npm install` 会把离线 MathJax 复制进 `android/app/src/main/assets/math/`。没有 AI Key 时可以在电脑上运行 `node scripts/mock-ai.cjs`，再在调试版「我的 → 调试页 → 接本地模拟 AI」，用固定脚本走听讲流程。
 
