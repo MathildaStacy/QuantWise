@@ -87,7 +87,7 @@ beforeAll(async () => {
   setAiDeps({ keys: { get: async () => 'sk', set: async () => undefined, remove: async () => undefined }, fetch: fetchMock });
 });
 
-async function render<K extends keyof RootStackParamList>(name: K, component: React.ComponentType<any>, params?: RootStackParamList[K]) {
+async function render<K extends keyof RootStackParamList>(name: K, component: React.ComponentType<any>, params?: RootStackParamList[K], extra: { name: keyof RootStackParamList; component: React.ComponentType<any> }[] = []) {
   let tree!: ReactTestRenderer.ReactTestRenderer;
   await act(async () => {
     tree = ReactTestRenderer.create(
@@ -95,6 +95,7 @@ async function render<K extends keyof RootStackParamList>(name: K, component: Re
         <NavigationContainer>
           <Stack.Navigator screenOptions={{ headerShown: false }}>
             <Stack.Screen name={name} component={component} initialParams={params as never} />
+            {extra.map(x => <Stack.Screen key={x.name} name={x.name} component={x.component} />)}
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>,
@@ -328,6 +329,44 @@ test('从原文发起讲解：对话保留引用片段，点开回到原文', as
   expect(r.text()).toContain('提问原文 · 3.1 ¶2');
   await r.press('查看提问原文 3.1 ¶2');
   expect(r.text()).toContain('原文 · 3.1 动量因子 ¶2');
+});
+
+test('段落菜单：只问其中一句；讲横截面结论的段落多一个「在 A 股复现这个结论」', async () => {
+  const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '2.1', mode: 'read' });
+  const open = (label: string) => r.tree.root.findAll(n => typeof n.props.onPress === 'function' && String(n.props.accessibilityLabel).startsWith(label))[0];
+  await act(async () => { open('2.1 ¶2：').props.onPress(); });
+  expect(r.text()).toContain('只问其中一句（共 2 句）');
+  expect(r.text()).toContain('在 A 股复现这个结论');
+  await r.press('只问其中一句（共 2 句）');
+  const sentence = r.tree.root.findAll(n => n.props.accessibilityRole === 'radio' && typeof n.props.onPress === 'function')[1];
+  await act(async () => { sentence.props.onPress(); });
+  expect(r.text()).toContain('解释这一句');
+  expect(r.text()).not.toContain('从这里开始讲');
+  replies = [{ model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '这一句说的是横截面。' }], usage }];
+  await r.press('解释这一句');
+  expect(r.text()).toContain('这一句说的是横截面。');
+  expect(r.text()).toContain('解释这一句 · 2.1 ¶2');
+  expect(r.text()).toContain('它不回答「大盘明天涨不涨」');
+  const msg = useStudy.getState().s!.messages.find(m => m.role === 'user' && m.ui?.studySource);
+  expect(msg?.ui?.studySource).toMatchObject({ sentence: true, no: 2 });
+});
+
+test('讲解里的因子检验图可以存进研究手记：草稿带书里的结论、口径和结果', async () => {
+  const drafts: unknown[] = [];
+  const Research = ({ route }: { route: { params: RootStackParamList['ResearchEdit'] } }) => { drafts.push(route.params.draft); return null; };
+  const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '3.1', mode: 'lecture' }, [{ name: 'ResearchEdit', component: Research }]);
+  replies = [
+    { model: 'm', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'ft1', name: 'factor_test', input: { factor: 'mom20', universe: 'sample' } }], usage },
+    { model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '[[real]]IC 不显著。[[/real]]' }], usage },
+  ];
+  await r.type('提问草稿', '动量在 A 股有效吗？');
+  await r.press('发送');
+  expect(r.text()).toContain('存进研究手记');
+  await r.press('把这次检验存进研究手记');
+  const params = { draft: drafts[drafts.length - 1] as { method: string; evidence: string } };
+  expect(params.draft).toMatchObject({ title: '复现：20 日动量 · 3.1 动量因子', hypothesis: expect.stringContaining('动量在 A 股有效吗？') });
+  expect(params.draft.method).toContain('示例池');
+  expect(params.draft.evidence).toMatch(/Rank IC 均值 [+-]\d\.\d{3}（t [-\d.]+/);
 });
 
 test('发送后清空输入框；没问完的问题留在重试区，可改了再问', async () => {

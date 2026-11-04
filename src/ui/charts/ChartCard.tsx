@@ -61,9 +61,9 @@ export function legendOf(c: ChartData): { color: string; label: string; dashed?:
 export function chartFoot(c: ChartData): string {
   switch (c.kind) {
     case 'price':
-      return c.code + ' · ' + dateRange(c.dates) + ' · 前复权日线 · 腾讯行情';
+      return c.code + ' · ' + dateRange(c.dates) + ' · 前复权日线 · 腾讯行情' + (c.live ? ' · ' + md(c.live) + ' 为盘中价，未收盘' : '');
     case 'compare':
-      return (c.base ? md(c.base) + ' 收盘 = 100' : '起点 = 100') + ' · ' + dateRange(c.dates) + ' · 前复权日线';
+      return (c.base ? md(c.base) + ' 收盘 = 100' : '起点 = 100') + ' · ' + dateRange(c.dates) + ' · 前复权日线' + (c.live ? ' · ' + md(c.live) + ' 为盘中价' : '');
     case 'factor':
       return (UNIVERSE_NAME[c.universe as UniverseId] ?? c.universe) + ' · ' + (c.dates.length - 1) + ' 期 · ' + (FACTORS[c.factor].approx ? '近似因子 · ' : '') + '当前成分';
     case 'ic': {
@@ -85,6 +85,8 @@ function PriceFocus({ c, f, full }: { c: PriceChart; f: Focus; full: boolean }) 
   if (!st) {
     return null;
   }
+  const b = c.bench?.changes[(c.focus ?? []).indexOf(f)];
+  const excess = b != null ? (st.change - b) * 100 : null;
   const sub = c.sub && st.sub?.from != null && st.sub.to != null ? SUB_NAME[c.sub.kind] + ' ' + fmtSub(c.sub.kind, st.sub.from) + ' → ' + fmtSub(c.sub.kind, st.sub.to) : null;
   return (
     <View style={s.focus}>
@@ -93,9 +95,14 @@ function PriceFocus({ c, f, full }: { c: PriceChart; f: Focus; full: boolean }) 
         <Text style={[s.focusV, num, tone(st.change)]}>{pct(st.change, 2)}</Text>
       </View>
       <Text style={[s.focusL, num]}>
-        {(st.k < st.a ? '收盘 ' : '首日收盘 ') + st.base.toFixed(2) + '（' + md(st.baseDate) + (st.k < st.a ? '' : '，图里最早一天') + '）→ ' + st.last.toFixed(2) + '（' + md(st.to) + '）'}
+        {(st.k < st.a ? '收盘 ' : '首日收盘 ') + st.base.toFixed(2) + '（' + md(st.baseDate) + (st.k < st.a ? '' : '，图里最早一天') + '）→ ' + st.last.toFixed(2) + '（' + md(st.to) + (c.live === st.to ? '，盘中' : '') + '）'}
       </Text>
       {sub ? <Text style={[s.focusL, num]}>{sub}</Text> : null}
+      {b != null && excess != null ? (
+        <Text style={[s.focusL, num]}>
+          {'同期' + c.bench!.name + ' '}<Text style={tone(b)}>{pct(b, 2)}</Text>{' · 超额 '}<Text style={tone(excess)}>{(excess >= 0 ? '+' : '') + excess.toFixed(2) + ' 个百分点'}</Text>
+        </Text>
+      ) : null}
       {full ? (
         <Text style={[s.focusL, num]}>
           {'区间最高收盘 ' + st.hi.toFixed(2) + '（' + md(st.hiDate) + '）· 最低 ' + st.lo.toFixed(2) + '（' + md(st.loDate) + '）'}
@@ -147,11 +154,13 @@ export function Takeaway({ data }: { data: ChartData }) {
   ) : null;
 }
 
-export function ChartCard({ data, onBox, onAsk }: {
+export function ChartCard({ data, onBox, onAsk, onSave }: {
   data: ChartData;
   onBox?: (box: { y: number; h: number } | null) => void;
   /** 讲解里：把点中的那一天（图名 + 读数）带到输入框，接着写问题。 */
   onAsk?: (text: string) => void;
+  /** 讲解里的因子检验：存进研究手记（书里的结论、检验口径和结果预先填好）。 */
+  onSave?: () => void;
 }) {
   const [extremes, setExtremes] = useState(false);
   const [guide, setGuide] = useState(false);
@@ -195,7 +204,10 @@ export function ChartCard({ data, onBox, onAsk }: {
           )}
         </View>
       ) : null}
-      {data.kind === 'factor' ? <Pressable style={s.focusBtn} onPress={() => setExtremes(v => !v)} accessibilityRole="button" accessibilityState={{ selected: extremes }}><Text style={s.fullT}>{extremes ? '显示全部分组' : '只看最高与最低组'}</Text></Pressable> : null}
+      {data.kind === 'factor' ? <View style={s.factorRow}>
+        <Pressable style={s.focusBtn} onPress={() => setExtremes(v => !v)} accessibilityRole="button" accessibilityState={{ selected: extremes }}><Text style={s.fullT}>{extremes ? '显示全部分组' : '只看最高与最低组'}</Text></Pressable>
+        {onSave ? <Pressable style={s.focusBtn} onPress={onSave} accessibilityRole="button" accessibilityLabel="把这次检验存进研究手记"><Text style={s.fullT}>存进研究手记</Text></Pressable> : null}
+      </View> : null}
       <FocusReadout data={data} />
       <View style={s.legend}>
         {legendOf(data).filter(l => !extremes || data.kind !== 'factor' || !/^Q\d/.test(l.label) || l.label.startsWith('Q1 ') || l.label.startsWith('Q' + data.groups.length + ' ')).map(l => (
@@ -252,6 +264,7 @@ const s = StyleSheet.create({
   foot: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 2, paddingBottom: 4, gap: 8 },
   ft: { flex: 1, fontSize: 12, color: rc.muted },
   focusBtn: { minHeight: 48, paddingHorizontal: 12, justifyContent: 'center' },
+  factorRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   full: { minHeight: 48, minWidth: 48, flexDirection: 'row', alignItems: 'center', gap: 3 },
   fullT: { fontSize: 12, color: rc.main },
 });

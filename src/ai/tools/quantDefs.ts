@@ -32,7 +32,7 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
   {
     name: 'factor_test',
     description:
-      '因子分组回测和 Rank IC（本地前复权日线，口径见结果）：每 hold 个交易日按因子从低到高分组、等权持有，算 IC 均值、ICIR、t 值、各组收益、多空年化、换手，界面画分组净值和 IC 图。用户问某个因子在 A 股有没有效时用，结论按 t 值和期数说，样本不够就说不够。',
+      '因子分组回测和 Rank IC（本地前复权日线，约 3 年，口径见结果）：每 hold 个交易日按因子从低到高分组、等权或市值加权持有，算 IC 均值、ICIR、t 值、各组收益、多空每期平均收益和它的 t 值、多空年化、换手，界面画分组净值和 IC 图。用户问某个因子在 A 股有没有效、或要复现书里的分组检验时用：按书里的定义选因子和参数，结果和书里的数字逐项对照，结论按 t 值和期数说，样本不够就说不够。',
     schema: obj(
       {
         factor: FACTOR,
@@ -41,6 +41,7 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
         hold: { type: 'integer', enum: [5, 10, 20, 60], description: '调仓周期（交易日），默认 20' },
         groups: { type: 'integer', enum: [3, 5, 10], description: '分几组，默认 5' },
         cost_bp: { type: 'integer', description: '单边成本（万分之），0–50，默认 0' },
+        weight: { type: 'string', enum: ['equal', 'cap'], description: '组内加权：equal 等权（默认）/ cap 按调仓日总市值加权（对应书里的「市值加权」）' },
       },
       ['factor'],
     ),
@@ -62,7 +63,7 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
   {
     name: 'plot_chart',
     description:
-      '在对话里画一张真实行情图（前复权日 K）：价格 + 可选均线、布林带、副图（mom20 / mom60 20、60 日动量，vol20 20 日年化波动，dd 回撤，rsi14，volume 成交量），可标出副图的最高最低点；compare 给 1–4 只代码时改成起点 = 100 的对比图。讲到某一段行情（「9 月」「这波上涨」）时用 focus 标出那段：图上高亮、自动缩放到区间附近，区间两端（前收那天和最后一天）的收盘和副图值自动标在图上，摘要给出区间涨跌、最高最低和副图起止值；区间里另外要讲的某一天用 points；takeaway 写一句看点。讲概念举例时用，回答里的数字以返回的摘要为准。',
+      '在对话里画一张真实行情图（前复权日 K）：价格 + 可选均线、布林带、副图（mom20 / mom60 20、60 日动量，vol20 20 日年化波动，dd 回撤，rsi14，volume 成交量），可标出副图的最高最低点；compare 给 1–4 只代码时改成起点 = 100 的对比图。讲到某一段行情（「9 月」「这波上涨」）时用 focus 标出那段，要找跌得最深 / 涨得最多 / 波动最大的一段时用 find 让工具找：图上高亮、自动缩放到区间附近，区间两端（前收那天和最后一天）的收盘和副图值自动标在图上，摘要给出区间涨跌、最高最低和副图起止值；区间里另外要讲的某一天用 points；takeaway 写一句看点。讲概念举例时用，回答里的数字以返回的摘要为准。',
     schema: obj(
       {
         code: CODE,
@@ -99,6 +100,7 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
         },
         takeaway: { type: 'string', description: '看点：一句话告诉读者这张图看哪里（24 字以内，不写价格和涨跌幅，这些图上会算好），显示在图的上方' },
         compare: { type: 'array', items: { type: 'string' }, description: '一起对比的代码或名称（最多 4 只）；对比图也能用 focus、takeaway' },
+        find: { type: 'string', enum: ['drawdown', 'rally', 'volatile'], description: '让工具在 bars / end 框出的日线里（默认最近 250 根）找一段真实行情并当成重点区间标出：drawdown 峰到谷跌得最深 / rally 谷到峰涨得最多 / volatile 20 日波动最大。讲回撤、暴跌、急涨、波动聚集时用，不凭记忆写月份；摘要写明找到的日期' },
       },
       ['code'],
     ),

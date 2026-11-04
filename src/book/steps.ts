@@ -1,6 +1,7 @@
 /**
  * 本节路线图（QUANTWISE_DESIGN.md §6.1）：在本机把一个小节切成 1–5 步，不调用模型。
- * 先把块分组（公式、列表项、以冒号结尾的引导段不拆开），组数 ≤ 5 时一组一步，否则按字数合并。
+ * 先把块分组（公式、列表项、以冒号结尾的引导段不拆开；脚注跟着前文，表格跟着单独一段的表题），
+ * 组数 ≤ 5 时一组一步，否则按字数合并。图表那一步用图注、表题作标题。
  */
 import type { BookBlock } from './types';
 
@@ -14,6 +15,11 @@ export interface LessonStep {
 }
 
 const MAX_STEPS = 5;
+
+/** 脚注段：「[1]尽管 Fama……」。 */
+const footnote = (b: BookBlock) => b.type === 'p' && /^\s*\[\d+\]/.test(b.text);
+/** 单独一段的表题、图注：「表3.21 动量和市值独立双重排序月均收益率（%）」。 */
+const caption = (b: BookBlock) => b.type === 'p' && b.text.length < 120 && /^\s*(表|图|Table|TABLE|Figure|FIGURE|Exhibit)\s*\d/.test(b.text);
 /** 字数太少的小节一步讲完。 */
 const ONE_STEP_CHARS = 200;
 
@@ -25,6 +31,8 @@ function groups(blocks: BookBlock[]): BookBlock[][] {
     const attach =
       prev &&
       (b.type === 'eq' ||
+        footnote(b) ||
+        ((b.type === 'table' || b.type === 'img') && caption(prev)) ||
         (b.type === 'li' && (prev.type === 'li' || /[：:]$/.test(prev.text))));
     if (attach) {
       last.push(b);
@@ -48,10 +56,11 @@ export function stepTitle(b: BookBlock, index: number): string {
     return '公式';
   }
   if (b.type === 'img') {
-    return plain(b.text).slice(0, 18) || '图';
+    return plain(b.text).split('\n').map(x => x.trim()).find(x => /^(图|Figure|FIGURE|Exhibit)\s*\d/.test(x))?.slice(0, 18) || plain(b.text).slice(0, 18) || '图';
   }
   if (b.type === 'table') {
-    return '表格';
+    const head = plain(b.text).split('\n')[0].trim();
+    return /^(表|Table|TABLE)\s*\d/.test(head) ? head.slice(0, 18) : '表格';
   }
   const first = plain(b.text).split(/[。！？；:：]/)[0].trim();
   if (!first) {

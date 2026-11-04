@@ -139,13 +139,14 @@ export function ResearchEditScreen({ route }: RootScreenProps<'ResearchEdit'>) {
             source: n.source,
             checks: n.checks,
           }
-        : emptyResearch(route.params?.conceptId);
+        : route.params?.draft ?? emptyResearch(route.params?.conceptId);
       initialized.current = true;
       setDraft(value);
-      setBaseline(JSON.stringify(value));
+      // 讲解带来的草稿还没保存：算作有改动，离开前会提醒
+      setBaseline(route.params?.draft && !n ? '' : JSON.stringify(value));
       setExists(!!n);
     }
-  }, [r.data, id, route.params?.conceptId]);
+  }, [r.data, id, route.params?.conceptId, route.params?.draft]);
   useEffect(() => {
     let alive = true;
     setSections([]);

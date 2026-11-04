@@ -31,6 +31,10 @@ import { STUDY_PROMPT, studyContext, studyState } from './prompt';
 import { quick, type QuickKind } from './quick';
 import { loadReadingState, saveReadingState } from './readingState';
 import { runStudyTool, STUDY_TOOL_DEFS } from './tools';
+import { bookLanguage } from './search';
+import { refsIn, resolveRefs, selectedContext } from './selection';
+import { canTranslate } from './translation';
+import { loadTranslations } from '../data/translationRepo';
 
 export const MAX_STUDY_ROUNDS = 6;
 
@@ -54,6 +58,8 @@ export interface StudySession {
   lastConfig: ConversationConfig | null;
   /** 较早讲解整理成的摘要；没整理过为空。 */
   summary: string;
+  /** 书的正文语言（search_book 用中文搜英文书时提示换英文术语）。 */
+  language: 'en' | 'zh';
 }
 
 interface StudyStore {
@@ -117,6 +123,9 @@ export async function openSection(
     sections: old?.sections ?? {},
   };
   const blocks = await bookRepo.sectionBlocks(core.db, bookId, target.id);
+  const steps = planSteps(blocks);
+  // 路线图的切法变了（比如脚注不再单独成步）时，旧进度不能指到最后一步之后
+  state.step = Math.max(0, Math.min(state.step, steps.length - 1));
   const threadId = await studyRepo.studyThreadId(core.db, bookId, target.id);
   const messages = threadId ? await aiRepo.messages(core.db, threadId) : [];
   const { config, lastConfig } = await threadStudyConfig(core.db, threadId, messages);
@@ -133,7 +142,7 @@ export async function openSection(
     sections,
     section: target,
     blocks,
-    steps: planSteps(blocks),
+    steps,
     state,
     threadId,
     messages,
@@ -143,6 +152,7 @@ export async function openSection(
     config,
     lastConfig,
     summary,
+    language: bookLanguage(blocks.length ? blocks : await bookRepo.sectionBlocks(core.db, bookId, leaves[0].id)),
   };
   useStudy.setState({ s, error: null });
   await loadExtra(core, s);
@@ -152,6 +162,10 @@ export async function openSection(
 export function loadedOf(main: string, messages: StoredMessage[]): Set<string> {
   const out = new Set([main]);
   for (const m of messages) {
+    // 选段提问时附上了原文的别的小节的块（段里提到的图、表、公式）
+    for (const c of m.ui?.studySource?.refs ?? []) {
+      out.add(c);
+    }
     for (const t of m.ui?.tools ?? []) {
       // 长小节只读了一段时，读到的块在 cites 里
       if (t.section && !t.error && !t.section.partial) {
@@ -224,7 +238,7 @@ export function studyTools(svc: AiService) {
 /** 拼请求：工具 → 讲解协议 → 书的地图和当前原文（+ 讲解摘要）→ 没整理的历史 → extra（整理时的那句话）。 */
 async function build(core: AppCore, svc: AiService, threadId: number, extra?: Part[], noTools = false) {
   const prefs = await repo.getSetting<StudyPrefs>(core.db, STUDY_PREFS_KEY, DEFAULT_STUDY_PREFS);
-  const history = (await aiRepo.messages(core.db, threadId)).filter(m => !m.compacted);
+  const history = withoutFailedTurns((await aiRepo.messages(core.db, threadId)).filter(m => !m.compacted));
   if (extra) {
     history.push({ id: -1, threadId, role: 'user', parts: extra, raw: null, ui: null, compacted: false, createdAt: '' });
   }
@@ -241,6 +255,34 @@ async function build(core: AppCore, svc: AiService, threadId: number, extra?: Pa
     noTools,
     stream: true,
   });
+}
+
+/**
+ * 没问成的提问（401、断线、停止时一个字都没收到）不再发给模型：以前重试几次，同一个问题就在请求里重复几遍。
+ * 只去掉后面还有提问的那几轮（最后一轮是正在问的）；它们带的 <action_results> 挪到下一次提问前面，作答结果不丢。
+ */
+export function withoutFailedTurns(history: StoredMessage[]): StoredMessage[] {
+  const turns: StoredMessage[][] = [];
+  for (const m of history) {
+    if (m.role === 'user' || !turns.length) turns.push([m]);
+    else turns[turns.length - 1].push(m);
+  }
+  const answered = (t: StoredMessage[]) =>
+    t[0].role !== 'user' || t.some(m => m.role === 'tool' || (m.role === 'assistant' && m.parts.some(p => (p.t === 'text' && p.text.trim()) || p.t === 'call')));
+  const out: StoredMessage[] = [];
+  let carry: string[] = [];
+  turns.forEach((t, i) => {
+    if (i < turns.length - 1 && !answered(t)) {
+      carry.push(...t[0].parts.flatMap(p => (p.t === 'text' ? [...p.text.matchAll(/<action_results>[\s\S]*?<\/action_results>/g)].map(x => x[0]) : [])));
+      return;
+    }
+    if (carry.length && t[0].role === 'user') {
+      t = [{ ...t[0], parts: [{ t: 'text', text: carry.join('\n') }, ...t[0].parts] }, ...t.slice(1)];
+      carry = [];
+    }
+    out.push(...t);
+  });
+  return out;
 }
 
 /** 调一次模型；服务不认缓存 / 思考参数时去掉重发（和 AI 助手 §6.4 一样，不能关思考的模型不降级）。 */
@@ -348,14 +390,18 @@ export interface StudyAsk {
   snapshot?: boolean;
   /** 从读书模式某一段发起的：对话里在问题上方显示这一段。 */
   source?: NonNullable<StoredMessage['ui']>['studySource'];
+  /** 自己输入的问题：用户在原文里最近读到的块（seq），模型据此理解「这里」「这段」。 */
+  readingAt?: number;
+  /** 提问时开着中文对照：附上那一段已保存的译文，讲解术语和译文一致。 */
+  translation?: boolean;
 }
 
-export function quickAsk(s: StudySession, kind: QuickKind, block?: BookBlock): StudyAsk {
+export function quickAsk(s: StudySession, kind: QuickKind, block?: BookBlock, sentence?: string): StudyAsk {
   const step = block ? s.steps.findIndex(x => x.from <= block.no && block.no <= x.to) : s.state.step;
   const q = quick(kind, {
     steps: s.steps,
     step: Math.max(0, step),
-    block: block ? { label: citeLabel(s.section, block), text: block.text } : undefined,
+    block: block ? { label: citeLabel(s.section, block), id: s.section.id + '#' + block.no, text: block.text, sentence } : undefined,
   });
   return {
     label: q.label,
@@ -363,7 +409,7 @@ export function quickAsk(s: StudySession, kind: QuickKind, block?: BookBlock): S
     step: q.step,
     skip: kind === 'skip' ? s.state.step + 1 : undefined,
     pinSeq: kind === 'explainBlock' ? block?.seq : undefined,
-    ...(block ? { source: { sectionId: s.section.id, no: block.no, seq: block.seq, label: citeLabel(s.section, block), text: block.text.slice(0, 320) } } : {}),
+    ...(block ? { source: { sectionId: s.section.id, no: block.no, seq: block.seq, label: citeLabel(s.section, block), text: (sentence ?? block.text).slice(0, 320), ...(sentence ? { sentence: true } : {}) } } : {}),
   };
 }
 
@@ -455,12 +501,15 @@ export async function askStudy(core: AppCore, a: StudyAsk): Promise<boolean> {
   }
   const stuck = (await studyRepo.stuckOf(core.db, s0.book.id)).filter(x => !x.resolvedAt).map(x => x.sectionId + '：' + x.text);
   const results = await collectResults(core, await aiRepo.messages(core.db, threadId));
+  const where = await askContext(core, s0, a);
   const ctx =
-    studyState({ section: s0.section, steps: s0.steps, step, skipped: p.skipped, stuck, mode: s0.state.mode, today: now.slice(0, 10) }) +
+    studyState({ section: s0.section, steps: s0.steps, step, skipped: p.skipped, stuck, mode: s0.state.mode, today: now.slice(0, 10), stocks: await followedStocks(core) }) +
+    (where.text ? '\n' + where.text : '') +
     (results.length ? '\n<action_results>\n' + results.join('\n') + '\n</action_results>' : '');
+  const source = a.source ? { ...a.source, ...(where.cites.length ? { refs: where.cites } : {}) } : undefined;
   const userMsg = await aiRepo.addMessage(
     core.db,
-    { threadId, role: 'user', parts: [{ t: 'text', text: ctx }, { t: 'text', text: a.question.trim() }], ui: { question: a.label.trim(), ...(a.source ? { studySource: a.source } : {}), ...(divider ? { divider } : {}) } },
+    { threadId, role: 'user', parts: [{ t: 'text', text: ctx }, { t: 'text', text: a.question.trim() }], ui: { question: a.label.trim(), ...(source ? { studySource: source } : {}), ...(divider ? { divider } : {}) } },
     now,
   );
   await aiRepo.updateThread(core.db, threadId, { config: cfg, lastConfig: cfg }, now);
@@ -494,6 +543,41 @@ export async function askStudy(core: AppCore, a: StudyAsk): Promise<boolean> {
     if (abort === controller) abort = null;
     useStudy.setState({ busy: null });
   }
+}
+
+/** 这一段已保存的中文译文（开着中文对照时附上）。 */
+async function savedTranslation(core: AppCore, s: StudySession, b: BookBlock): Promise<string | undefined> {
+  if (!canTranslate(b)) return undefined;
+  const t = (await loadTranslations(core.db, s.book.id, [b]).catch(() => ({})) as Awaited<ReturnType<typeof loadTranslations>>)[b.seq];
+  return t ? t.pairs.map(x => x.translation).join('') : undefined;
+}
+
+/**
+ * 提问的位置（docs/design/lecture-retrieval-20261104.md §2）：从某一段发起时给 <selected_block>（块号、前后块、
+ * 点选的一句、段里提到的图表公式小节、对照译文）；自己输入时给用户在原文里最近读到哪一块。
+ */
+async function askContext(core: AppCore, s: StudySession, a: StudyAsk): Promise<{ text: string; cites: string[] }> {
+  const block = a.source ? s.blocks.find(b => b.seq === a.source!.seq) : undefined;
+  if (block) {
+    const resolved = await resolveRefs(core.db, s.book.id, s.sections, refsIn(block.text)).catch(() => []);
+    const translation = a.translation ? await savedTranslation(core, s, block) : undefined;
+    return selectedContext({ section: s.section, blocks: s.blocks, block, sentence: a.source?.sentence ? a.source.text : undefined, resolved, sections: s.sections, translation });
+  }
+  const at = a.readingAt != null ? s.blocks.find(b => b.seq === a.readingAt) : undefined;
+  if (!at) return { text: '', cites: [] };
+  const translation = a.translation ? await savedTranslation(core, s, at) : undefined;
+  const head = at.text.replace(/\s+/g, ' ').slice(0, 60);
+  return {
+    text: '<reading_position>\n用户在原文里最近读到 [' + s.section.id + '#' + at.no + ']' + (at.page != null ? '（p.' + at.page + '）' : '') + '：「' + head + (at.text.length > 60 ? '…' : '') + '」。问题里的「这里」「这段」「这个公式」多半指这附近。' +
+      (translation ? '\n用户开着中文对照，这一段的译文：「' + translation.slice(0, 300) + '」；术语和译文保持一致。' : '') + '\n</reading_position>',
+    cites: [],
+  };
+}
+
+/** 用户的自选和持仓（最多 8 只，名字取本地行情）：真实行情举例优先用这些股票。 */
+async function followedStocks(core: AppCore): Promise<string[]> {
+  const codes = [...new Set([...core.sim.heldCodes(), ...(await repo.watchlist(core.db).catch(() => []))])].slice(0, 8);
+  return codes.map(c => (core.sim.quote(c)?.info.name ?? core.sim.security(c)?.name ?? c) + ' ' + c);
 }
 
 async function runLoop(
@@ -606,7 +690,7 @@ async function runLoop(
         } else if (svc.capabilities?.tools === false) {
           out = { output: '当前模型未启用 App 工具，未执行', ui: { id: c.id, name: c.name, label: '模型不支持 App 工具', error: true } };
         } else {
-          out = await runStudyTool({ core, threadId, bookId: s.book.id, sectionId: s.section.id, sections: s.sections, signal, snapshot: opts.snapshot }, c.id, c.name, c.args);
+          out = await runStudyTool({ core, threadId, bookId: s.book.id, sectionId: s.section.id, sections: s.sections, signal, snapshot: opts.snapshot, language: s.language }, c.id, c.name, c.args);
         }
         const fit = fitToBudget(out.output, budget);
         results.push({ t: 'result', id: c.id, name: c.name, output: fit.output });

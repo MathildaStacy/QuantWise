@@ -5,7 +5,7 @@ const result: TestResult = {
   input: { factor: 'mom20', hold: 20, groups: 5, costBp: 15 },
   periods: 12, dates: ['2025-10-20', '2026-10-20'], groupNav: [], benchNav: [], longShortNav: [], ic: [],
   icMean: 0.051, icStd: 0.1, icir: 0.4, icirAnnual: 1.2, icPositive: 0.6, t: 1.35,
-  groupMeans: [-0.02, -0.01, 0.01, 0.02, 0.03], monotonicity: 0.5, longShortAnnual: -0.104,
+  groupMeans: [-0.02, -0.01, 0.01, 0.02, 0.03], monotonicity: 0.5, longShortAnnual: -0.104, longShortMean: -0.009, longShortStd: 0.04, longShortT: -0.78,
   turnover: 0.3, avgStocks: 16, stocks: 16,
 };
 

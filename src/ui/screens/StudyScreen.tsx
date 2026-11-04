@@ -12,6 +12,7 @@ import { loadProviders } from '../../ai/services';
 import type { AiProvider, ModelEntry } from '../../ai/types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { anchorAt, anchorY, loadReadingState, saveReadingState, type ReadingState } from '../../study/readingState';
+import { researchFromFactor } from '../../study/research';
 import { secLabel } from '../../book/book';
 import type { BookBlock } from '../../book/types';
 import { beijingIso } from '../../market/clock';
@@ -216,7 +217,8 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     if (!q || useStudy.getState().busy) return;
     setText('');
     remember({ draft: '' });
-    send({ label: q, question: q });
+    // 在原文里最近读到哪一块：模型据此理解「这里」「这段」
+    send({ label: q, question: q, readingAt: readingRef.current.reader?.id, translation: !!readingRef.current.translation });
   };
   const setDraft = (value: string) => {
     setText(value);
@@ -227,14 +229,14 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     setDraft(day + text.replace(/^看图中这一天：[^。]*。/, ''));
     input.current?.focus();
   };
-  const runQuick = async (k: QuickKind, block?: BookBlock) => {
+  const runQuick = async (k: QuickKind, block?: BookBlock, sentence?: string) => {
     if (!s) {
       return;
     }
     if (s.state.mode === 'read') {
       await setStudyMode(core, 'lecture');
     }
-    const a = quickAsk(useStudy.getState().s!, k, block);
+    const a = { ...quickAsk(useStudy.getState().s!, k, block, sentence), ...(block ? { translation: !!readingRef.current.translation } : {}) };
     if (k === 'finish') {
       nav.navigate('SectionDone', { bookId });
       return;
@@ -460,7 +462,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             <StudyThread
               onTurnLayout={(id, box) => { if (box) turnLayouts.current.set(id, box); else turnLayouts.current.delete(id); restoreThread(); updatePin(); }}
               onChartBox={(key, spot) => { if (spot) chartSpots.current.set(key, spot); else chartSpots.current.delete(key); updatePin(); }}
-              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread, onAskChart: askChart }} />
+              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread, onAskChart: askChart, onSaveResearch: (chart, claim, answer) => nav.navigate('ResearchEdit', { draft: researchFromFactor({ chart, book: s.book, section: s.section, claim, answer }) }) }} />
             </View>
             {ask && reading.pending && !busy ? <Button title={askLabel ?? '发送刚才的问题'} onPress={() => { nav.setParams({ ask: undefined, askLabel: undefined, askSnapshot: undefined }); send({ label: askLabel ?? ask, question: ask, snapshot: askSnapshot }); }} /> : null}
             {reading.pending && !busy ? <View style={st.retry}>
