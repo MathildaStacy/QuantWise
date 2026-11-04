@@ -710,16 +710,19 @@ export function AiScreen() {
                     busy={turnIndex === turns.length - 1 ? busy : null}
                     onLink={onLink}
                   />
-                  {turn.answer.map((m, i) => (
-                    <View key={i}>{renderMessage(m)}</View>
-                  ))}
-                  {/* QuantWise 行情与因子工具画的图，放在这一轮回答后面 */}
-                  {turn.answer
-                    .flatMap(m => m.ui?.tools ?? [])
-                    .flatMap(t => t.charts ?? [])
-                    .map((chart, i) => (
-                      <ChartCard key={'chart' + i} data={chart} />
-                    ))}
+                  {/* QuantWise 行情与因子工具画的图按消息顺序：紧跟在调用它的那一步后面、讲它的文字之前 */}
+                  {turn.flow.map((x, i) =>
+                    'charts' in x ? (
+                      x.charts.map((chart, k) => (
+                        <ChartCard
+                          key={'chart' + x.id + ':' + k}
+                          data={chart}
+                        />
+                      ))
+                    ) : (
+                      <View key={i}>{renderMessage(x.m)}</View>
+                    ),
+                  )}
                 </>
               );
             })()}

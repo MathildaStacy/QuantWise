@@ -26,7 +26,7 @@ import { migrate } from '../../src/data/migrations';
 import * as repo from '../../src/data/repos';
 import { T } from '../../src/engine';
 import type { MarketClient } from '../../src/market/client';
-import { parseQuotes } from '../../src/market/tencent';
+import { parseQuotes, type KBar } from '../../src/market/tencent';
 import { DEFAULT_REFRESH, type Refresher } from '../../src/sim/refresher';
 import { Simulator } from '../../src/sim/simulator';
 import type { RootStackParamList } from '../../src/ui/navigation/types';
@@ -50,6 +50,22 @@ jest.mock('../../src/app/tracker', () => ({ nativeTracker: () => null }));
 
 const fx = (name: string) =>
   readFileSync(join(__dirname, '../market/fixtures', name), 'utf8');
+// plot_chart 用的日 K：原型快照（和读书界面测试同一份）
+const snap = JSON.parse(
+  readFileSync(
+    join(__dirname, '../../docs/design/prototype/snapshot-2026-10-26.json'),
+    'utf8',
+  ),
+);
+const barsOf = (code: string): KBar[] =>
+  (snap.kline[code] ?? []).map(([date, o, c, h, l, v]: number[]) => ({
+    date,
+    open: Math.round(o * 1000),
+    close: Math.round(c * 1000),
+    high: Math.round(h * 1000),
+    low: Math.round(l * 1000),
+    volume: v * 100,
+  }));
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -70,6 +86,8 @@ async function setup() {
     quotes: async (codes: string[]) =>
       quotes.filter(q => codes.includes(q.snapshot.code)),
     search: async () => [],
+    kline: async (code: string, _t: string, _p: string, n: number) =>
+      barsOf(code).slice(-n),
   } as unknown as MarketClient;
   const sim = await Simulator.open(db, client, () => clock);
   await sim.ingest(quotes);
@@ -905,4 +923,98 @@ test('外部工具（MCP）：添加 Tushare、连接获取工具、写工具不
   expect((await loadMcpServers(core.db))[0].url).toBe(
     'https://api.tushare.pro/mcp/',
   );
+});
+
+test('行情图按消息顺序：紧跟在调用它的那一步后面、讲它的文字之前；历史对话打开时一样', async () => {
+  const runtime = await setup();
+  const p = emptyProvider('anthropic');
+  p.models = [{ id: 'claude-sonnet-5-5', enabled: true, price: null }];
+  p.keyTail = '0000';
+  await saveProviders(runtime.db, [p]);
+  await keychainStore.set(p.id, 'mock-ui-key');
+  newThread();
+  await selectConfig(runtime, {
+    providerId: p.id,
+    model: 'claude-sonnet-5-5',
+    effort: 'low',
+    search: false,
+  });
+  const usage = { input_tokens: 100, output_tokens: 20 };
+  replies = [
+    {
+      stop_reason: 'tool_use',
+      content: [
+        { type: 'text', text: '先看宁德时代这一年的回撤。' },
+        {
+          type: 'tool_use',
+          id: 'p1',
+          name: 'plot_chart',
+          input: { code: 'sz300750', sub: 'dd' },
+        },
+      ],
+      usage,
+    },
+    {
+      stop_reason: 'tool_use',
+      content: [
+        { type: 'text', text: '图里最深的回撤在年初。再看招商银行的动量。' },
+        {
+          type: 'tool_use',
+          id: 'p2',
+          name: 'plot_chart',
+          input: { code: 'sh600036', sub: 'mom20' },
+        },
+      ],
+      usage,
+    },
+    {
+      stop_reason: 'end_turn',
+      content: [
+        { type: 'text', text: '两张图对照看：一只在修复回撤，一只动量转正。' },
+      ],
+      usage,
+    },
+  ];
+  const r = await render('Ai', AiScreen);
+  const done = new Promise<void>(resolve => {
+    const unsub = useChat.subscribe(state => {
+      if (
+        !state.busy &&
+        state.messages.some(m =>
+          m.parts.some(x => x.t === 'text' && x.text.includes('两张图对照看')),
+        )
+      ) {
+        unsub();
+        resolve();
+      }
+    });
+  });
+  await r.type('问 AI', '用图讲讲宁德时代和招商银行最近的走势');
+  await r.press('发送');
+  await act(async () => {
+    await done;
+  });
+  // 按在页面上的先后：调用前的那句 → 它画的图 → 讲图的文字 → 第二张图 → 最后的回答 → 用量
+  // （以前两张图都排在全部文字后面）
+  const expected = [
+    '先看宁德时代这一年的回撤',
+    '宁德时代 · 回撤',
+    '图里最深的回撤在年初',
+    '招商银行 · 20 日动量',
+    '两张图对照看',
+    '用量详情',
+  ];
+  const onPage = () => {
+    const page = r.text();
+    return expected
+      .filter(s => page.includes(s))
+      .sort((a, b) => page.indexOf(a) - page.indexOf(b));
+  };
+  expect(onPage()).toEqual(expected);
+  const id = useChat.getState().threadId!;
+  await act(async () => {
+    await loadThread(runtime, null);
+    await loadThread(runtime, id);
+  });
+  expect(onPage()).toEqual(expected);
 });

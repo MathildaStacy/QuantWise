@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import type { StoredMessage, SearchSource, ToolUi } from '../../ai/types';
+import type { ChartData } from '../../quant/charts';
 import { aiColor as c } from '../aiTheme';
 import { Markdown } from './Markdown';
 
@@ -17,6 +18,8 @@ export function conversationTurns(messages: StoredMessage[]) {
     key: string;
     question?: StoredMessage;
     answer: StoredMessage[];
+    /** 回答按消息顺序；工具画的图紧跟在那一步后面、下一段回答之前（和讲解一样）。 */
+    flow: ({ m: StoredMessage } | { id: number; charts: ChartData[] })[];
   }[] = [];
   for (const message of messages) {
     if (message.role === 'user') {
@@ -24,12 +27,23 @@ export function conversationTurns(messages: StoredMessage[]) {
         key: `${message.threadId}:${message.id}`,
         question: message,
         answer: [],
+        flow: [],
       });
     } else {
       if (!turns.length) {
-        turns.push({ key: `${message.threadId}:history`, answer: [] });
+        turns.push({
+          key: `${message.threadId}:history`,
+          answer: [],
+          flow: [],
+        });
       }
-      turns[turns.length - 1].answer.push(message);
+      const turn = turns[turns.length - 1];
+      turn.answer.push(message);
+      turn.flow.push({ m: message });
+      const charts = (message.ui?.tools ?? []).flatMap(t => t.charts ?? []);
+      if (charts.length) {
+        turn.flow.push({ id: message.id, charts });
+      }
     }
   }
   return turns;
