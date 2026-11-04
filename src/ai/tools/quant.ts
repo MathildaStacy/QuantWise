@@ -5,11 +5,20 @@
 import type { AppCore } from '../../app/boot';
 import * as quantRepo from '../../data/quantRepo';
 import { addDays, type DateStr } from '../../engine/calendar';
-import { beijingIso } from '../../market/clock';
+import { beijingIso, beijingNow } from '../../market/clock';
+import { T } from '../../engine/session';
 import { runFactorTest, SampleError, testSummary } from '../../quant/backtest';
 import {
+  benchFocus,
   compareChart,
   factorCharts,
+  findEpisode,
+  FIND_NAME,
+  focusStats,
+  pct,
+  resolveView,
+  type FindKind,
+  type PriceChart,
   parseDay,
   parseFocus,
   parsePoints,
@@ -55,19 +64,42 @@ const int = (v: unknown, def: number, lo: number, hi: number) => {
   return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : def;
 };
 
+/** 行情接口偶发 5xx、超时、断网时等一下再试一次（实测连续两次 501 后讲解只好放弃画图）。 */
+export async function retryOnce<R>(f: () => Promise<R>, wait = 800): Promise<R> {
+  try {
+    return await f();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/行情接口返回 5\d\d|超时|网络错误/.test(msg)) throw e;
+    await new Promise(r => setTimeout(r, wait));
+    try {
+      return await f();
+    } catch (e2) {
+      throw new Error('行情服务暂时不可用（' + (e2 instanceof Error ? e2.message : String(e2)) + '，已重试一次）：请告诉用户稍后再试，不要凭记忆补行情数字');
+    }
+  }
+}
+
+/** 今天还没收盘（北京时间 15:00 前）时是今天的日期：最后一根是今天的，就是盘中数据。 */
+export function openToday(now = beijingNow()): string | null {
+  return now.t < T(15, 0) ? now.date : null;
+}
+
+const BENCH = { code: 'sh000300', name: '沪深 300', type: 'ZS' };
+
 /**
  * 取日 K：没给日期时取最近 n + 80 根（前面 80 根给均线和动量预热）；给了区间、标注或 end 时按日期段取，
  * 3 年前的行情也能画。接口一次最多 2,000 根，所以两头都框住：最早的日期往前留出视窗和预热，最晚的往后一年多。
  */
 function barsFetcher(core: AppCore, n: number | undefined, anchors: DateStr[]) {
   if (!anchors.length) {
-    return (x: { code: string; type: string }) => core.client.kline(x.code, x.type, 'day', Math.min(800, (n ?? 250) + 80), 'qfq');
+    return (x: { code: string; type: string }) => retryOnce(() => core.client.kline(x.code, x.type, 'day', Math.min(800, (n ?? 250) + 80), 'qfq'));
   }
   const sorted = [...anchors].sort();
   const start = addDays(sorted[0], -Math.ceil(((n ?? 250) + 140) * 1.5));
   const late = addDays(sorted[sorted.length - 1], 400);
   const end = late < beijingIso().slice(0, 10) ? late : '';
-  return (x: { code: string; type: string }) => core.client.klineRange(x.code, x.type, start, end, 'qfq');
+  return (x: { code: string; type: string }) => retryOnce(() => core.client.klineRange(x.code, x.type, start, end, 'qfq'));
 }
 
 async function needCode(core: AppCore, v: unknown) {
@@ -127,10 +159,11 @@ export async function runQuantTool(
     const what = (c: ChartData) =>
       (c.kind === 'price' || c.kind === 'compare') && c.focus ? ' · 标出' + c.focus.map(f => '「' + f.label + '」').join('') : '';
     const compare = Array.isArray(args.compare) ? args.compare.slice(0, 4) : [];
+    const today = openToday();
     if (compare.length) {
       const all = [r, ...(await Promise.all(compare.map(c => needCode(core, c))))];
       const bars = await Promise.all(all.map(fetch));
-      const c = compareChart(all.map((x, i) => ({ code: x.code, name: x.name, bars: bars[i] })), { n, end, focus, takeaway });
+      const c = compareChart(all.map((x, i) => ({ code: x.code, name: x.name, bars: bars[i] })), { n, end, focus, takeaway, today });
       return { output: c.text, label: '画图：' + all.map(x => x.name).join(' / ') + ' 对比' + what(c.chart), charts: [c.chart] };
     }
     const sub = Object.keys(SUB_NAME).includes(String(args.sub)) ? (args.sub as SubKind) : undefined;
@@ -139,9 +172,41 @@ export async function runQuantTool(
     if (bars.length < 2) {
       throw new Error('没有拿到 ' + r.name + ' 的日 K');
     }
-    const c = priceChart({ code: r.code, name: r.name, bars, n, end, ma, band: args.band === true, sub, marks: args.marks === true, focus, points, takeaway });
+    // find：在 bars / end 框出的这段日线里找一段真实行情，当成一段重点区间
+    const kind = (['drawdown', 'rally', 'volatile'] as const).find(k => k === args.find) as FindKind | undefined;
+    const found: string[] = [];
+    if (kind) {
+      const dates = bars.map(b => b.date);
+      const v = resolveView(dates, { n, end });
+      const ep = findEpisode(bars.slice(v.start, v.end + 1).map(b => b.close), kind);
+      if (ep && focus.length < 2) {
+        focus.push({ from: dates[v.start + ep.a], to: dates[v.start + ep.b], label: FIND_NAME[kind] });
+        found.push('find「' + FIND_NAME[kind] + '」：在 ' + dates[v.start] + ' 到 ' + dates[v.end] + ' 的日线里找到 ' + dates[v.start + ep.a] + ' 到 ' + dates[v.start + ep.b] + '，' + (kind === 'volatile' ? '20 日年化波动 ' + (ep.value * 100).toFixed(1) + '%' : (kind === 'drawdown' ? '峰到谷 ' : '谷到峰 ') + pct(ep.value, 2)) + '（下面「' + FIND_NAME[kind] + '」那段的读数就是它）');
+      } else {
+        found.push(ep ? 'find：已经有 2 段重点区间，没有再找' : 'find：这段数据太短，没找到');
+      }
+    }
+    const c = priceChart({ code: r.code, name: r.name, bars, n, end, ma, band: args.band === true, sub, marks: args.marks === true, focus, points, takeaway, today });
+    const chart = c.chart as PriceChart;
+    // 同期沪深 300：分清「跟着大盘」还是「自己的」涨跌（取不到就不写，不影响画图）
+    const benchLines: string[] = [];
+    if (chart.focus?.length && r.code !== BENCH.code) {
+      try {
+        const changes = benchFocus(chart, await fetch(BENCH));
+        if (changes.some(x => x != null)) {
+          chart.bench = { name: BENCH.name, changes };
+          chart.focus.forEach((f, i) => {
+            const st = focusStats(chart, f);
+            const b = changes[i];
+            if (st && b != null) benchLines.push('同期' + BENCH.name + '（「' + f.label + '」同一基数日）' + pct(b, 2) + '，超额（个股 − 沪深 300）' + ((st.change - b) * 100 >= 0 ? '+' : '') + ((st.change - b) * 100).toFixed(2) + ' 个百分点');
+          });
+        }
+      } catch {
+        // 基准取不到时只少一行对照
+      }
+    }
     // 一行：日期范围和根数在卡片底部写着
-    return { output: c.text, label: '画图：' + r.name + (sub ? ' · ' + SUB_NAME[sub] : '') + what(c.chart), charts: [c.chart] };
+    return { output: [c.text, ...found, ...benchLines].join('\n'), label: '画图：' + r.name + (sub ? ' · ' + SUB_NAME[sub] : '') + what(c.chart), charts: [chart] };
   }
   const factor = String(args.factor) as FactorId;
   if (!FACTORS[factor]) {
@@ -153,10 +218,10 @@ export async function runQuantTool(
   }
   const panel = await loadPanel(core.db, pool.codes);
   if (name === 'factor_test') {
-    const input = { factor, hold: [5, 10, 20, 60].includes(Number(args.hold)) ? Number(args.hold) : 20, groups: [3, 5, 10].includes(Number(args.groups)) ? Number(args.groups) : 5, costBp: int(args.cost_bp, 0, 0, 50) };
+    const input = { factor, hold: [5, 10, 20, 60].includes(Number(args.hold)) ? Number(args.hold) : 20, groups: [3, 5, 10].includes(Number(args.groups)) ? Number(args.groups) : 5, costBp: int(args.cost_bp, 0, 0, 50), ...(args.weight === 'cap' ? { weight: 'cap' as const } : {}) };
     try {
       const res = runFactorTest(panel, input);
-      return { output: testSummary(res, pool.name), label: '因子检验：' + FACTORS[factor].name + ' · ' + pool.name + ' · ' + input.groups + ' 组 · 每 ' + input.hold + ' 日 · ' + res.periods + ' 期', charts: factorCharts(res, pool.id) };
+      return { output: testSummary(res, pool.name), label: '因子检验：' + FACTORS[factor].name + ' · ' + pool.name + ' · ' + input.groups + ' 组' + (input.weight === 'cap' ? '市值加权' : '') + ' · 每 ' + input.hold + ' 日 · ' + res.periods + ' 期', charts: factorCharts(res, pool.id, pool.name) };
     } catch (e) {
       if (e instanceof SampleError) {
         return { output: e.message, label: '因子检验：样本不够' };

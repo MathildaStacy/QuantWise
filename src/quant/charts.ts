@@ -60,6 +60,10 @@ export type ChartData =
       marks?: Mark[];
       focus?: Focus[];
       takeaway?: string;
+      /** 最后一根是今天的盘中数据（还没收盘）时是那天的日期。 */
+      live?: DateStr;
+      /** 同期沪深 300 在每段重点区间的涨跌（和 focus 对齐，取不到的是 null）。 */
+      bench?: { name: string; changes: (number | null)[] };
     }
   | {
       kind: 'compare';
@@ -69,10 +73,29 @@ export type ChartData =
       base?: DateStr;
       focus?: Focus[];
       takeaway?: string;
+      live?: DateStr;
     }
-  | { kind: 'factor'; factor: FactorId; universe: string; dates: DateStr[]; groups: number[][]; bench: number[]; longShort: number[] }
+  | {
+      kind: 'factor'; factor: FactorId; universe: string; dates: DateStr[]; groups: number[][]; bench: number[]; longShort: number[];
+      /** 这次检验的口径和关键统计（存进研究手记用）；旧图没有。 */
+      stats?: FactorStats;
+    }
   | { kind: 'ic'; factor: FactorId; dates: DateStr[]; ic: number[] }
   | { kind: 'groups'; factor: FactorId; means: number[] };
+
+export interface FactorStats {
+  universe: string;
+  hold: number;
+  groups: number;
+  weight: 'equal' | 'cap';
+  costBp: number;
+  periods: number;
+  icMean: number;
+  icT: number;
+  longShortMean: number;
+  longShortT: number;
+  longShortAnnual: number;
+}
 
 export type PriceChart = Extract<ChartData, { kind: 'price' }>;
 export type CompareChart = Extract<ChartData, { kind: 'compare' }>;
@@ -94,6 +117,40 @@ export interface FocusReq {
 export interface PointReq {
   date: DateStr;
   label: string;
+}
+
+// ---------- 让工具在数据里找一段行情（plot_chart 的 find） ----------
+
+export type FindKind = 'drawdown' | 'rally' | 'volatile';
+export const FIND_NAME: Record<FindKind, string> = { drawdown: '最深回撤', rally: '最大涨幅', volatile: '波动最大' };
+
+/**
+ * 在收盘价里找一段真实行情（docs/design/lecture-retrieval-20261104.md §4）：drawdown 峰到谷跌得最深，rally 谷到峰涨得最多，
+ * volatile 连续 days 个交易日的日收益波动最大。返回区间第一天和最后一天的下标（区间涨跌的基数是 a − 1 那天，
+ * 回撤和涨幅的基数正好是峰 / 谷那天），value 是回撤 / 涨幅或年化波动。
+ */
+export function findEpisode(close: number[], kind: FindKind, days = 20): { a: number; b: number; value: number } | null {
+  if (close.length < 3) return null;
+  if (kind === 'volatile') {
+    const n = Math.max(5, Math.min(days, close.length - 1));
+    let best: { a: number; b: number; value: number } | null = null;
+    for (let b = n; b < close.length; b++) {
+      const r = [];
+      for (let i = b - n + 1; i <= b; i++) r.push(close[i] / close[i - 1] - 1);
+      const m = r.reduce((x, y) => x + y, 0) / n;
+      const sd = Math.sqrt(r.reduce((x, y) => x + (y - m) ** 2, 0) / (n - 1)) * Math.sqrt(250);
+      if (!best || sd > best.value) best = { a: b - n + 1, b, value: sd };
+    }
+    return best;
+  }
+  let pivot = 0;
+  let best: { a: number; b: number; value: number } | null = null;
+  for (let i = 1; i < close.length; i++) {
+    const move = close[i] / close[pivot] - 1;
+    if (kind === 'drawdown' ? move < (best?.value ?? 0) : move > (best?.value ?? 0)) best = { a: pivot + 1, b: i, value: move };
+    if (kind === 'drawdown' ? close[i] > close[pivot] : close[i] < close[pivot]) pivot = i;
+  }
+  return best && best.a <= best.b ? best : null;
 }
 
 /** 一张图最多画几根；和 plot_chart 的 bars 上限一致。 */
@@ -333,12 +390,27 @@ export function focusStats(c: PriceChart, f: Focus): FocusStats | null {
 }
 
 /** 对比图：每只证券在区间里的涨跌（同样以区间前一个交易日为基数）。 */
+/** 同期基准在每段重点区间的涨跌：基数和个股同一天（区间前一个交易日），基准那天没数据时为 null。 */
+export function benchFocus(c: PriceChart, bars: KBar[]): (number | null)[] {
+  const at = new Map(bars.map(b => [b.date, b.close / 1000]));
+  return (c.focus ?? []).map(f => {
+    const st = focusStats(c, f);
+    const a = st && at.get(st.baseDate);
+    const b = st && at.get(st.to);
+    return a && b ? r4(b / a - 1) : null;
+  });
+}
+
 export function compareFocus(c: CompareChart, f: Focus): { span: { a: number; b: number; k: number }; series: { name: string; change: number }[] } | null {
   const span = focusSpan(c.dates, f);
   return span ? { span, series: c.series.map(s => ({ name: s.name, change: s.values[span.b] / s.values[span.k] - 1 })) } : null;
 }
 
 /** 区间那一行的开头：「9 月」2026-09-01 到 2026-09-30，21 个交易日。 */
+/** 最后一根是盘中数据时给模型的提醒（放在摘要第一行）。 */
+const liveNote = (d: DateStr) =>
+  '注意：最后一根 ' + d + ' 是今天的盘中数据，还没收盘；摘要里这一天的「收盘」「末日收盘」「最新」都是盘中价，讲的时候说「截至今天盘中」，不要说成收盘价。';
+
 const focusHead = (f: { label: string; from: DateStr; to: DateStr }, days: number) =>
   '重点区间「' + f.label + '」' + f.from + (f.to !== f.from ? ' 到 ' + f.to : '') + '，' + days + ' 个交易日';
 
@@ -384,6 +456,8 @@ export function priceChart(o: {
   focus?: FocusReq[];
   points?: PointReq[];
   takeaway?: string;
+  /** 今天（北京时间）还没收盘：最后一根是今天时标成盘中。 */
+  today?: DateStr | null;
 }): { chart: ChartData; text: string } {
   const all = o.bars.map(b => b.close / 1000);
   const view = resolveView(o.bars.map(b => b.date), { n: o.n, end: o.end, focus: o.focus, points: o.points });
@@ -441,7 +515,9 @@ export function priceChart(o: {
     ...(marks.length ? { marks } : {}),
     ...(focus.length ? { focus } : {}),
     ...(takeaway ? { takeaway } : {}),
+    ...(o.today && dates[dates.length - 1] === o.today ? { live: o.today } : {}),
   };
+  if (chart.live) lines.unshift(liveNote(chart.live));
   // 区间读数用存下来的图算（和界面显示的是同一份数）
   for (const f of focus) {
     const st = focusStats(chart, f)!;
@@ -472,7 +548,7 @@ export function priceChart(o: {
  */
 export function compareChart(
   list: { code: string; name: string; bars: KBar[] }[],
-  o: { n?: number; end?: DateStr | null; focus?: FocusReq[]; takeaway?: string } = {},
+  o: { n?: number; end?: DateStr | null; focus?: FocusReq[]; takeaway?: string; today?: DateStr | null } = {},
 ): { chart: ChartData; text: string } {
   const sets = list.map(x => new Map(x.bars.map(b => [b.date, b.close / 1000])));
   const all = [...sets[0].keys()].filter(d => sets.every(s => s.has(d))).sort();
@@ -496,6 +572,7 @@ export function compareChart(
     ...(base !== common[0] ? { base } : {}),
     ...(focus.length ? { focus } : {}),
     ...(takeaway ? { takeaway } : {}),
+    ...(o.today && common[common.length - 1] === o.today ? { live: o.today } : {}),
   };
   const lines = [
     (chart.base ? '以 ' + base + ' 收盘 = 100（第一段重点区间的前一个交易日）' : '起点 = 100') + '，' + common[0] + ' 到 ' + common[common.length - 1] + '，' + common.length + ' 个共同交易日',
@@ -505,14 +582,19 @@ export function compareChart(
     const r = compareFocus(chart, f)!;
     lines.push(focusHead(f, r.span.b - r.span.a + 1) + '（以 ' + common[r.span.k] + ' 收盘为基数）：' + r.series.map(s => s.name + ' ' + pct(s.change, 2)).join('，'));
   }
+  if (chart.live) lines.unshift(liveNote(chart.live));
   lines.push(...view.notes);
   return { chart, text: lines.join('\n') };
 }
 
-export function factorCharts(r: TestResult, universe: string): ChartData[] {
+export function factorCharts(r: TestResult, universe: string, universeName = universe): ChartData[] {
   const f = r.input.factor;
+  const stats: FactorStats = {
+    universe: universeName, hold: r.input.hold, groups: r.input.groups, weight: r.input.weight ?? 'equal', costBp: r.input.costBp, periods: r.periods,
+    icMean: r4(r.icMean), icT: Math.round(r.t * 100) / 100, longShortMean: r4(r.longShortMean), longShortT: Math.round(r.longShortT * 100) / 100, longShortAnnual: r4(r.longShortAnnual),
+  };
   return [
-    { kind: 'factor', factor: f, universe, dates: r.dates, groups: r.groupNav.map(g => g.map(r4)), bench: r.benchNav.map(r4), longShort: r.longShortNav.map(r4) },
+    { kind: 'factor', factor: f, universe, dates: r.dates, groups: r.groupNav.map(g => g.map(r4)), bench: r.benchNav.map(r4), longShort: r.longShortNav.map(r4), stats },
     { kind: 'ic', factor: f, dates: r.ic.map(x => x.date), ic: r.ic.map(x => r4(x.ic)) },
     { kind: 'groups', factor: f, means: r.groupMeans.map(r4) },
   ];

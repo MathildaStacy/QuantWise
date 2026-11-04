@@ -241,7 +241,13 @@ export interface MessageUi {
   /** user：你的问题原文和附带了什么。 */
   question?: string;
   /** user（伴读）：从读书模式某一段发起的提问，那一段的出处和原文开头；对话里显示在问题上方，点开回到原文。 */
-  studySource?: { sectionId: string; no: number; seq: number; label: string; text: string };
+  studySource?: {
+    sectionId: string; no: number; seq: number; label: string; text: string;
+    /** 只问了其中一句：text 是这一句。 */
+    sentence?: boolean;
+    /** 段里提到、附上了原文的别的小节的块（「2.2#3」），之后可以引用。 */
+    refs?: string[];
+  };
   page?: string | null;
   actions?: number;
   /** user：换了页面时的分隔线「你现在在：xxx」。 */

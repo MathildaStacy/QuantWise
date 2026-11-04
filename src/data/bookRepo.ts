@@ -179,7 +179,7 @@ export async function sections(db: Db, bookId: string): Promise<BookSection[]> {
   }));
 }
 
-interface BlockRow {
+export interface BlockRow {
   seq: number;
   section_id: string;
   no: number;
@@ -191,7 +191,7 @@ interface BlockRow {
   html: string | null;
 }
 
-const toBlock = (r: BlockRow): BookBlock => ({
+export const toBlock = (r: BlockRow): BookBlock => ({
   seq: Number(r.seq),
   sectionId: r.section_id,
   no: Number(r.no),

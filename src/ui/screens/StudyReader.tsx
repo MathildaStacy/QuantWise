@@ -9,7 +9,7 @@ import { citeLabel, leavesOf, secLabel } from '../../book/book';
 import type { BookBlock } from '../../book/types';
 import { marksOf, toggleHighlight, type Mark } from '../../data/studyRepo';
 import { beijingIso } from '../../market/clock';
-import type { QuickKind } from '../../study/quick';
+import { empirical, type QuickKind } from '../../study/quick';
 import { progressNow, useStudy, type StudySession } from '../../study/session';
 import { AiSheet } from '../components/AiOptions';
 import { BlockInline, BookBlockView } from '../components/BookBlock';
@@ -19,7 +19,7 @@ import { useCore } from '../hooks';
 import { rc, serif } from '../readTheme';
 import type { ReadingAnchor } from '../../study/readingState';
 import { readerAnchorAt, readerAnchorY, type ReaderBlockLayout } from '../../study/readerPosition';
-import { canTranslate } from '../../study/translation';
+import { canTranslate, splitTranslationSource } from '../../study/translation';
 import { useTranslation } from '../../study/useTranslation';
 import { TranslatedBlock } from '../components/TranslatedBlock';
 import { color } from '../theme';
@@ -33,7 +33,7 @@ import { toast } from '../toast';
 type StudyReaderProps = {
   s: StudySession;
   focusSeq?: number;
-  onQuick: (k: QuickKind, b: BookBlock) => void;
+  onQuick: (k: QuickKind, b: BookBlock, sentence?: string) => void;
   onFinish: () => void;
   anchor?: ReadingAnchor;
   onAnchor?: (anchor: ReadingAnchor) => void;
@@ -97,6 +97,11 @@ function ReaderBody({
   };
   const [marks, setMarks] = useState<Mark[]>([]);
   const [menu, setMenu] = useState<BookBlock | null>(null);
+  // 段落菜单里点选的一句（只问这一句）；换段时清掉
+  const [sentence, setSentence] = useState<string | null>(null);
+  const [sentencesOpen, setSentencesOpen] = useState(false);
+  useEffect(() => { setSentence(null); setSentencesOpen(false); }, [menu]);
+  const sentences = menu && (menu.type === 'p' || menu.type === 'li') ? splitTranslationSource(menu.text).map(x => x.trim()).filter(x => x.length > 1) : [];
   const [guide, setGuide] = useState(false);
   const [contentsOpen, setContentsOpen] = useState(false);
   const lecturing = !!useStudy(x => x.busy);
@@ -164,7 +169,7 @@ function ReaderBody({
   const pick = (k: QuickKind) => {
     const b = menu!;
     setMenu(null);
-    onQuick(k, b);
+    onQuick(k, b, k === 'fromBlock' ? undefined : sentence ?? undefined);
   };
   const rememberScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     lastScrollY.current = e.nativeEvent.contentOffset.y;
@@ -335,7 +340,20 @@ function ReaderBody({
       <AiSheet title={menu ? citeLabel(s.section, menu) : ''} visible={!!menu} onClose={() => setMenu(null)}>
         {menu ? (
           <ScrollView style={st.menuContent} keyboardShouldPersistTaps="handled">
-            <View style={st.quote}>{menu.type === 'eq' ? <BookBlockView b={menu} compact /> : <BlockInline text={menu.text.length > 320 ? menu.text.slice(0, 320) + '…' : menu.text} style={st.quoteText} />}</View>
+            <View style={st.quote}>{menu.type === 'eq' ? <BookBlockView b={menu} compact /> : <BlockInline text={sentence ?? (menu.text.length > 320 ? menu.text.slice(0, 320) + '…' : menu.text)} style={st.quoteText} />}</View>
+            {sentences.length > 1 ? <View>
+              <Pressable style={st.sentenceToggle} accessibilityRole="button" accessibilityState={{ expanded: sentencesOpen }} onPress={() => setSentencesOpen(v => !v)}>
+                <Text style={st.sentenceToggleT}>{sentence ? '只问这一句 · 换一句或问整段' : '只问其中一句（共 ' + sentences.length + ' 句）'}</Text>
+                <ChevronDown size={16} color={rc.secondary} />
+              </Pressable>
+              {sentencesOpen ? sentences.map((x, i) => (
+                <Pressable key={i} style={[st.sentence, sentence === x && st.sentenceOn]} accessibilityRole="radio" accessibilityState={{ checked: sentence === x }}
+                  onPress={() => { setSentence(sentence === x ? null : x); setSentencesOpen(false); }}>
+                  <BlockInline text={x} style={st.sentenceT} />
+                </Pressable>
+              )) : null}
+              {sentencesOpen && sentence ? <Pressable style={st.sentence} accessibilityRole="button" onPress={() => { setSentence(null); setSentencesOpen(false); }}><Text style={st.sentenceToggleT}>问整段</Text></Pressable> : null}
+            </View> : null}
             {canTranslate(menu) ? <Pressable style={st.item} accessibilityRole="button" disabled={!tr.entries[menu.seq] && (tr.busy || tr.loading)}
               accessibilityState={{ disabled: !tr.entries[menu.seq] && (tr.busy || tr.loading) }} onPress={() => {
                 const b = menu;
@@ -349,9 +367,10 @@ function ReaderBody({
             {s.book.format === 'pdf' && s.book.body.dir && menu.page != null ? <Pressable style={st.item} accessibilityRole="button" onPress={() => { setSourcePage(menu.page); setMenu(null); }}><Text style={st.itemT}>查看 PDF 第 {menu.page} 页</Text><Text style={st.itemD}>放大核对公式、图表和跨页内容</Text></Pressable> : null}
             {(
               [
-                ['explainBlock', '解释这一段', '200 字以内，在听讲里答'],
-                ['fromBlock', '从这里开始讲', '切到听讲，从这一段所在的那一步讲起'],
-                ['realBlock', '用真实行情举例', '画图、算因子，数字都从本地日线现算'],
+                sentence ? ['explainBlock', '解释这一句', '150 字以内，结合整段和前后文讲'] : ['explainBlock', '解释这一段', '200 字以内，在听讲里答'],
+                ...(sentence ? [] : [['fromBlock', '从这里开始讲', '切到听讲，从这一段所在的那一步讲起']]),
+                ['realBlock', '用真实行情举例', empirical(sentence ?? menu.text) ? '用因子检验在 A 股跑一次，和书里的数字对照' : '画图标出讲到的那段行情，数字从日线现算'],
+                ...(empirical(menu.text) ? [['replicateBlock', '在 A 股复现这个结论', '按书里的口径跑分组回测，逐项对照多空收益、t 值和 IC']] : []),
               ] as [QuickKind, string, string][]
             ).map(([k, l, d]) => (
               <Pressable key={k} style={st.item} onPress={() => pick(k)} accessibilityRole="button">
@@ -423,6 +442,11 @@ const st = StyleSheet.create({
   sectionTitle: { fontSize: 15, lineHeight: 24, color: rc.main },
   menuContent: { flexShrink: 1 },
   quote: { marginHorizontal: 16, marginBottom: 8, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: rc.line },
+  sentenceToggle: { minHeight: 44, marginHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  sentenceToggleT: { fontSize: 13, color: rc.main },
+  sentence: { minHeight: 44, marginHorizontal: 16, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, justifyContent: 'center' },
+  sentenceOn: { backgroundColor: rc.focus },
+  sentenceT: { fontFamily: serif, fontSize: 14, lineHeight: 22, color: rc.ink },
   quoteText: { fontFamily: serif, fontSize: 14, lineHeight: 23, color: rc.secondary },
   item: { minHeight: 48, paddingHorizontal: 16, paddingVertical: 11, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rc.line },
   itemT: { fontSize: 15, color: rc.ink },

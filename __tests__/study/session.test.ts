@@ -38,6 +38,8 @@ import {
 } from '../../src/study/session';
 import { STUDY_COMPACT_PROMPT } from '../../src/study/compact';
 import { runStudyTool, snippetOf, STUDY_TOOL_DEFS } from '../../src/study/tools';
+import { addWatch } from '../../src/data/repos';
+import { saveTranslation } from '../../src/data/translationRepo';
 
 jest.mock('../../src/data/drivers/opSqlite', () => ({ openDeviceDb: () => { throw new Error('测试里不用设备数据库'); } }));
 jest.mock('../../src/app/tracker', () => ({ nativeTracker: () => null }));
@@ -55,6 +57,7 @@ let sent: any[];
 const fetchMock: FetchLike = async (_url, init) => {
   sent.push(JSON.parse(init.body));
   const r = replies.shift() ?? text('（没有更多脚本）');
+  if (r === 'HTTP401') return { status: 401, text: async () => JSON.stringify({ error: { message: '无效的令牌' } }) };
   return { status: 200, text: async () => JSON.stringify(r) };
 };
 const keys = new Map([['s1', 'sk-test']]);
@@ -526,5 +529,87 @@ test('OpenAI Responses（Codex）：讲解带 reasoning、-study 缓存 key；�
   expect(hist).toContain('enc5');
   expect(hist).not.toContain('问1');
   expect(sent[6].instructions).toContain('<lecture_summary>');
+  await core.db.close();
+});
+
+test('书内检索：按相关度排、先列最相关的小节；没命中时提示怎么换说法', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '2.1');
+  const env = { core, threadId: 0, bookId: SAMPLE_BOOK_ID, sectionId: '2.1', sections: s().sections, language: s().language };
+  expect(s().language).toBe('zh');
+  const out = await runStudyTool(env, 'x', 'search_book', JSON.stringify({ query: '动量 复权' }));
+  expect(out.output.split('\n')[1]).toMatch(/^最相关的小节：3\.1 /);
+  expect(out.output).toContain('（也按 momentum、adjusted price、price adjustment 搜了）');
+  expect(out.ui.cites?.length).toBeGreaterThan(0);
+  // 每个小节最多 2 处
+  const per = new Map<string, number>();
+  for (const c of out.ui.cites ?? []) per.set(c.split('#')[0], (per.get(c.split('#')[0]) ?? 0) + 1);
+  expect(Math.max(...per.values())).toBeLessThanOrEqual(2);
+  const none = await runStudyTool(env, 'x', 'search_book', JSON.stringify({ query: '量子纠缠' }));
+  expect(none.output).toBe('没有找到「量子纠缠」。换个说法或拆成更短的关键词再搜。');
+  const en = await runStudyTool({ ...env, language: 'en' }, 'x', 'search_book', JSON.stringify({ query: '量子纠缠' }));
+  expect(en.output).toContain('这本书是英文的，换成英文术语再搜');
+  await core.db.close();
+});
+
+test('选段讲解带块号和 <selected_block>；自己输入的问题带读到哪；自选和持仓进 <study_state>', async () => {
+  const core = await setup();
+  await addWatch(core.db, 'sh600519', '2026-10-26T14:00:00+08:00');
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  const b = s().blocks[0];
+  replies = [text('解释 [[b:3.1#1]]')];
+  await askStudy(core, quickAsk(s(), 'explainBlock', b));
+  const body = sent[sent.length - 1];
+  const last = lastUser(body);
+  expect(last).toContain('<selected_block>');
+  expect(last).toContain('用户在原文里选的是 [3.1#1]');
+  expect(last).toContain('前一块 无，后一块 [3.1#2]');
+  expect(last).toContain('用 200 字以内解释这一段 [3.1#1]（3.1 ¶1）');
+  expect(last).toMatch(/用户的自选和持仓：[^\n]*sh600519/);
+  // 只问一句
+  const one = quickAsk(s(), 'explainBlock', b, '动量是过去一段时间的累计收益。');
+  expect(one.source).toMatchObject({ sentence: true, text: '动量是过去一段时间的累计收益。' });
+  replies = [text('这一句……')];
+  await askStudy(core, one);
+  expect(lastUser(sent[sent.length - 1])).toContain('用户点选的是其中这一句：「动量是过去一段时间的累计收益。」');
+  // 自己输入：读到第 2 块
+  replies = [text('这里说的是……')];
+  await askStudy(core, { label: '这里为什么用复权价？', question: '这里为什么用复权价？', readingAt: s().blocks[1].seq });
+  expect(lastUser(sent[sent.length - 1])).toContain('<reading_position>\n用户在原文里最近读到 [3.1#2]');
+  await core.db.close();
+});
+
+test('开着中文对照从某一段提问：附上这一段已保存的译文', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  const b = { ...s().blocks[0], text: 'Momentum is the cumulative return over the past n days.' };
+  await core.db.run('UPDATE book_block SET text = ? WHERE book_id = ? AND seq = ?', [b.text, SAMPLE_BOOK_ID, b.seq]);
+  await saveTranslation(core.db, SAMPLE_BOOK_ID, b, { source: b.text, pairs: [{ source: b.text, translation: '动量是过去 n 天的累计收益。' }], providerId: 'p', model: 'm', updatedAt: '' });
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  replies = [text('……')];
+  await askStudy(core, { ...quickAsk(s(), 'explainBlock', s().blocks[0]), translation: true });
+  expect(lastUser(sent[sent.length - 1])).toContain('这一段的译文是：「动量是过去 n 天的累计收益。」');
+  await core.db.close();
+});
+
+test('没问成的提问（401）重试后不再发给模型，对话里折叠成一行', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  replies = [text('开讲 [[b:3.1#1]]')];
+  await askStudy(core, quickAsk(s(), 'start'));
+  const q = { label: '用茅台举例', question: '用茅台举例' };
+  replies = ['HTTP401'];
+  expect(await askStudy(core, q)).toBe(false);
+  replies = ['HTTP401'];
+  expect(await askStudy(core, q)).toBe(false);
+  replies = [text('好的')];
+  expect(await askStudy(core, q)).toBe(true);
+  const body = sent[sent.length - 1];
+  const all = JSON.stringify(body.messages);
+  expect(all.split('用茅台举例').length - 1).toBe(1);
+  const { turnsOf, failedTurn } = require('../../src/ui/screens/StudyThread');
+  const turns = turnsOf(s().messages);
+  expect(turns.filter(failedTurn)).toHaveLength(2);
+  expect(failedTurn(turns[turns.length - 1])).toBe(false);
   await core.db.close();
 });

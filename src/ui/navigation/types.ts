@@ -2,7 +2,7 @@ import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { OrderKind } from '../../engine/types';
 import type { ChartData } from '../../quant/charts';
-import type { ConceptId } from '../../learning/types';
+import type { ConceptId, ResearchDraft } from '../../learning/types';
 import type { QuizMode } from '../../learning/progress';
 
 export type TabParamList = {
@@ -112,7 +112,8 @@ export type RootStackParamList = {
   Concept: { id: ConceptId };
   QuantQuiz: { mode: QuizMode; conceptId?: ConceptId };
   ResearchNotes: undefined;
-  ResearchEdit: { id?: string; conceptId?: ConceptId };
+  /** draft：从讲解里的因子检验带过来的草稿（还没保存）。 */
+  ResearchEdit: { id?: string; conceptId?: ConceptId; draft?: ResearchDraft };
   LearningCoach: { conceptId?: ConceptId; noteId?: string };
   LearningReport: undefined;
 };

@@ -15,6 +15,7 @@ import * as studyRepo from '../data/studyRepo';
 import { beijingIso } from '../market/clock';
 import { estimateTokens } from '../ai/prompt';
 import { blockText, sectionText } from './prompt';
+import { searchBook, variantPattern } from './search';
 
 /** load_section 一次最多返回多少词元（docs/design/ai-study-options.md §4.3）。 */
 export const LOAD_SECTION_TOKENS = 6000;
@@ -87,8 +88,8 @@ const BOOK_TOOLS: ToolDef[] = [
   },
   {
     name: 'search_book',
-    description: '在这本书里全文搜索，返回前 8 个命中的块（块号、所在小节、命中处前后的原文）。这些块之后可以引用；要看整块或上下文时再 load_section。',
-    schema: obj({ query: { type: 'string' } }, ['query']),
+    description: '在这本书里检索，按相关度返回最多 8 个块（块号、所在小节、命中处前后的原文），先列最相关的小节。query 写 1–4 个关键词或同义词，空格或 | 分开（例如「动量 崩溃」「momentum | reversal」），用书的语言写，App 会按中英术语表扩展。这些块之后可以引用；要看整块或上下文时再 load_section。',
+    schema: obj({ query: { type: 'string', description: '关键词，空格或 | 分开' } }, ['query']),
   },
 ];
 
@@ -116,6 +117,8 @@ export interface StudyToolEnv {
   signal?: AbortSignal;
   /** 实验快照解读：只解释已经给出的结果，不执行任何工具（工具定义照常发送，缓存不变）。 */
   snapshot?: boolean;
+  /** 书的正文语言：英文书用中文搜不到时提示换英文术语。 */
+  language?: 'en' | 'zh';
 }
 
 export async function runStudyTool(
@@ -185,11 +188,22 @@ async function bookTool(
     }
     case 'search_book': {
       const q = String(args.query ?? '').trim();
-      const hits = await bookRepo.searchBlocks(core.db, bookId, q);
-      const out = hits.length
-        ? hits.map(b => blockText(b.sectionId, { ...b, text: snippetOf(b.text, q) }) + '（' + secLabel(env.sections.find(s => s.id === b.sectionId) ?? { no: '', title: b.sectionId }) + '）').join('\n')
-        : '没有找到「' + q + '」';
-      return { output: out, ui: ui('在书里搜「' + q + '」：' + hits.length + ' 处', { cites: hits.map(b => b.sectionId + '#' + b.no) }) };
+      const r = await searchBook(core.db, bookId, q, env.sections, env.sectionId);
+      const title = (sid: string) => secLabel(env.sections.find(x => x.id === sid) ?? { no: '', title: sid });
+      const expanded = r.concepts.flatMap(c => c.slice(1));
+      const head = [
+        ...(expanded.length ? ['（也按 ' + expanded.slice(0, 8).join('、') + ' 搜了）'] : []),
+        ...(r.missing.length && r.hits.length ? ['（书里没有出现：' + r.missing.join('、') + '，下面只按其余关键词排的）'] : []),
+        ...(r.sections.length ? ['最相关的小节：' + r.sections.slice(0, 4).map(x => title(x.id) + '（' + x.count + ' 处）').join('、')] : []),
+      ];
+      const lines = r.hits.map(h => {
+        const at = h.matched.map(v => variantPattern(v).exec(h.block.text)?.[0]).find(Boolean) ?? '';
+        return blockText(h.block.sectionId, { ...h.block, text: snippetOf(h.block.text, at) }) + '（' + title(h.block.sectionId) + (h.block.sectionId === env.sectionId ? '，当前小节，已在上下文里' : '') + (h.viaTranslation ? '，命中的是已保存的中文译文' : '') + '）';
+      });
+      const out = r.hits.length
+        ? [...head, ...lines].join('\n')
+        : '没有找到「' + q + '」。' + (/\p{Script=Han}/u.test(q) && env.language === 'en' ? '这本书是英文的，换成英文术语再搜（例如书里的原词）。' : '换个说法或拆成更短的关键词再搜。');
+      return { output: out, ui: ui('在书里搜「' + q + '」：' + r.hits.length + ' 处', { cites: r.hits.map(h => h.block.sectionId + '#' + h.block.no) }) };
     }
     case 'get_notes': {
       const sid = String(args.section_id ?? '');

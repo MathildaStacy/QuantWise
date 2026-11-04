@@ -80,6 +80,10 @@ export function realChecked(turns: Turn[]): Map<number, boolean> {
 
 const textOf = (m: StoredMessage) => m.parts.map(p => (p.t === 'text' ? p.text : '')).join('');
 
+/** 没问成的一问：有问题、没有任何工具和讲解文字，只剩错误（401、断线、一个字没收到就停了）。 */
+export const failedTurn = (t: Turn) =>
+  t.question != null && !t.tools.length && !t.answers.some(m => textOf(m).trim()) && t.answers.some(m => m.ui?.error);
+
 /** 每一问的文字（问题 + 讲解）和画了几张图：讲解页决定钉哪张图（ChartPin 的 pinOf）。 */
 export function turnInfo(messages: StoredMessage[]): Map<number, TurnInfo> {
   return new Map(
@@ -113,6 +117,8 @@ export interface ThreadActions {
   onDisclosure?: () => void;
   /** 图上点中某一天后「问这一天」：把这一天的读数带到输入框。 */
   onAskChart?: (text: string) => void;
+  /** 因子检验的图「存进研究手记」：这张图、这一问的提问原文（或问题）和讲解。 */
+  onSaveResearch?: (chart: Extract<ChartData, { kind: 'factor' }>, claim: string, answer: string) => void;
 }
 
 export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
@@ -157,6 +163,20 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
       i += inside.length - 1;
       continue;
     }
+    // 后面又问过的失败提问折叠成一行（连续几次没问成合成一行），不再一问一份原文和错误
+    if (failedTurn(t) && i < turns.length - 1) {
+      let j = i;
+      while (j + 1 < turns.length - 1 && failedTurn(turns[j + 1]) && !folds.some(x => x.fromMsg === turns[j + 1].first)) j++;
+      const group = turns.slice(i, j + 1);
+      const error = [...group[group.length - 1].answers].reverse().find(m => m.ui?.error)?.ui?.error ?? '';
+      out.push({ id: t.first, node:
+        <Text style={st.failed} numberOfLines={2} accessibilityRole="text">
+          {(group.length > 1 ? '没问成 ' + group.length + ' 次：' : '没问成：') + (t.source ? t.source.label + ' · ' : '') + (t.question ?? '') + (error ? '（' + error.replace(/\s*\(request id:[^)]*\)/, '') + '）' : '')}
+        </Text>,
+      });
+      i = j;
+      continue;
+    }
     const detour = !!p.detour && t.first >= p.detour.fromMsg;
     out.push({ id: t.first, node: <TurnView t={t} detour={detour} a={a} check={check} streaming={!!busy && i === turns.length - 1} realOk={!!checked.get(t.first)} onChartBox={onChartBox} /> });
   }
@@ -188,7 +208,10 @@ function TurnView({ t, detour, a, check, streaming, realOk, onChartBox }: { t: T
           return x.charts.map((c, k) => {
             const key = x.id + ':' + k;
             const box = onChartBox && pinnable(c) ? (b: { y: number; h: number } | null) => onChartBox(key, b && { turn: t.first, ...b, data: c }) : undefined;
-            return <ChartCard key={'c' + key} data={c} onBox={box} onAsk={a.onAskChart} />;
+            const save = c.kind === 'factor' && c.stats && a.onSaveResearch
+              ? () => a.onSaveResearch!(c, t.source?.text ?? t.question ?? '', t.answers.map(textOf).join('\n'))
+              : undefined;
+            return <ChartCard key={'c' + key} data={c} onBox={box} onAsk={a.onAskChart} onSave={save} />;
           });
         }
         const m = x.m;
@@ -324,6 +347,7 @@ const st = StyleSheet.create({
   toolErr: { color: '#B5462F' },
   err: { fontSize: 13, color: '#B5462F', marginVertical: 6 },
   sys: { textAlign: 'center', fontSize: 12, color: rc.muted, marginVertical: 10 },
+  failed: { fontSize: 12, lineHeight: 18, color: rc.muted, marginVertical: 8, paddingLeft: 10, borderLeftWidth: 2, borderLeftColor: rc.line },
   sourceQuote: { maxWidth: '85%', alignSelf: 'flex-end', minHeight: 48, paddingHorizontal: 12, paddingVertical: 10, gap: 4, borderLeftWidth: 1, borderLeftColor: rc.line, marginBottom: 6 },
   sourceLabel: { fontSize: 12, lineHeight: 20, color: rc.main },
   sourceExcerpt: { fontSize: 13, lineHeight: 21, color: rc.secondary },
