@@ -35,6 +35,7 @@ import {
   INDEX_POOLS,
   isAStock,
   isIndexPool,
+  klineSince,
   loadPanel,
   poolStatus,
   prepareBars,
@@ -137,7 +138,7 @@ function barsFetcher(core: AppCore, n: number | undefined, anchors: DateStr[]) {
   const start = addDays(sorted[0], -Math.ceil(((n ?? 250) + 140) * 1.5));
   const late = addDays(sorted[sorted.length - 1], 400);
   const end = late < beijingIso().slice(0, 10) ? late : '';
-  return (x: { code: string; type: string }) => retryOnce(() => core.client.klineRange(x.code, x.type, start, end, 'qfq'));
+  return (x: { code: string; type: string }) => retryOnce(() => klineSince(core.client, x.code, x.type, start, end));
 }
 
 async function needCode(core: AppCore, v: unknown) {
@@ -226,7 +227,7 @@ export async function runQuantTool(
   if (name === 'meta_label_test') {
     const r = await needCode(core, args.code);
     const input = labelInputOf(args);
-    const bars = await retryOnce(() => core.client.klineRange(r.code, r.type, addDays(beijingIso().slice(0, 10), -QFQ_DAYS), '', 'qfq'));
+    const bars = await retryOnce(() => klineSince(core.client, r.code, r.type, addDays(beijingIso().slice(0, 10), -QFQ_DAYS)));
     const what = '元标签：' + r.name + ' · MA' + input.fast + '/' + input.slow + (input.side === 'both' ? ' 交叉' : ' 金叉');
     try {
       const c = labelsChart({ code: r.code, name: r.name, bars, input, n: args.bars == null ? undefined : int(args.bars, 250, 60, 750), today: openToday() });

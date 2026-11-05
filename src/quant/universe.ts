@@ -1,7 +1,7 @@
 /**
  * 股票池和数据准备（QUANTWISE_DESIGN.md §7.1）：示例池、自选 + 持仓、沪深 300、中证 500、中证 1000。
- * 准备数据 = 每只取约 5 年前复权日 K（腾讯，按日期段取）+ 快照里的市值，整段写进 kline_qfq；最后一根不是最近收盘的交易日就重取，
- * 以前只取了 750 根（约 3 年）的也重取一次。
+ * 准备数据 = 每只取约 5 年前复权日 K（腾讯，按日期段取，个股一次只回最近约 640 根，往前分段补齐）+ 快照里的市值，
+ * 整段写进 kline_qfq；最后一根不是最近收盘的交易日就重取，以前只取了 750 根（约 3 年）或 640 根的也重取一次。
  */
 import type { Db } from '../data/db';
 import * as quantRepo from '../data/quantRepo';
@@ -11,6 +11,7 @@ import { T } from '../engine/session';
 import { BIG_CAPS } from '../learn/datalab';
 import { INDEX_MEMBER_TYPE } from '../market/eastmoney';
 import type { MarketClient } from '../market/client';
+import type { KBar } from '../market/tencent';
 import { panelBuilder, panelDates, type Panel } from './factors';
 
 export type IndexPoolId = 'hs300' | 'zz500' | 'zz1000';
@@ -26,19 +27,55 @@ export const UNIVERSE_NAME: Record<UniverseId, string> = {
 
 /** 要用户点「准备数据」的指数池：成分数、少于多少只算没取全、大约要多久和多少流量（每只约 80 KB）。 */
 export const INDEX_POOLS: Record<IndexPoolId, { short: string; size: number; min: number; source: string; minutes: number; mb: number }> = {
-  hs300: { short: '沪深 300', size: 300, min: 250, source: '新浪', minutes: 1, mb: 25 },
-  zz500: { short: '中证 500', size: 500, min: 420, source: '东方财富', minutes: 2, mb: 40 },
-  zz1000: { short: '中证 1000', size: 1000, min: 850, source: '东方财富', minutes: 4, mb: 80 },
+  hs300: { short: '沪深 300', size: 300, min: 250, source: '新浪', minutes: 3, mb: 25 },
+  zz500: { short: '中证 500', size: 500, min: 420, source: '东方财富', minutes: 5, mb: 40 },
+  zz1000: { short: '中证 1000', size: 1000, min: 850, source: '东方财富', minutes: 9, mb: 80 },
 };
 
 export const UNIVERSE_IDS = Object.keys(UNIVERSE_NAME) as UniverseId[];
 export const isIndexPool = (id: string): id is IndexPoolId => id in INDEX_POOLS;
 
-/** 每只股票大约取多少根日线（约 5 年）：按日期段取，往回 1,900 个自然日，接口一次最多 2,000 根，够用。 */
+/** 每只股票大约取多少根日线（约 5 年）：按日期段取，往回 1,900 个自然日。 */
 export const QFQ_BARS = 1250;
 export const QFQ_DAYS = 1900;
-/** 以前的版本按根数取 750 根：这样的重取一次（新上市刚好 750 根的会多取一次，不影响结果）。 */
-const LEGACY_BARS = 750;
+/**
+ * 以前的版本只取到 750 根（按根数取）或 640 根（按日期段取但没往前补）：这样的重取一次。
+ * 新上市刚好这么多根的会多取一次，不影响结果。
+ */
+const LEGACY_BARS = new Set([750, 640]);
+/**
+ * 腾讯前复权日 K 一次最多回多少根：个股约 640，指数可以更多。回满这么多又没到起点，就往前再取一段；
+ * 最多两段（约 1,280 根、5 年多），第三段只多一两个月，却要多 50% 的请求。
+ */
+const PAGE_FULL = 600;
+const MAX_PAGES = 2;
+
+/**
+ * 从 start 取到 end（空 = 最新）的前复权日 K。腾讯接口按日期段取时个股只回最近约 640 根，
+ * 回满了又没到 start 就把 end 挪到最早那天的前一天往前再取一段；往前那段取失败（限流、返回网页）时用已经取到的。
+ */
+export async function klineSince(
+  client: Pick<MarketClient, 'klineRange'>,
+  code: string,
+  type: string,
+  start: DateStr,
+  end: DateStr | '' = '',
+): Promise<KBar[]> {
+  let bars = await client.klineRange(code, type, start, end, 'qfq');
+  for (let page = 1; page < MAX_PAGES && bars.length >= PAGE_FULL && bars[0].date > addDays(start, 10); page++) {
+    const first = bars[0].date;
+    let older: KBar[];
+    try {
+      older = (await client.klineRange(code, type, start, addDays(first, -1), 'qfq')).filter(b => b.date < first);
+    } catch {
+      break;
+    }
+    if (!older.length) break;
+    bars = [...older, ...bars];
+    if (older.length < PAGE_FULL) break;
+  }
+  return bars;
+}
 const CONCURRENCY = 6;
 /** 连续这么多只取不到（接口限流、断网）就停下，不把剩下的都试一遍；下次准备只补没取到的。 */
 const HALT_AFTER = 12;
@@ -88,7 +125,7 @@ export async function poolStatus(env: UniverseEnv, id: IndexPoolId): Promise<{ c
   let stale = 0;
   let lastDate: string | null = null;
   for (const m of meta.values()) {
-    if (m.lastDate < want || m.bars === LEGACY_BARS) stale++;
+    if (m.lastDate < want || LEGACY_BARS.has(m.bars)) stale++;
     if (!lastDate || m.lastDate > lastDate) lastDate = m.lastDate;
   }
   return { codes, asOf, ready: codes.length >= INDEX_POOLS[id].min && meta.size >= codes.length * 0.9, stale: stale + codes.length - meta.size, lastDate };
@@ -134,7 +171,7 @@ export async function prepareBars(
   const meta = await quantRepo.qfqMeta(env.db, codes);
   const stale = codes.filter(c => {
     const m = meta.get(c);
-    return !m || m.lastDate < want || m.bars === LEGACY_BARS;
+    return !m || m.lastDate < want || LEGACY_BARS.has(m.bars);
   });
   const prog: PrepareProgress = { done: codes.length - stale.length, total: codes.length, failed: [] };
   onProgress?.({ ...prog });
@@ -152,7 +189,7 @@ export async function prepareBars(
       const c = stale[next++];
       try {
         const q = quotes.get(c);
-        const bars = await env.client.klineRange(c, q?.info.type ?? 'GP-A', start, '', 'qfq');
+        const bars = await klineSince(env.client, c, q?.info.type ?? 'GP-A', start);
         if (!bars.length) {
           throw new Error('没有日线');
         }

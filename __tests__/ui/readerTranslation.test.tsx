@@ -288,7 +288,7 @@ test('因子检验说指数池数据没准备：最近那一问下面出「准�
   const onPrepare = jest.fn();
   await act(async () => { tree = create(<StudyThread s={s} busy={null} a={{ onLink() {}, onPick() {}, onWrapup() {}, onStuck() {}, onPrepare, prep: null }} />); });
   expect(text()).toContain('准备中证 1000 数据');
-  expect(text()).toContain('约 4 分钟、80 MB 流量');
+  expect(text()).toContain('约 9 分钟、80 MB 流量');
   expect(tree!.root.findAll(n => n.props.children === '准备数据并重做这次检验' && typeof n.type === 'string')).toHaveLength(1);
   await press('准备数据并重做这次检验');
   expect(onPrepare).toHaveBeenCalledWith('zz1000');

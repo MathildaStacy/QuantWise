@@ -20,7 +20,7 @@ import { runFactorTest, SampleError, testSummary } from '../../src/quant/backtes
 import { factorCharts } from '../../src/quant/charts';
 import { buildPanel } from '../../src/quant/factors';
 import { spearman } from '../../src/quant/indicators';
-import { isAStock, loadPanel, poolStatus, prepareBars, refreshIndex, type UniverseEnv } from '../../src/quant/universe';
+import { isAStock, klineSince, loadPanel, poolStatus, prepareBars, refreshIndex, type UniverseEnv } from '../../src/quant/universe';
 
 const snap = JSON.parse(readFileSync(join(__dirname, '../../docs/design/prototype/snapshot-2026-10-26.json'), 'utf8')) as {
   kline: Record<string, [string, number, number, number, number, number][]>;
@@ -143,6 +143,38 @@ describe('准备数据和按批组面板', () => {
     expect(calls).toEqual([{ code: 'sh600000', start: '2021-08-13' }]);
     expect(p).toMatchObject({ done: 2, total: 2, failed: [] });
     expect((await quantRepo.qfqMeta(e.db, ['sh600000'])).get('sh600000')?.bars).toBe(barsOf('sh600036').length);
+  });
+
+  it('个股按日期段一次只回最近 640 根：往前分段补齐到起点；指数一次回全的不再取；往前那段取失败时用已有的', async () => {
+    const all: KBar[] = [];
+    for (let d = '2021-08-23'; d <= NOW.date; d = cal.next(d)) all.push({ date: d, open: 1, close: 1, high: 1, low: 1, volume: 1 });
+    const calls: string[] = [];
+    // 和腾讯一样：end 以前最近 640 根
+    const capped = { klineRange: async (_c: string, _t: string, start: string, end: string) => {
+      calls.push(start + '~' + end);
+      const xs = all.filter(b => b.date >= start && (!end || b.date <= end));
+      return xs.slice(-640);
+    } };
+    // 两段 1,280 根（5 年多）就停，不为最早一两个月再取第三段
+    const got = await klineSince(capped, 'sh600519', 'GP-A', '2021-08-13');
+    expect(got).toEqual(all.slice(-1280));
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatch(/^2021-08-13~2024-/);
+    // 指数一次回全：只取一次
+    calls.length = 0;
+    const whole = { klineRange: async (...a: Parameters<typeof capped.klineRange>) => { calls.push(a[2] + '~' + a[3]); return all; } };
+    expect(await klineSince(whole, 'sh000300', 'ZS', '2021-08-13')).toHaveLength(all.length);
+    expect(calls).toHaveLength(1);
+    // 往前那段被拦（返回网页、限流）：用已经取到的 640 根，下次准备时按 640 根重取
+    let n = 0;
+    const flaky = { klineRange: async (...a: Parameters<typeof capped.klineRange>) => { if (n++) throw new Error('行情接口返回了网页'); return capped.klineRange(...a); } };
+    expect(await klineSince(flaky, 'sh600519', 'GP-A', '2021-08-13')).toHaveLength(640);
+    const e = await env({ klineRange: capped.klineRange });
+    await quantRepo.saveQfq(e.db, { code: 'sh600519', name: '贵州茅台', fetchedAt: 'x', totalCap: 1, floatCap: 1, price: 1 }, all.slice(-640));
+    calls.length = 0;
+    await prepareBars(e, ['sh600519']);
+    expect(calls.length).toBe(2);
+    expect((await quantRepo.qfqMeta(e.db, ['sh600519'])).get('sh600519')?.bars).toBe(1280);
   });
 
   it('连续取不到（接口限流）时停下，不把剩下的都试一遍；说明下次只补没取到的', async () => {
