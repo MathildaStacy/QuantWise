@@ -11,11 +11,11 @@ import { runFactorTest, SampleError } from '../../quant/backtest';
 import { chartTitle, factorCharts } from '../../quant/charts';
 import { FACTOR_IDS, FACTORS, type FactorId } from '../../quant/factors';
 import { isIndexPool, loadPanel, poolStatus, prepareBars, universeCodes, UNIVERSE_IDS, UNIVERSE_NAME, type IndexPoolId, type PrepareProgress, type UniverseId } from '../../quant/universe';
-import { ChartCard, FocusReadout, Takeaway } from '../charts/ChartCard';
+import { ChartCard, FocusReadout, LabelExtras, Legend, legendOf, Takeaway } from '../charts/ChartCard';
 import { PrepareCard, usePoolPrepare } from '../charts/PoolPrepare';
 import { QuantChart } from '../charts/QuantChart';
 import { LockScroll } from '../charts/scrub';
-import { focusAt, howComputed, pointCount, readout } from '../charts/quantDraw';
+import { fullHint, howComputed, readout, tableRows } from '../charts/quantDraw';
 import { Button, Details, NavBar, Note } from '../components/ui';
 import { useAiContext, useCore } from '../hooks';
 import type { RootScreenProps, RootStackParamList } from '../navigation/types';
@@ -219,10 +219,16 @@ export function ChartFullScreen({ route }: RootScreenProps<'ChartFull'>) {
         <View style={st.card}>
           <Takeaway data={c} />
           <QuantChart data={c} full onPick={setI} />
-          <Text style={[st.readout, num]}>{i == null ? '在图上按住或拖动，看每一天的数' : readout(c, i)}</Text>
+          <Text style={[st.readout, num]}>{i == null ? fullHint(c) : readout(c, i)}</Text>
           <FocusReadout data={c} full />
-          {/* 区间里的行前面一条竖线，和图上的黄色区间对应 */}
-          <Details title="查看数据表">{Array.from({ length: pointCount(c) }, (_, index) => <Text key={index} selectable style={[st.body, num, focusAt(c, index) && st.inFocus]}>{(focusAt(c, index) ? '▍' : '') + readout(c, index, false)}</Text>)}</Details>
+          {c.kind === 'labels' ? (
+            <>
+              <LabelExtras data={c} pick={i} />
+              <Legend items={legendOf(c)} />
+            </>
+          ) : null}
+          {/* 区间里的行前面一条竖线，和图上的黄色区间对应；元标签图每次信号一行 */}
+          <Details title="查看数据表">{tableRows(c).map((r, index) => <Text key={index} selectable style={[st.body, num, r.focus && st.inFocus]}>{(r.focus ? '▍' : '') + r.text}</Text>)}</Details>
         </View>
         <View style={st.card}>
           <Text style={st.h}>怎么算的</Text>

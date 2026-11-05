@@ -36,7 +36,7 @@ export const isIndexPool = (id: string): id is IndexPoolId => id in INDEX_POOLS;
 
 /** 每只股票大约取多少根日线（约 5 年）：按日期段取，往回 1,900 个自然日，接口一次最多 2,000 根，够用。 */
 export const QFQ_BARS = 1250;
-const QFQ_DAYS = 1900;
+export const QFQ_DAYS = 1900;
 /** 以前的版本按根数取 750 根：这样的重取一次（新上市刚好 750 根的会多取一次，不影响结果）。 */
 const LEGACY_BARS = 750;
 const CONCURRENCY = 6;

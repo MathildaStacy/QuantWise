@@ -43,6 +43,13 @@ export const empirical = (text: string) =>
   (/分组|组合|多空|赢家|输家|截面|排序|t\s*-?\s*值|t-stat|信息系数|月均收益|显著|单调|decile|quintile|portfolio|long[-–\s/]short|cross[-\s]section|winners?|losers?|t-value|significan|sort/i.test(text) ||
     /(?<![A-Za-z])(?:Rank )?IC(?![A-Za-z])/.test(text));
 
+/**
+ * 这一段讲的是不是打标签的方法（三重屏障、元标签、事件采样、次级模型）：是的话「用真实行情举例」改成 meta_label_test，
+ * 在真实日线上跑主信号和标签，不假设一个信号。
+ */
+export const labeling = (text: string) =>
+  /元标签|三重屏障|三隔栏|打标签|标签方法|次级模型|初级模型|事件采样|CUSUM|meta[-\s]?label|triple[-\s]barrier|labeling|labelling|primary model|secondary model|vertical barrier|getEvents|getBins/i.test(text);
+
 /** 这一段讲的是不是一段具体的行情（回撤、暴跌、急涨、波动聚集）：是的话让 plot_chart 用 find 在数据里找，不凭记忆挑月份。 */
 export const episodic = (text: string) =>
   /回撤|暴跌|急跌|崩盘|股灾|急涨|暴涨|大涨|反弹|波动聚集|剧烈波动|drawdown|crash|rally|rebound|volatility cluster/i.test(text);
@@ -71,6 +78,10 @@ export function quick(
   const said = b ? (b.sentence ? '里的这一句：「' + b.sentence.trim() + '」' : '：' + lead(b.text)) : '';
   const cross = b && empirical(b.sentence ?? b.text);
   const stepCross = !!o.stepText && empirical(o.stepText);
+  // 打标签的方法看整段（一句里常常只有「它」）
+  const lab = b && labeling(b.text);
+  const stepLab = !!o.stepText && labeling(o.stepText);
+  const labAsk = '用 meta_label_test 在一只真实的 A 股股票或指数上跑一次：主信号用均线交叉，pt、sl、hold 按书里的写法设，把「全部跟主信号」和「只做次级模型放行的」的次数、命中率、平均收益对照着讲；样本少或差距不到 2 个标准误时说这次说明不了。不要假设一个信号，数字以工具结果为准。';
   const stepEpisode = !!o.stepText && episodic(o.stepText);
   switch (kind) {
     case 'start':
@@ -84,6 +95,9 @@ export function quick(
     case 'example':
       return { kind, label: '举个例子', question: '给' + name(o.step) + '举个例子。', hint: '编一个小例子，不用真实行情' };
     case 'real':
+      if (stepLab) {
+        return { kind, label: '用真实行情举例', hint: '在一只真实证券的日线上跑主信号、三重屏障和元标签，对比加不加次级模型', question: '用真实行情给' + name(o.step) + '举个例子。这一步讲的是打标签的方法：' + labAsk };
+      }
       if (stepCross) {
         return { kind, label: '用真实行情举例', hint: '这一步讲的是股票之间的规律：用因子检验在 A 股跑一次，和书里的数字对照', question: '用真实的 A 股数据给' + name(o.step) + '举个例子。这一步说的是股票之间的横截面规律：用 factor_test 按书里的口径（因子、分组、调仓周期、加权，控制了市值的用 control）在 A 股跑一次，把多空每期收益、t 值、IC 和书里的数字对照；单只股票的图证明不了这类结论，需要单只股票的例子时再用 plot_chart。数字以工具结果为准。' };
       }
@@ -107,7 +121,9 @@ export function quick(
       return {
         kind,
         label: '用真实行情解释 ' + b!.label + (b!.sentence ? ' 这一句' : ''),
-        question: '用真实的 A 股数据解释 ' + at + said + '\n' + (cross
+        question: '用真实的 A 股数据解释 ' + at + said + '\n' + (lab
+          ? '这一段讲的是打标签的方法：' + labAsk
+          : cross
           ? '这一段说的是股票之间的横截面规律：用 factor_test 按书里的定义（因子、分组、调仓周期、加权）在 A 股跑一次，把结果和书里的数字对照；需要单只股票的例子时再用 plot_chart。'
           : '用 plot_chart 画图，讲到哪段行情就用 focus 标出那段；要找跌得最深、涨得最多或波动最大的一段时用 find。数字以工具结果为准。'),
       };

@@ -107,7 +107,7 @@ test('伴读一节：请求结构、真实行情图、岔路、因子检验、�
   expect(body.tools.map((t: any) => t.name)).toEqual(STUDY_TOOL_DEFS.map(t => t.name));
   expect(STUDY_TOOL_DEFS.map(t => t.name)).toEqual([
     'ask_quiz', 'factor_test', 'get_benchmark', 'get_company_profile', 'get_factor_values', 'get_financials', 'get_kline', 'get_notes',
-    'get_quote', 'load_section', 'mark_stuck', 'plot_chart', 'propose_section_wrapup', 'query_local_db', 'screen', 'search_book',
+    'get_quote', 'load_section', 'mark_stuck', 'meta_label_test', 'plot_chart', 'propose_section_wrapup', 'query_local_db', 'screen', 'search_book',
   ]);
   expect(lastUser(body)).toContain('现在讲：1. 动量是过去一段时间的累计收益（¶1–2）');
   expect(s().messages.find(m => m.role === 'user')?.ui?.question).toBe('开始讲第 1 步');

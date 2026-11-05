@@ -34,6 +34,8 @@ export const rc = {
   bandLine: '#8FA8D0',
   /** 各组收益图上书里的数（空心点）：暗琥珀色，和蓝色的柱子、锈红的多空分得开。 */
   book: '#9A6400',
+  /** 元标签图的慢均线：橙色虚线，和紫色的快线分得开。 */
+  slowLine: '#E08A1E',
 } as const;
 
 /** 原书正文：Android 的 serif 是思源宋体 / Noto Serif CJK（系统有就用）。 */

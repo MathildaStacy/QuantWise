@@ -1,5 +1,5 @@
 /**
- * 行情与因子工具（QUANTWISE_DESIGN.md §8）：plot_chart、factor_test、get_factor_values。
+ * 行情与因子工具（QUANTWISE_DESIGN.md §8）：plot_chart、factor_test、get_factor_values、meta_label_test。
  * AI 助手和伴读共用。每个工具把算好的图存进 ToolUi.chart，给模型的是同一份数据的文字摘要。
  */
 import type { AppCore } from '../../app/boot';
@@ -30,6 +30,7 @@ import {
 } from '../../quant/charts';
 import { FACTOR_IDS, FACTORS, type FactorId } from '../../quant/factors';
 import { SUB_NAME } from '../../quant/charts';
+import { LABEL_DEFAULTS, labelsChart, type LabelInput } from '../../quant/labels';
 import {
   INDEX_POOLS,
   isAStock,
@@ -37,6 +38,7 @@ import {
   loadPanel,
   poolStatus,
   prepareBars,
+  QFQ_DAYS,
   universeCodes,
   UNIVERSE_IDS,
   UNIVERSE_NAME,
@@ -196,6 +198,18 @@ async function poolOf(core: AppCore, args: Record<string, unknown>): Promise<Poo
   return { codes: codes.slice(0, 60), name: UNIVERSE_NAME[id], id };
 }
 
+/** meta_label_test 的参数：超出范围的收回到范围里，slow 不比 fast 大时报错。 */
+function labelInputOf(args: Record<string, unknown>): LabelInput {
+  const d = LABEL_DEFAULTS;
+  const fast = int(args.fast, d.fast, 2, 60);
+  const slow = int(args.slow, d.slow, 5, 250);
+  if (slow <= fast) {
+    throw new Error('slow（' + slow + '）要比 fast（' + fast + '）大');
+  }
+  const mult = (v: unknown, def: number) => (v == null || !Number.isFinite(Number(v)) ? def : Math.max(0, Math.min(5, Math.round(Number(v) * 10) / 10)));
+  return { fast, slow, side: args.side === 'both' ? 'both' : 'long', pt: mult(args.pt, d.pt), sl: mult(args.sl, d.sl), hold: int(args.hold, d.hold, 5, 120) };
+}
+
 /** factor_test 的双重排序参数：control = size 时按市值分 2 / 3 / 5 组，默认 5 组、条件排序。 */
 function controlOf(args: Record<string, unknown>) {
   if (args.control !== 'size') return undefined;
@@ -209,6 +223,21 @@ export async function runQuantTool(
   args: Record<string, unknown>,
   bookTable?: BookTableResolver,
 ): Promise<QuantOutcome> {
+  if (name === 'meta_label_test') {
+    const r = await needCode(core, args.code);
+    const input = labelInputOf(args);
+    const bars = await retryOnce(() => core.client.klineRange(r.code, r.type, addDays(beijingIso().slice(0, 10), -QFQ_DAYS), '', 'qfq'));
+    const what = '元标签：' + r.name + ' · MA' + input.fast + '/' + input.slow + (input.side === 'both' ? ' 交叉' : ' 金叉');
+    try {
+      const c = labelsChart({ code: r.code, name: r.name, bars, input, n: args.bars == null ? undefined : int(args.bars, 250, 60, 750), today: openToday() });
+      return { output: c.text, label: what + ' · ' + c.chart.stats.signals + ' 次信号', charts: [c.chart] };
+    } catch (e) {
+      if (e instanceof SampleError) {
+        return { output: e.message, label: what + '：日线不够' };
+      }
+      throw e;
+    }
+  }
   if (name === 'plot_chart') {
     const r = await needCode(core, args.code);
     const n = args.bars == null ? undefined : int(args.bars, 250, 20, 750);

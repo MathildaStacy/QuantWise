@@ -7,6 +7,7 @@ import { addDays, type DateStr } from '../engine/calendar';
 import type { KBar } from '../market/tencent';
 import { monthly, MONTH_DAYS, type TestResult } from './backtest';
 import { FACTORS, type FactorId } from './factors';
+import type { LabelsChart } from './labels';
 import {
   bollinger,
   drawdown,
@@ -95,7 +96,9 @@ export type ChartData =
       stats?: FactorStats;
       /** 书里同口径那张分组表的一行（App 从解析好的表格取数，不经模型）。 */
       book?: BookGroups;
-    };
+    }
+  /** 三重屏障和元标签（quant/labels.ts）：收盘、两条均线、每次信号和它的三道屏障。 */
+  | LabelsChart;
 
 /**
  * 书里分组表的一行：表名和 Panel、每组的数（原书的组数和单位）、合并到本次组数后的数，以及两边的秩相关。
@@ -143,6 +146,7 @@ export type CompareChart = Extract<ChartData, { kind: 'compare' }>;
 export type FactorChart = Extract<ChartData, { kind: 'factor' }>;
 export type IcChart = Extract<ChartData, { kind: 'ic' }>;
 export type GroupsChart = Extract<ChartData, { kind: 'groups' }>;
+export type { LabelsChart };
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const r4 = (v: number) => Math.round(v * 10000) / 10000;
@@ -731,5 +735,7 @@ export function chartTitle(c: ChartData): string {
         ...(c.stats ? [WEIGHT_NAME[c.stats.weight]] : []),
       ]);
     }
+    case 'labels':
+      return '元标签 · ' + c.name + ' · MA' + c.stats.fast + '/' + c.stats.slow + (c.stats.side === 'both' ? ' 交叉' : ' 金叉');
   }
 }

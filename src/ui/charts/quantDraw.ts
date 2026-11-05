@@ -1,7 +1,8 @@
 /**
  * 因子和行情图的几何（纯函数，可单测）：坐标换算、折线路径、刻度、十字线读数。画图组件在 QuantChart.tsx。
  */
-import { fmtSub, focusSpan, groupScale, icSummary, md, MONTH_DAYS, signed, SUB_NAME, WEIGHT_NAME, type ChartData, type Focus, type IcChart } from '../../quant/charts';
+import { fmtSub, focusSpan, groupScale, icSummary, md, MONTH_DAYS, signed, SUB_NAME, WEIGHT_NAME, type ChartData, type Focus, type IcChart, type LabelsChart } from '../../quant/charts';
+import { barrierRule, eventLine, FEATURE_NAMES, MIN_CLASS, MIN_TRAIN, VOL_DAYS, type LabelMark } from '../../quant/labels';
 import type { Series } from '../../quant/indicators';
 
 export function bounds(values: Series[], include: number[] = []): [number, number] {
@@ -267,8 +268,35 @@ export function readout(c: ChartData, i: number, focusNote = true): string {
         ? 'Q' + (i + 1) + ' 本次' + (g.unit === 'monthly' ? '折成月均 ' : '折成年化 ') + pp(g.ours[i]) + ' · 书中 ' + pp(g.book[i]) + '（每期平均 ' + pct(c.means[i], 2) + '）'
         : 'Q' + (i + 1) + ' 每期平均 ' + pct(c.means[i], 2);
     }
+    case 'labels': {
+      const m = nearestEvent(c, i);
+      return m ? eventLine(c, m) : c.dates[i] + ' 收盘 ' + c.close[i].toFixed(2) + ' · 图里这段没有信号';
+    }
   }
 }
+
+/** 元标签图：离第 i 天最近的一次信号（点图时选中它，一样近时取前一次）。 */
+export function nearestEvent(c: LabelsChart, i: number): LabelMark | null {
+  let best: LabelMark | null = null;
+  for (const m of c.events) {
+    if (!best || Math.abs(m.i - i) < Math.abs(best.i - i)) {
+      best = m;
+    }
+  }
+  return best;
+}
+
+/** 全屏的数据表：一般每一天（每一期、每一组）一行，元标签图每次信号一行。 */
+export function tableRows(c: ChartData): { text: string; focus: boolean }[] {
+  if (c.kind === 'labels') {
+    return c.events.map(m => ({ text: eventLine(c, m), focus: false }));
+  }
+  return Array.from({ length: pointCount(c) }, (_, i) => ({ text: readout(c, i, false), focus: !!focusAt(c, i) }));
+}
+
+/** 全屏图下还没点图时的提示。 */
+export const fullHint = (c: ChartData) =>
+  '在图上按住或拖动，看' + (c.kind === 'labels' ? '每一次信号' : c.kind === 'ic' ? '每一期' : c.kind === 'groups' ? '每一组' : '每一天') + '的数';
 
 /**
  * IC 图的走势，一句话：累计 IC 一路向上 / 一路向下 / 来回摆动（按 t 值和最后落在哪），
@@ -361,6 +389,16 @@ export function howToRead(c: ChartData): string[] {
           : []),
       ];
     }
+    case 'labels': {
+      const s = c.stats;
+      return [
+        '蓝线是收盘价，紫线 MA' + s.fast + '、橙色虚线 MA' + s.slow + '；快线上穿慢线（金叉）那天是一次做多信号' + (s.side === 'both' ? '，下穿（死叉）是一次做空信号' : '') + '，画成三角',
+        '每次信号有三道屏障：上下两条虚线是止盈和止损（按这只证券最近的波动定宽窄），右边的竖虚线是最长持有 ' + s.hold + ' 天；先碰到哪一道就按哪一道出场。图上框出的是最近一次，点别的三角看那一次',
+        '三角的颜色是这次跟主信号的结果：红色赚了（元标签 1），绿色亏了（元标签 0），灰色还没出结果',
+        '实心是次级模型放行（它估计赚钱的概率 ≥ 50%），空心是没放行；淡色的是预热：前面出了结果的信号还不够，次级模型先不判断',
+        '图下的对比表：放行的命中率比全部高，说明次级模型挑得出好信号；差距不到 2 个标准误时可能只是运气',
+      ];
+    }
   }
 }
 
@@ -424,6 +462,17 @@ export function howComputed(c: ChartData): string[] {
               '秩相关：组序（1、2、…）和各组收益的 Spearman 相关；书中按原书的组数算',
             ]
           : []),
+      ];
+    }
+    case 'labels': {
+      const s = c.stats;
+      return [
+        '主信号：MA' + s.fast + ' 上穿 MA' + s.slow + ' 做多' + (s.side === 'both' ? '，下穿做空' : '') + '；信号当天收盘进场',
+        '三道屏障：' + barrierRule(s) + (s.side === 'both' ? '（做空时止盈在下、止损在上）' : '') + '；目标波动 = 信号前 ' + VOL_DAYS + ' 日日收益的标准差 × √' + s.hold + '；每天按收盘价看先碰到哪一道，都没碰到就在第 ' + s.hold + ' 天收盘出场',
+        '元标签：顺着信号方向的收益 > 0 记 1，否则记 0',
+        '次级模型：逻辑回归，特征是信号当天的' + FEATURE_NAMES.join('、') + (s.side === 'both' ? '和方向' : '') + '，先标准化；每次信号只用出场在它之前的信号训练（不偷看后面的结果），至少 ' + MIN_TRAIN + ' 次、赚和没赚各 ' + MIN_CLASS + ' 次，赚钱概率 ≥ 0.5 放行',
+        '标准误：从比较期的信号里随机挑同样多次，命中率的标准差（不放回抽样）；放行的命中率比全部高 2 个标准误以上才算挑得出来',
+        '样本：' + s.from + ' 至 ' + s.to + ' 的 ' + s.bars + ' 根前复权日线，图只画最近 ' + c.dates.length + ' 根；不扣成本，不管涨跌停和 T+1',
       ];
     }
   }

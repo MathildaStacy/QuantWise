@@ -28,9 +28,11 @@ import {
   type FactorStats,
   type Focus,
   type GroupsChart,
+  type LabelsChart,
   type PriceChart,
 } from '../../quant/charts';
 import { FACTORS } from '../../quant/factors';
+import { eventLine, labelVerdict, MIN_TRAIN, type LabelHit } from '../../quant/labels';
 import { UNIVERSE_NAME, type UniverseId } from '../../quant/universe';
 import type { RootStackParamList } from '../navigation/types';
 import { groupColor, rc, SERIES_COLORS } from '../readTheme';
@@ -42,8 +44,10 @@ export interface LegendItem {
   color: string;
   label: string;
   dashed?: boolean;
-  /** band：一块浅色（IC 的噪声带）；dot：空心点（书里的数）。 */
-  kind?: 'band' | 'dot';
+  /** band：一块浅色（IC 的噪声带）；dot：空心点（书里的数）；note：只有一行说明文字。 */
+  kind?: 'band' | 'dot' | 'note';
+  /** 用这个字代替色块（元标签图的三角）。 */
+  glyph?: string;
 }
 
 /** 图例。分组净值图 extremes 时只列最低、最高两组（和图上画的一致）。 */
@@ -80,6 +84,18 @@ export function legendOf(c: ChartData, extremes = false): LegendItem[] {
             { color: rc.book, label: '书中 ' + c.book.label + (c.book.merged ? '（' + c.book.merged + '）' : ''), kind: 'dot' },
           ]
         : [];
+    case 'labels': {
+      const g = c.stats.side === 'both' ? '▲▼' : '▲';
+      return [
+        { color: rc.main, label: '收盘' },
+        { color: rc.maLine, label: 'MA' + c.stats.fast },
+        { color: rc.slowLine, label: 'MA' + c.stats.slow, dashed: true },
+        { color: color.up, label: '赚了', glyph: g },
+        { color: color.down, label: '亏了', glyph: g },
+        { color: rc.muted, label: '还没结果', glyph: g },
+        { color: rc.muted, label: '实心：次级模型放行 · 空心：没放行 · 淡色：预热', kind: 'note' },
+      ];
+    }
   }
 }
 
@@ -107,6 +123,8 @@ export function chartFoot(c: ChartData): string {
     }
     case 'groups':
       return (c.stats ? factorBasis(c.stats) + ' · ' : '') + '从左到右因子值从低到高';
+    case 'labels':
+      return c.code + ' · 图 ' + dateRange(c.dates) + ' · 统计用 ' + c.stats.from.slice(0, 4) + ' 年起 ' + c.stats.bars + ' 根日线 · 按收盘价 · 不扣成本';
   }
 }
 
@@ -128,7 +146,7 @@ export function Legend({ items }: { items: LegendItem[] }) {
     <View style={s.legend}>
       {items.map(l => (
         <View key={l.label} style={s.li}>
-          <View style={[s.dot, l.dashed && s.dash, dotColor(l)]} />
+          {l.kind === 'note' ? null : l.glyph ? <Text style={[s.glyph, { color: l.color }]}>{l.glyph}</Text> : <View style={[s.dot, l.dashed && s.dash, dotColor(l)]} />}
           <Text style={s.lt}>{l.label}</Text>
         </View>
       ))}
@@ -283,7 +301,46 @@ export function Takeaway({ data }: { data: ChartData }) {
 }
 
 /** 图下的操作提示：一问只写一次（hint），点中某一天后写读数。 */
-export const pickHint = (c: ChartData) => '点一下或按住拖动，看' + (c.kind === 'ic' ? '每一期' : '每一天') + '的数';
+export const pickHint = (c: ChartData) =>
+  c.kind === 'labels' ? '点图上的三角，看那一次信号的三道屏障' : '点一下或按住拖动，看' + (c.kind === 'ic' ? '每一期' : '每一天') + '的数';
+
+/**
+ * 元标签图下面：「全部跟主信号」和「只做次级模型放行的」两行对比（次数、命中率、平均每次），一句结论；
+ * 没点图时再写一行框出的那次（最近一次）信号。
+ */
+export function LabelExtras({ data, pick }: { data: LabelsChart; pick: number | null }) {
+  const st = data.stats;
+  const last = data.events[data.events.length - 1];
+  const rate = (h: LabelHit) => (h.n ? ((h.hits / h.n) * 100).toFixed(1) + '%' : '—');
+  const rows = [
+    { name: '全部跟主信号', h: st.all },
+    { name: '只做放行的', h: st.taken },
+  ];
+  return (
+    <View style={s.groupBox}>
+      {st.all.n ? (
+        <View style={s.gt}>
+          <View style={s.gtRow}>
+            <Text style={[s.ltName, s.gtHead]}>{'比较期 ' + st.all.n + ' 次（预热 ' + st.warm + ' 次不算）'}</Text>
+            <Text style={[s.gtCell, s.gtHead]}>次数</Text>
+            <Text style={[s.gtCell, s.gtHead]}>命中率</Text>
+            <Text style={[s.gtCell, s.gtHead]}>平均每次</Text>
+          </View>
+          {rows.map(r => (
+            <View key={r.name} style={s.gtRow}>
+              <Text style={s.ltName}>{r.name}</Text>
+              <Text style={[s.gtCell, num]}>{r.h.n}</Text>
+              <Text style={[s.gtCell, num]}>{rate(r.h)}</Text>
+              <Text style={[s.gtCell, num, tone(r.h.mean)]}>{r.h.n ? pct(r.h.mean, 2) : '—'}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <Text style={s.shape}>{st.all.n ? labelVerdict(st) : '已出结果的信号只有 ' + st.done + ' 次，不够训练次级模型（至少 ' + MIN_TRAIN + ' 次）：这次只看三重屏障的标签'}</Text>
+      {pick == null && last ? <Text style={[s.focusL, num]}>{'框出的是最近一次：' + eventLine(data, last)}</Text> : null}
+    </View>
+  );
+}
 
 /** 页脚：口径、「怎么看」和「全屏」；展开「怎么看」时下面列出读图说明。 */
 export function ChartFoot({ data, text }: { data: ChartData; text?: string }) {
@@ -331,6 +388,7 @@ export function ChartCard({ data, onBox, onAsk, onSave, hint = true }: {
   useEffect(() => () => boxRef.current?.(null), []);
   const report = () => at.current.card >= 0 && at.current.plot >= 0 && boxRef.current?.({ y: at.current.card + at.current.plot, h: at.current.h });
   const stats = chartStats(data);
+  const unit = data.kind === 'labels' ? '一次信号' : '一天';
   return (
     <View style={s.card} onLayout={onBox ? e => { at.current.card = e.nativeEvent.layout.y; report(); } : undefined}>
       <View style={s.head}>
@@ -352,10 +410,10 @@ export function ChartCard({ data, onBox, onAsk, onSave, hint = true }: {
           {pick != null ? (
             <>
               <PickText data={data} i={pick} extremes={extremes} />
-              {onAsk ? <Pressable style={s.ask} onPress={() => onAsk('看图中这一天：' + chartTitle(data) + '，' + readout(data, pick) + '。')} accessibilityRole="button" accessibilityLabel="就这一天提问">
-                <Text style={s.fullT}>问这一天</Text>
+              {onAsk ? <Pressable style={s.ask} onPress={() => onAsk('看图中这' + unit + '：' + chartTitle(data) + '，' + readout(data, pick) + '。')} accessibilityRole="button" accessibilityLabel={'就这' + unit + '提问'}>
+                <Text style={s.fullT}>{'问这' + unit}</Text>
               </Pressable> : null}
-              <Pressable onPress={() => setPick(null)} hitSlop={12} accessibilityRole="button" accessibilityLabel="收起这一天的读数">
+              <Pressable onPress={() => setPick(null)} hitSlop={12} accessibilityRole="button" accessibilityLabel={'收起这' + unit + '的读数'}>
                 <X size={15} color={rc.muted} />
               </Pressable>
             </>
@@ -365,6 +423,7 @@ export function ChartCard({ data, onBox, onAsk, onSave, hint = true }: {
         </View>
       ) : null}
       {data.kind === 'groups' ? <GroupExtras data={data} width={width} /> : null}
+      {data.kind === 'labels' ? <LabelExtras data={data} pick={pick} /> : null}
       {data.kind === 'factor' ? <View style={s.factorRow}>
         <Pressable style={s.focusBtn} onPress={() => setExtremes(v => !v)} accessibilityRole="button" accessibilityState={{ expanded: !extremes }}><Text style={s.fullT}>{extremes ? '看全部分组' : '只看最高与最低组'}</Text></Pressable>
         {onSave ? <Pressable style={s.focusBtn} onPress={onSave} accessibilityRole="button" accessibilityLabel="把这次检验存进研究手记"><Text style={s.fullT}>存进研究手记</Text></Pressable> : null}
@@ -413,6 +472,8 @@ const s = StyleSheet.create({
   gt: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rc.line },
   gtRow: { flexDirection: 'row', alignItems: 'center', minHeight: 22, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rc.line },
   gtName: { width: 76, fontSize: 11, color: rc.secondary },
+  ltName: { flex: 2.2, fontSize: 11, color: rc.secondary },
+  glyph: { fontSize: 11, lineHeight: 14 },
   gtHead: { color: rc.muted, fontSize: 11 },
   gtCell: { flex: 1, fontSize: 12, textAlign: 'right' },
 });

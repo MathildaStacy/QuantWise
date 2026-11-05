@@ -27,9 +27,11 @@ import {
   type Focus,
   type GroupsChart,
   type IcChart,
+  type LabelsChart,
   type PriceChart,
   type SubKind,
 } from '../../quant/charts';
+import { BARRIER_NAME, signalName, type LabelMark } from '../../quant/labels';
 import { groupColor, rc, SERIES_COLORS } from '../readTheme';
 import { color } from '../theme';
 import {
@@ -39,6 +41,7 @@ import {
   indexAt,
   labelWidth,
   linePath,
+  nearestEvent,
   niceTicks,
   pointCount,
   tickDecimals,
@@ -68,6 +71,8 @@ export const chartHeight = (c: ChartData, full = false) =>
       : 212
     : c.kind === 'compare'
     ? 206
+    : c.kind === 'labels'
+    ? 236
     : c.kind === 'groups'
     ? 140
     : 176;
@@ -138,7 +143,13 @@ export function QuantChart({
         {base ? (
           <Svg width={w} height={h}>
             {base}
-            {!mini && pick != null && pick < n && data.kind !== 'groups' ? cursor(data, pick, n, box, w, fontScale, full, scrub.live) : null}
+            {mini
+              ? null
+              : data.kind === 'labels'
+              ? labelOverlay(data, pick != null && pick < n ? pick : null, w, h, fontScale, full, scrub.live)
+              : pick != null && pick < n && data.kind !== 'groups'
+              ? cursor(data, pick, n, box, w, fontScale, full, scrub.live)
+              : null}
           </Svg>
         ) : null}
       </View>
@@ -151,7 +162,7 @@ function touchSpeech(c: ChartData, full: boolean): string {
   if (c.kind === 'groups') {
     return full ? '，按住或拖动看每一组的数' : '，各组的数写在图下，全屏有数据表';
   }
-  const unit = c.kind === 'ic' ? '每一期' : '每一天';
+  const unit = c.kind === 'ic' ? '每一期' : c.kind === 'labels' ? '每一次信号' : '每一天';
   return full ? '，按住或拖动看' + unit + '的数' : '，点一下或按住拖动看' + unit + '的数，全屏有数据表';
 }
 
@@ -287,6 +298,10 @@ function plotBox(c: ChartData, w: number, h: number, fontScale: number, full: bo
   }
   if (c.kind === 'compare') {
     const f = compareFrame(c, w, h, fontScale, full);
+    return { L, R: f.R, top: f.top, bottom: f.axisY, y: f.main.y };
+  }
+  if (c.kind === 'labels') {
+    const f = labelsFrame(c, w, h, fontScale, full);
     return { L, R: f.R, top: f.top, bottom: f.axisY, y: f.main.y };
   }
   // 柱状图：十字线的第 i 个点是第 i 根柱子的中心
@@ -582,7 +597,108 @@ function draw(c: ChartData, w: number, h: number, extremes: boolean, fontScale: 
       return drawIc(c, w, h, fontScale);
     case 'groups':
       return drawGroups(c, w, h, fontScale);
+    case 'labels':
+      return drawLabels(c, w, h, fontScale, full);
   }
+}
+
+// ---------- 元标签图 ----------
+
+/** 元标签图的布局：价格刻度把图里每次信号的止盈止损都框进去，刻度写在右侧。 */
+function labelsFrame(c: LabelsChart, w: number, h: number, fontScale: number, full: boolean) {
+  const tick = TICK * fontScale;
+  const top = 10;
+  const axisY = h - (tick + 9);
+  const levels = c.events.flatMap(m => [m.upper, m.lower].filter((v): v is number => v != null));
+  const [lo, hi] = bounds([c.close, c.fast, c.slow], levels);
+  const main = scaleOf(lo, hi, top, axisY - 4, full ? 6 : 5, 0.06, 0.08);
+  const gutter = Math.ceil(Math.max(labelWidth('0.00', tick), ...main.ticks.map(t => labelWidth(t.toFixed(main.dp), tick)))) + 8;
+  const R = w - gutter;
+  return { tick, top, axisY, main, R, X: (i: number) => xAt(i, c.dates.length, L, R) };
+}
+
+type LabelsFrame = ReturnType<typeof labelsFrame>;
+
+/** 三角的颜色是这次跟主信号的结果：红赚、绿亏、灰色还没结果。 */
+const outcome = (m: LabelMark) => (m.label === 1 ? color.up : m.label === 0 ? color.down : rc.muted);
+
+/** 一次信号的三角：做多朝上、画在收盘线下方，做空朝下、画在上方；实心放行、空心没放行，预热的淡一些。 */
+function eventMark(m: LabelMark, f: LabelsFrame, r: number, key = 'e'): ReactElement {
+  const x = f.X(m.i);
+  const y = f.main.y(m.entry);
+  const cy = m.side > 0 ? y + r + 4 : y - r - 4;
+  const tip = m.side > 0 ? cy - r : cy + r;
+  const base = m.side > 0 ? cy + r * 0.8 : cy - r * 0.8;
+  const d = 'M' + x.toFixed(1) + ',' + tip.toFixed(1) + 'L' + (x + r).toFixed(1) + ',' + base.toFixed(1) + 'L' + (x - r).toFixed(1) + ',' + base.toFixed(1) + 'Z';
+  const col = outcome(m);
+  const solid = m.prob != null && m.prob >= 0.5;
+  return <Path key={key + m.i} d={d} fill={solid ? col : rc.paper} stroke={col} strokeWidth={1.4} opacity={m.prob == null ? 0.45 : 1} />;
+}
+
+function drawLabels(c: LabelsChart, w: number, h: number, fontScale: number, full: boolean): ReactElement[] {
+  const f = labelsFrame(c, w, h, fontScale, full);
+  const xs = c.dates.map((_, i) => f.X(i));
+  const Y = f.main.y;
+  const ys = (s: (number | null)[]) => s.map(v => (v == null ? null : Y(v)));
+  return [
+    ...f.main.ticks.map(t => <Line key={'gy' + t} x1={L} x2={f.R} y1={Y(t)} y2={Y(t)} stroke={rc.grid} strokeWidth={GRID} />),
+    ...timeGrid(c.dates, f.X, f.top, f.axisY, f.tick),
+    <Path key="slow" d={linePath(xs, ys(c.slow))} stroke={rc.slowLine} strokeWidth={1.2} strokeDasharray="5,3" fill="none" />,
+    <Path key="fast" d={linePath(xs, ys(c.fast))} stroke={rc.maLine} strokeWidth={1.1} fill="none" />,
+    <Path key="close" d={linePath(xs, c.close.map(Y))} stroke={rc.main} strokeWidth={1.6} strokeLinejoin="round" fill="none" />,
+    ...c.events.map(m => eventMark(m, f, 5)),
+    ...f.main.ticks.map(t => yLabel('y' + t, w, Y(t), t.toFixed(f.main.dp), f.tick)),
+    ...timeAxis(c.dates, f.X, f.R, f.axisY, w, f.tick),
+  ];
+}
+
+/**
+ * 框出一次信号的三道屏障（三重屏障法的那张示意图，画在真实行情上）：没点图时是最近一次，点图时是离手指最近的一次。
+ * 浅灰底从进场画到到期那天，上下两条虚线是止盈止损（碰到的那条加粗），右边竖虚线是到期；进场到出场的收盘线用结果的颜色加粗，出场那天一个点。
+ */
+function labelOverlay(c: LabelsChart, pick: number | null, w: number, h: number, fontScale: number, full: boolean, live: boolean): ReactElement | null {
+  const m = pick != null ? nearestEvent(c, pick) : c.events[c.events.length - 1] ?? null;
+  if (!m) {
+    return null;
+  }
+  const f = labelsFrame(c, w, h, fontScale, full);
+  const n = c.dates.length;
+  const Y = f.main.y;
+  const x1 = f.X(m.i);
+  const dueIn = m.due <= n - 1;
+  const x2 = f.X(Math.min(m.due, n - 1));
+  const yTop = Y(m.upper ?? m.entry);
+  const yBottom = Y(m.lower ?? m.entry);
+  // 做多时上面一道是止盈；做空时上面一道是止损
+  const upperIsPt = m.side > 0;
+  const hitUpper = m.barrier != null && m.barrier !== 'time' && (m.barrier === 'pt') === upperIsPt;
+  const hitLower = m.barrier != null && m.barrier !== 'time' && !hitUpper;
+  const size = FONT * fontScale;
+  const line = (key: string, y: number, pt: boolean, hit: boolean) => (
+    <Line key={key} x1={x1} x2={x2} y1={y} y2={y} stroke={pt ? color.upText : color.downText} strokeWidth={hit ? 2 : 1.2} strokeDasharray="4,3" />
+  );
+  const tag = (y: number, price: number, pt: boolean, below: boolean) => {
+    const text = (pt ? '止盈 ' : '止损 ') + pct(price / m.entry - 1, 1);
+    const roomy = x1 + 4 + labelWidth(text, size) <= f.R;
+    return label(roomy ? x1 + 4 : f.R, below ? y + size + 2 : y - 4, text, roomy ? 'start' : 'end', pt ? color.upText : color.downText);
+  };
+  const path = m.exit != null ? linePath(c.dates.slice(m.i, m.exit + 1).map((_, k) => f.X(m.i + k)), c.close.slice(m.i, m.exit + 1).map(Y)) : null;
+  const out: ReactElement[] = [
+    <Rect key="lbox" x={x1} y={yTop} width={Math.max(1, x2 - x1)} height={Math.max(1, yBottom - yTop)} fill={rc.ink} fillOpacity={0.05} />,
+    ...(m.upper != null ? [line('lup', yTop, upperIsPt, hitUpper), tag(yTop, m.upper, upperIsPt, false)] : []),
+    ...(m.lower != null ? [line('llo', yBottom, !upperIsPt, hitLower), tag(yBottom, m.lower, !upperIsPt, true)] : []),
+    ...(dueIn ? [<Line key="ldue" x1={x2} x2={x2} y1={yTop} y2={yBottom} stroke={rc.ink} strokeOpacity={0.6} strokeWidth={1.2} strokeDasharray="3,3" />] : []),
+    ...(path ? [<Path key="lpath" d={path} stroke={outcome(m)} strokeWidth={2.6} strokeLinejoin="round" fill="none" />] : []),
+    ...(m.exit != null ? [<Circle key="lexit" cx={f.X(m.exit)} cy={Y(c.close[m.exit])} r={3.6} fill={outcome(m)} stroke={rc.paper} strokeWidth={1.4} />] : []),
+    eventMark(m, f, 7, 'sel'),
+  ];
+  if (pick != null) {
+    out.push(<Line key="lvx" x1={x1} x2={x1} y1={f.top} y2={f.axisY} stroke={rc.ink} strokeOpacity={0.4} strokeDasharray="3,3" />, badge('lx', x1, f.axisY + 2, full ? c.dates[m.i] : md(c.dates[m.i]), f.tick, 'middle', w));
+    if (live) {
+      out.push(floatTip([{ text: full ? c.dates[m.i] : md(c.dates[m.i]) }, { text: signalName(m.side), gap: true }, ...(m.barrier && m.ret != null ? [{ text: BARRIER_NAME[m.barrier] + ' ' + pct(m.ret, 1), gap: true, fill: outcome(m) }] : [])], x1, f.tick, w));
+    }
+  }
+  return <SvgG>{out}</SvgG>;
 }
 
 const IC_UP = '#C7533A';
