@@ -21,4 +21,11 @@ test('准备数据卡：下载中、停下、过期三种状态，按钮的读�
   expect(main().accessibilityState).toEqual({ disabled: false, busy: false });
   await act(async () => tree.update(card(null, true)));
   expect(main().accessibilityLabel).toBe('准备数据并重做这次检验');
+  // 被限流没取全、这次用了随机样本：标题和正文写明，按钮是「接着取数据」
+  await act(async () => tree.update(<PrepareCard pool="zz1000" pending={false} sample={252} prep={null} onStart={() => {}} onStop={() => {}} after="并重做这次检验" />));
+  const text = JSON.stringify(tree.toJSON());
+  expect(text).toContain('中证 1000 还没取全');
+  expect(text).toContain('这次先用了按固定随机顺序取全的 252 只（随机样本，不是全部成分；只数少，噪声更大）');
+  expect(text).toContain('取全 150 只以上就先用这个随机样本算');
+  expect(main().accessibilityLabel).toBe('接着取数据并重做这次检验');
 });

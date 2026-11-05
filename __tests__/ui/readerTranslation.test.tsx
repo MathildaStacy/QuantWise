@@ -299,3 +299,20 @@ test('因子检验说指数池数据没准备：最近那一问下面出「准�
   expect(text()).toContain('下载中…');
   expect(text()).toContain('停止');
 });
+
+test('因子检验用了随机样本（没取全）：结果下面出「接着取数据并重做这次检验」，算真实行情', async () => {
+  const msg = (id: number, role: StoredMessage['role'], parts: StoredMessage['parts'], ui: StoredMessage['ui']): StoredMessage => ({ id, threadId: 1, role, parts, ui, raw: null, compacted: false, createdAt: now });
+  const s = { ...session, messages: [
+    msg(1, 'user', [], { question: '用中证 1000 复现表 3.20' }),
+    msg(2, 'tool', [], { tools: [{ id: 'a', name: 'factor_test', label: '因子检验：12-1 月动量 · 中证 1000 随机 252 只', prepare: { pool: 'zz1000' as const, pending: false, sample: 252 } }] }),
+    msg(3, 'assistant', [{ t: 'text', text: '这次是中证 1000 随机 252 只。' }], null),
+  ] };
+  const onPrepare = jest.fn();
+  await act(async () => { tree = create(<StudyThread s={s} busy={null} a={{ onLink() {}, onPick() {}, onWrapup() {}, onStuck() {}, onPrepare, prep: null }} />); });
+  expect(text()).toContain('中证 1000 还没取全');
+  expect(text()).toContain('按固定随机顺序取全的 252 只');
+  await press('接着取数据并重做这次检验');
+  expect(onPrepare).toHaveBeenCalledWith('zz1000');
+  const { realChecked, turnsOf } = require('../../src/ui/screens/StudyThread');
+  expect([...realChecked(turnsOf(s.messages)).values()]).toEqual([true]);
+});

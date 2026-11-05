@@ -248,7 +248,7 @@ function TurnView({ t, detour, a, check, streaming, realOk, onChartBox, prepare 
           </View>
         );
       })}
-      {prep ? <PrepareCard pool={prep.pool} pending={prep.pending} prep={a.prep ?? null} onStart={() => a.onPrepare!(prep.pool)} onStop={() => a.onStopPrepare?.()} after="并重做这次检验" /> : null}
+      {prep ? <PrepareCard pool={prep.pool} pending={prep.pending} sample={prep.sample} prep={a.prep ?? null} onStart={() => a.onPrepare!(prep.pool)} onStop={() => a.onStopPrepare?.()} after="并重做这次检验" /> : null}
       {t.cards.map(({ msgId, tool }) => (tool.quiz ? <Quiz key={tool.id} msgId={msgId} tool={tool} a={a} check={check} /> : <Wrap key={tool.id} tool={tool} a={a} />))}
       {offer && a.onSearch && !streaming ? (
         <Pressable onPress={() => a.onSearch!(offer)} style={st.small} accessibilityRole="button">

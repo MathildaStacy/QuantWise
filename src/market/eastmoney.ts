@@ -11,6 +11,7 @@
  * - 只取 ASSIGN_PROGRESS =「实施分配」的记录（预案、股东大会通过的还没有除权日）
  */
 import type { CorporateAction } from '../engine/types';
+import { toLi, type KBar } from './tencent';
 
 export const BONUS_COLUMNS =
   'SECURITY_CODE,SECURITY_NAME_ABBR,PRETAX_BONUS_RMB,BONUS_IT_RATIO,BONUS_RATIO,IT_RATIO,EQUITY_RECORD_DATE,EX_DIVIDEND_DATE,ASSIGN_PROGRESS,IMPL_PLAN_PROFILE';
@@ -204,4 +205,44 @@ export function parseIndexMembers(json: unknown): { rows: { code: string; name: 
     })
     .filter((x: { code: string; name: string } | null): x is { code: string; name: string } => !!x);
   return { rows, pages: typeof r?.pages === 'number' && r.pages > 0 ? r.pages : 1 };
+}
+
+// ---------- 前复权日 K（因子股票池准备数据用） ----------
+
+/**
+ * 东方财富历史 K 线 `push2his.eastmoney.com/api/qt/stock/kline/get`，fqt=1 前复权，一次能回约 5 年（1,270 根左右）；
+ * 腾讯前复权日 K 个股一次只回约 640 根，要取两段。2026-11-05 核对（中国神华、宁德时代、贵州茅台、平安银行、中微公司）：
+ * 两家前复权收盘在重叠的 640 天里一致（东方财富只到分，差 0.01 元以内）；成交量东方财富是「手」，
+ * 科创板也是手，腾讯科创板是股（见 volumeUnit）。secid：沪市 1.、深市 0.。
+ */
+export function emDailyUrl(code: string, start: string): string {
+  return (
+    'https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=' +
+    (code.startsWith('sh') ? '1.' : '0.') +
+    code.slice(2) +
+    '&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56&klt=101&fqt=1&beg=' +
+    start.replace(/-/g, '') +
+    '&end=20500101&lmt=2000'
+  );
+}
+
+/** 解析成 KBar（价格换成厘，成交量换成股）。回的不是这只股票、或者没有数据时返回空。 */
+export function parseEmDaily(json: unknown, code: string): KBar[] {
+  const d = (json as any)?.data;
+  if (!d || d.code !== code.slice(2) || !Array.isArray(d.klines)) {
+    return [];
+  }
+  const out: KBar[] = [];
+  for (const k of d.klines) {
+    const [date, o, c, h, l, v] = typeof k === 'string' ? k.split(',') : [];
+    const open = toLi(o);
+    const close = toLi(c);
+    const high = toLi(h);
+    const low = toLi(l);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '') || open == null || close == null || high == null || low == null) {
+      continue;
+    }
+    out.push({ date, open, close, high, low, volume: Math.round((Number(v) || 0) * 100) });
+  }
+  return out;
 }

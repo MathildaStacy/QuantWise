@@ -10,7 +10,7 @@ import { SAMPLE_BOOK_ID } from '../../book/sample';
 import { runFactorTest, SampleError } from '../../quant/backtest';
 import { chartTitle, factorCharts } from '../../quant/charts';
 import { FACTOR_IDS, FACTORS, type FactorId } from '../../quant/factors';
-import { isIndexPool, loadPanel, poolStatus, prepareBars, universeCodes, UNIVERSE_IDS, UNIVERSE_NAME, type IndexPoolId, type PrepareProgress, type UniverseId } from '../../quant/universe';
+import { isIndexPool, loadPanel, poolStatus, prepareBars, SAMPLE_MIN, universeCodes, UNIVERSE_IDS, UNIVERSE_NAME, type IndexPoolId, type PrepareProgress, type UniverseId } from '../../quant/universe';
 import { ChartCard, FocusReadout, LabelExtras, Legend, legendOf, Takeaway } from '../charts/ChartCard';
 import { PrepareCard, usePoolPrepare } from '../charts/PoolPrepare';
 import { QuantChart } from '../charts/QuantChart';
@@ -75,6 +75,8 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
   const [ready, setReady] = useState<boolean | null>(null);
   /** 指数池的数据过期或只有约 3 年：照常算，下面提示可以更新。 */
   const [stale, setStale] = useState(false);
+  /** 指数池被限流没取全：用随机样本算的只数（下面提示可以接着取）。 */
+  const [sampleN, setSampleN] = useState(0);
   const env = universeEnv(core);
   const set = (p: Partial<Cfg>) => setDraft(c => ({ ...c, ...p }));
   const pool = usePoolPrepare(core, () => setCfg(c => ({ ...c })));
@@ -86,6 +88,7 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
     setProg(null);
     setReady(null);
     setStale(false);
+    setSampleN(0);
     setErr(null);
     (async () => {
       if (cfg.control && cfg.factor === 'size') {
@@ -93,19 +96,22 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
       }
       const index = isIndexPool(cfg.universe) ? await poolStatus(env, cfg.universe) : null;
       const codes = index ? index.codes : (await universeCodes(env, cfg.universe)).codes;
-      const have = !index || index.ready;
+      // 没取全但随机样本够数：先用样本算，写明是样本
+      const sample = index && !index.ready && index.sample.length >= SAMPLE_MIN ? index.sample : null;
+      const have = !index || index.ready || !!sample;
       if (!alive) {
         return;
       }
       setReady(have);
-      setStale(!!index && index.stale > index.codes.length * 0.1);
+      setStale(!!index && index.ready && index.stale > index.codes.length * 0.1);
+      setSampleN(sample?.length ?? 0);
       if (!have) {
         return;
       }
       if (!index) {
         await prepareBars(env, codes.slice(0, 60), p => alive && setProg(p));
       }
-      const panel = await loadPanel(core.db, index ? codes : codes.slice(0, 60));
+      const panel = await loadPanel(core.db, sample ?? (index ? codes : codes.slice(0, 60)));
       try {
         const r = runFactorTest(panel, {
           factor: cfg.factor, hold: cfg.hold, groups: cfg.groups, costBp: cfg.costBp,
@@ -113,7 +119,7 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
           ...(cfg.control ? { control: { by: 'size' as const, groups: cfg.control, sort: 'conditional' as const } } : {}),
         });
         if (alive) {
-          setRes({ r, universe: cfg.universe, computedAt: beijingIso(), codes: panel.codes.length, from: panel.dates[0] ?? '' });
+          setRes({ r, universe: cfg.universe, computedAt: beijingIso(), codes: panel.codes.length, from: panel.dates[0] ?? '', ...(sample && index ? { sample: { n: sample.length, of: index.codes.length } } : {}) });
         }
       } catch (e) {
         if (alive) {
@@ -133,7 +139,7 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
   useAiContext('FactorLab', () => ({
     name: '因子实验室',
     lines: res
-      ? [f.name + '，' + UNIVERSE_NAME[cfg.universe] + '，' + res.codes + ' 只，每 ' + cfg.hold + ' 日调仓，' + cfg.groups + ' 组，' + how + '，单边成本万 ' + cfg.costBp, 'Rank IC 均值 ' + res.r.icMean.toFixed(3) + '，t ' + res.r.t.toFixed(2) + '，ICIR ' + res.r.icir.toFixed(2) + '，多空年化 ' + (res.r.longShortAnnual * 100).toFixed(1) + '%，' + res.r.periods + ' 期']
+      ? [f.name + '，' + UNIVERSE_NAME[cfg.universe] + '，' + (res.sample ? '没取全，随机样本 ' + res.codes + ' / ' + res.sample.of + ' 只' : res.codes + ' 只') + '，每 ' + cfg.hold + ' 日调仓，' + cfg.groups + ' 组，' + how + '，单边成本万 ' + cfg.costBp, 'Rank IC 均值 ' + res.r.icMean.toFixed(3) + '，t ' + res.r.t.toFixed(2) + '，ICIR ' + res.r.icir.toFixed(2) + '，多空年化 ' + (res.r.longShortAnnual * 100).toFixed(1) + '%，' + res.r.periods + ' 期']
       : [f.name + '，' + UNIVERSE_NAME[cfg.universe] + '，' + (err ?? '计算中')],
     tip: '股票池是当前成分，有幸存者偏差；本地约 5 年日线，期数远少于书里的样本，结论只当练习。t 值不到 2 不算显著。',
   }));
@@ -167,9 +173,9 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
           <Text style={st.k}>{f.formula}{f.approx ? '（用今天的股本往回推，近似）' : ''} · 书里在 {f.section}</Text>
         </View>
         {changed ? <Note style={st.note}>参数已更改，下面仍是上次结果。应用参数后重新计算。</Note> : null}
-        {isIndexPool(cfg.universe) && (ready === false || stale) ? (
+        {isIndexPool(cfg.universe) && (ready === false || stale || sampleN > 0) ? (
           <View style={st.padX}>
-            <PrepareCard pool={cfg.universe} pending={ready === false} prep={pool.prep} onStart={() => { pool.start(cfg.universe as IndexPoolId).catch(e => setErr(e instanceof Error ? e.message : String(e))); }} onStop={pool.stop} />
+            <PrepareCard pool={cfg.universe} pending={ready === false} sample={sampleN || undefined} prep={pool.prep} onStart={() => { pool.start(cfg.universe as IndexPoolId).catch(e => setErr(e instanceof Error ? e.message : String(e))); }} onStop={pool.stop} />
           </View>
         ) : null}
         {err ? <Note tone="warn" style={st.note}>{err}</Note> : null}
@@ -179,7 +185,7 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
             <View style={st.card}>
               <Text style={st.headline}>{Math.abs(r.t) < 2 ? '先看证据，再下结论' : '有样本内证据，仍需验证'}</Text>
               <Text style={st.conclusion}>{factorConclusion(r)}</Text>
-              <Text style={st.k}>{res.codes} 只当前成分 · {r.periods} 期 · {r.dates[0]} 至 {r.dates[r.dates.length - 1]}</Text>
+              <Text style={st.k}>{res.sample ? '随机 ' + res.codes + ' 只（' + res.sample.of + ' 只当前成分的随机样本）' : res.codes + ' 只当前成分'} · {r.periods} 期 · {r.dates[0]} 至 {r.dates[r.dates.length - 1]}</Text>
               <Text style={st.k}>计算于 {res.computedAt.replace('T', ' ').slice(0, 19)} · 当前成分存在幸存者偏差</Text>
               <Button title="解释这次结果" tone="learn" onPress={() => nav.navigate('Study', { bookId: SAMPLE_BOOK_ID, sectionId: f.section, ask: snapshotQuestion(res), askLabel: '解释这次' + f.name + '实验结果', askSnapshot: true })} />
             </View>
