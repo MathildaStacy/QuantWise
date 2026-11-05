@@ -2,7 +2,7 @@
  * 读书模式（QUANTWISE_DESIGN.md §6.6）：重排显示当前小节的块。讲过的块左侧细线，当前这一步浅色底，
  * 高亮浅黄，问过的段落下面贴便签。点一段出菜单：解释、从这里开始讲、用真实行情举例、高亮。
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, ChevronDown, FileText, List, SlidersHorizontal } from 'lucide-react-native';
 import { Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance } from 'react-native';
 import { citeLabel, leavesOf, secLabel } from '../../book/book';
@@ -19,7 +19,7 @@ import { useCore } from '../hooks';
 import { rc, serif } from '../readTheme';
 import type { ReadingAnchor } from '../../study/readingState';
 import { readerAnchorAt, readerAnchorY, type ReaderBlockLayout } from '../../study/readerPosition';
-import { canTranslate, splitTranslationSource } from '../../study/translation';
+import { canTranslate, chineseSection, sectionTargets, splitTranslationSource } from '../../study/translation';
 import { useTranslation } from '../../study/useTranslation';
 import { TranslatedBlock } from '../components/TranslatedBlock';
 import { color } from '../theme';
@@ -29,6 +29,9 @@ import { ReaderSettings } from '../components/ReaderSettings';
 import { ReaderFigures } from '../components/ScannedFigure';
 import { redrawFigure } from '../../study/redrawFigure';
 import { toast } from '../toast';
+
+const PARALLEL_NAME: Record<ReaderPreferences['parallel'], string> = { paragraph: '按段阅读', sentence: '逐句核对', zh: '中文为主' };
+const clip320 = (x: string) => (x.length > 320 ? x.slice(0, 320) + '…' : x);
 
 type StudyReaderProps = {
   s: StudySession;
@@ -86,7 +89,12 @@ function ReaderBody({
   const tr = useTranslation(core, s.book, s.section, s.blocks, active);
   const stopTranslation = tr.stop;
   useEffect(() => { if (!bilingual) stopTranslation(); }, [bilingual, stopTranslation]);
-  const eligible = s.blocks.filter(canTranslate);
+  // 要译的段：脚注、参考文献和以中文为主的一节不算（「本节无需翻译」）；已有的译文照常显示
+  const eligible = useMemo(() => sectionTargets(s.section, s.blocks), [s.section, s.blocks]);
+  const targets = useMemo(() => new Set(eligible.map(b => b.seq)), [eligible]);
+  const chinese = useMemo(() => chineseSection(s.blocks), [s.blocks]);
+  // 不算待译、但以前译过的段（例如中文书的脚注）照常显示译文，排法也能换
+  const shown = s.blocks.some(b => canTranslate(b) && tr.entries[b.seq]);
   const done = eligible.filter(b => tr.entries[b.seq]).length;
   const nextPending = eligible.find(b => !tr.entries[b.seq]);
   const remaining = eligible.length - done;
@@ -102,6 +110,10 @@ function ReaderBody({
   const [sentencesOpen, setSentencesOpen] = useState(false);
   useEffect(() => { setSentence(null); setSentencesOpen(false); }, [menu]);
   const sentences = menu && (menu.type === 'p' || menu.type === 'li') ? splitTranslationSource(menu.text).map(x => x.trim()).filter(x => x.length > 1) : [];
+  // 开着中文对照、这一段有译文：菜单里的预览和句子列表先写中文，下面小字附原文
+  const menuPairs = menu && bilingual && canTranslate(menu) ? tr.entries[menu.seq]?.pairs : undefined;
+  const menuZh = menuPairs ? menuPairs.map(x => x.translation.trim()).join('') : null;
+  const zhOf = (x: string) => menuPairs?.find(p => p.source.trim() === x)?.translation.trim();
   const [guide, setGuide] = useState(false);
   const [contentsOpen, setContentsOpen] = useState(false);
   const lecturing = !!useStudy(x => x.busy);
@@ -217,9 +229,9 @@ function ReaderBody({
       {appearanceOpen ? <ReaderSettings value={prefs} onChange={changeAppearance} bilingual={bilingual} onClose={() => setAppearanceOpen(false)} /> : null}
       {bilingual ? <View style={st.translationBar}>
           <View style={st.translationActions}>
-            {eligible.length > 0 ? <Pressable style={st.parallelButton} accessibilityRole="button" accessibilityLabel={'对照方式：' + (prefs.parallel === 'paragraph' ? '按段阅读' : '逐句核对')}
+            {eligible.length > 0 || shown ? <Pressable style={st.parallelButton} accessibilityRole="button" accessibilityLabel={'对照方式：' + PARALLEL_NAME[prefs.parallel]}
               accessibilityState={{ expanded: parallelOpen }} onPress={() => setParallelOpen(true)}>
-              <Text style={st.toolText}>{prefs.parallel === 'paragraph' ? '按段阅读' : '逐句核对'}</Text><ChevronDown size={14} color={rc.secondary} />
+              <Text style={st.toolText}>{PARALLEL_NAME[prefs.parallel]}</Text><ChevronDown size={14} color={rc.secondary} />
             </Pressable> : null}
             <Pressable style={st.translationProgress} disabled={tr.loading || tr.cacheError || !nextPending && tr.current == null}
               accessibilityRole={!tr.cacheError && (nextPending || tr.current != null) ? 'button' : undefined}
@@ -237,7 +249,7 @@ function ReaderBody({
                 else setTranslationPlanOpen(true);
               }}><Text style={st.translationButtonText}>{tr.busy ? '停止翻译' : tr.cacheError ? '重读译文' : tr.needsConfig ? '配置 AI' : tr.error ? '重试翻译' : done ? '继续翻译' : '翻译本节'}</Text></Pressable> : null}
           </View>
-          {!tr.loading && !tr.cacheError && !tr.error ? <Text style={st.translationDetail}>{!eligible.length ? '原文保留展示，中文内容无需重复翻译。' : !remaining ? '本节译文已保存在本机，可离线阅读。' : tr.busy ? '完整译文逐段保存，停止后可继续。' : `还剩 ${remaining} 段待译${done ? '，已译内容可离线阅读。' : '，点击「翻译本节」开始。'}`}</Text> : null}
+          {!tr.loading && !tr.cacheError && !tr.error ? <Text style={st.translationDetail}>{!eligible.length ? (chinese || !s.blocks.some(canTranslate) ? '原文保留展示，中文内容无需重复翻译。' : '参考文献和脚注不用翻译；要看某一条，点那一段选「翻译这一段」。') :!remaining ? '本节译文已保存在本机，可离线阅读。' : tr.busy ? '完整译文逐段保存，停止后可继续。' : `还剩 ${remaining} 段待译${done ? '，已译内容可离线阅读。' : '，点击「翻译本节」开始。'}`}</Text> : null}
           {tr.error ? <Text accessibilityRole="alert" style={st.translationError}>{tr.error}</Text> : null}
       </View> : null}
       <ReaderFigures.Provider value={{ book: s.book, blocks: s.blocks, active, onConfigure, redraw: (b, signal) => redrawFigure(core, s.book, s.section, b, s.blocks, signal, undefined, true) }}>
@@ -255,8 +267,9 @@ function ReaderBody({
           const isCur = p.taught >= 0 && cur && b.no >= cur.from && b.no <= cur.to;
           // Keep horizontal figure gestures and text selection outside a paragraph press target.
           const figure = b.type === 'img' || b.type === 'table';
-          const translatable = canTranslate(b);
-          const translated = bilingual && translatable ? tr.entries[b.seq] : undefined;
+          const translated = bilingual && canTranslate(b) ? tr.entries[b.seq] : undefined;
+          // 待译的占位只给要译的段（脚注不出「翻译此段」，要看在段落菜单里单独译）
+          const translatable = targets.has(b.seq);
           const Frame = figure ? View : Pressable;
           return (
             <View
@@ -271,7 +284,8 @@ function ReaderBody({
                 style={[st.blk, bilingual && translatable && !translated && st.awaitingBlock, b.no <= taughtTo && st.taught, isCur && st.cur, hl.has(b.seq) && st.hl, b.seq === focusSeq && st.focus]}
                 accessibilityRole={figure ? undefined : 'button'}
                 accessibilityLabel={figure ? undefined : citeLabel(s.section, b) + '：' + (translated
-                  ? translated.pairs.map(pair => '原文：' + pair.source + '译文：' + pair.translation).join('\n')
+                  ? prefs.parallel === 'zh' ? translated.pairs.map(pair => pair.translation.trim()).join('')
+                    : translated.pairs.map(pair => '原文：' + pair.source + '译文：' + pair.translation).join('\n')
                   : b.text)}
               >
                 <View onLayout={e => {
@@ -320,7 +334,7 @@ function ReaderBody({
         <View style={st.translationPlan}>
           <Text style={st.planTitle}>{secLabel(s.section)}</Text>
           <Text style={st.planText}>{`待译 ${remaining} 段${done ? `，跳过已保存的 ${done} 段` : ''}。使用当前讲解模型逐段翻译为简体中文，保留原文、数字与公式。`}</Text>
-          <Text style={st.planText}>只发送待译原文及书名、节名。翻译按模型服务计费；可以随时停止，完成的段落会保存在本机。</Text>
+          <Text style={st.planText}>只发送待译原文、书名、节名和段里命中的术语译法（沿用本书以前的译法）。翻译按模型服务计费；可以随时停止，完成的段落会保存在本机。</Text>
           <Pressable style={st.planStart} accessibilityRole="button" onPress={() => { setTranslationPlanOpen(false); tr.run(); }}><Text style={st.finishT}>{(done ? '翻译剩余 ' : '开始翻译 ') + remaining + ' 段'}</Text></Pressable>
         </View>
       </AiSheet> : null}
@@ -332,7 +346,7 @@ function ReaderBody({
         </ScrollView>
       </AiSheet> : null}
       <AiSheet title="对照方式" visible={parallelOpen} onClose={() => setParallelOpen(false)}>
-        {([['paragraph', '按段阅读', '完整原文后接中文，适合连续阅读'], ['sentence', '逐句核对', '每句原文后接译文，适合精读']] as const).map(([value, label, detail]) =>
+        {([['paragraph', '按段阅读', '完整原文后接中文，适合连续阅读'], ['sentence', '逐句核对', '每句原文后接译文，适合精读'], ['zh', '中文为主', '只显示译文，遇到疑问点段旁的「原文」']] as const).map(([value, label, detail]) =>
           <Pressable key={value} style={st.item} accessibilityRole="radio" accessibilityState={{ checked: prefs.parallel === value }} onPress={() => {
             changeAppearance({ ...prefs, parallel: value }); setParallelOpen(false);
           }}><Text style={[st.itemT, prefs.parallel === value && st.selectedMode]}>{label}</Text><Text style={st.itemD}>{detail}</Text></Pressable>)}
@@ -340,7 +354,10 @@ function ReaderBody({
       <AiSheet title={menu ? citeLabel(s.section, menu) : ''} visible={!!menu} onClose={() => setMenu(null)}>
         {menu ? (
           <ScrollView style={st.menuContent} keyboardShouldPersistTaps="handled">
-            <View style={st.quote}>{menu.type === 'eq' ? <BookBlockView b={menu} compact /> : <BlockInline text={sentence ?? (menu.text.length > 320 ? menu.text.slice(0, 320) + '…' : menu.text)} style={st.quoteText} />}</View>
+            <View style={st.quote}>{menu.type === 'eq' ? <BookBlockView b={menu} compact /> : menuZh ? <>
+              <BlockInline text={clip320(sentence ? zhOf(sentence) ?? sentence : menuZh)} style={st.quoteText} />
+              <BlockInline text={clip320(sentence ?? menu.text)} style={st.quoteSource} />
+            </> : <BlockInline text={clip320(sentence ?? menu.text)} style={st.quoteText} />}</View>
             {sentences.length > 1 ? <View>
               <Pressable style={st.sentenceToggle} accessibilityRole="button" accessibilityState={{ expanded: sentencesOpen }} onPress={() => setSentencesOpen(v => !v)}>
                 <Text style={st.sentenceToggleT}>{sentence ? '只问这一句 · 换一句或问整段' : '只问其中一句（共 ' + sentences.length + ' 句）'}</Text>
@@ -349,12 +366,15 @@ function ReaderBody({
               {sentencesOpen ? sentences.map((x, i) => (
                 <Pressable key={i} style={[st.sentence, sentence === x && st.sentenceOn]} accessibilityRole="radio" accessibilityState={{ checked: sentence === x }}
                   onPress={() => { setSentence(sentence === x ? null : x); setSentencesOpen(false); }}>
-                  <BlockInline text={x} style={st.sentenceT} />
+                  {menuZh && zhOf(x) ? <>
+                    <BlockInline text={zhOf(x)!} style={st.sentenceT} />
+                    <BlockInline text={x} style={st.quoteSource} />
+                  </> : <BlockInline text={x} style={st.sentenceT} />}
                 </Pressable>
               )) : null}
               {sentencesOpen && sentence ? <Pressable style={st.sentence} accessibilityRole="button" onPress={() => { setSentence(null); setSentencesOpen(false); }}><Text style={st.sentenceToggleT}>问整段</Text></Pressable> : null}
             </View> : null}
-            {canTranslate(menu) ? <Pressable style={st.item} accessibilityRole="button" disabled={!tr.entries[menu.seq] && (tr.busy || tr.loading)}
+            {canTranslate(menu) && !menuZh ? <Pressable style={st.item} accessibilityRole="button" disabled={!tr.entries[menu.seq] && (tr.busy || tr.loading)}
               accessibilityState={{ disabled: !tr.entries[menu.seq] && (tr.busy || tr.loading) }} onPress={() => {
                 const b = menu;
                 setMenu(null);
@@ -363,7 +383,7 @@ function ReaderBody({
                 if (tr.cacheError) tr.retry();
                 else if (tr.needsConfig && onConfigure) onConfigure();
                 else tr.run([b]);
-              }}><Text style={st.itemT}>{tr.entries[menu.seq] ? '查看中文译文' : tr.loading ? '正在读取译文…' : tr.cacheError ? '重读译文' : tr.busy ? '正在翻译，请稍候' : tr.needsConfig ? '配置 AI' : '翻译这一段'}</Text><Text style={st.itemD}>简体中文，可按段阅读或逐句核对</Text></Pressable> : null}
+              }}><Text style={st.itemT}>{tr.entries[menu.seq] ? '查看中文译文' : tr.loading ? '正在读取译文…' : tr.cacheError ? '重读译文' : tr.busy ? '正在翻译，请稍候' : tr.needsConfig ? '配置 AI' : '翻译这一段'}</Text><Text style={st.itemD}>简体中文，可按段阅读、逐句核对或中文为主</Text></Pressable> : null}
             {s.book.format === 'pdf' && s.book.body.dir && menu.page != null ? <Pressable style={st.item} accessibilityRole="button" onPress={() => { setSourcePage(menu.page); setMenu(null); }}><Text style={st.itemT}>查看 PDF 第 {menu.page} 页</Text><Text style={st.itemD}>放大核对公式、图表和跨页内容</Text></Pressable> : null}
             {(
               [
@@ -448,6 +468,7 @@ const st = StyleSheet.create({
   sentenceOn: { backgroundColor: rc.focus },
   sentenceT: { fontFamily: serif, fontSize: 14, lineHeight: 22, color: rc.ink },
   quoteText: { fontFamily: serif, fontSize: 14, lineHeight: 23, color: rc.secondary },
+  quoteSource: { fontSize: 12, lineHeight: 18, color: rc.muted, marginTop: 4 },
   item: { minHeight: 48, paddingHorizontal: 16, paddingVertical: 11, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rc.line },
   itemT: { fontSize: 15, color: rc.ink },
   itemD: { fontSize: 12, color: rc.muted, marginTop: 2 },

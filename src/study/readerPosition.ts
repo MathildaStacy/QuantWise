@@ -32,7 +32,8 @@ export function readerAnchorY(anchor: ReadingAnchor, box: { y: number; height: n
   if (!anchor.text || !block?.parts.length) return anchorY(anchor, box);
   const { offset, lane } = anchor.text;
   const containing = block.parts.filter(p => p.start <= offset && (p.end > offset || p.end === offset && p.end === Math.max(...block.parts.map(x => x.end))));
-  const part = containing.find(p => p.lane === lane) ?? containing.find(p => p.lane === 'source');
+  // 中文为主时原文收着，只有译文那一栏：落到哪一栏都行
+  const part = containing.find(p => p.lane === lane) ?? containing.find(p => p.lane === 'source') ?? containing[0];
   if (!part) return anchorY(anchor, box);
   const fraction = Math.max(0, Math.min(1, (offset - part.start) / Math.max(1, part.end - part.start)));
   return Math.max(0, box.y + block.top + part.y + part.height * fraction);

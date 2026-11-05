@@ -150,3 +150,65 @@ export function expandTerm(term: string): string[] {
   const hit = INDEX.get(norm(own));
   return hit ? [own, ...hit.filter(w => norm(w) !== norm(own))] : [own];
 }
+
+/** 翻译和讲解里用的一条术语：原文里的写法、这本书的译法、本节第一次出现时写成「中文（English）」。 */
+export interface TermHint {
+  en: string;
+  zh: string;
+  first: boolean;
+}
+
+// 日常英语里另有常见意思的单词不自动对译（recall「回想」、significant「重要的」），交给模型按上下文译
+const LOOSE = new Set(['recall', 'precision', 'significant', 'significance', 'boosting', 'ridge', 'shrinkage', 'factor', 'alpha', 'beta', 'classification', 'residual', 'residuals', 'return', 'returns', 'correlation']);
+const HAN = /\p{Script=Han}/u;
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const count = (text: string, w: string) => {
+  let n = 0;
+  for (let i = w ? text.indexOf(w) : -1; i >= 0; i = text.indexOf(w, i + w.length)) n++;
+  return n;
+};
+
+/** 中文写法在已有译文里出现了几次；短的写法不把长写法里的那几次算进来（「元标签」不算「元标签法」里的）。 */
+function usage(zh: string[], text: string): number[] {
+  const raw = zh.map(w => count(text, w));
+  return zh.map((w, i) => raw[i] - zh.reduce((n, o, j) => (j !== i && o.length > w.length && o.includes(w) ? n + raw[j] : n), 0));
+}
+
+/**
+ * 一段英文原文里命中的术语（PM 走查第 5 项：同一节里 meta-labeling 译成「元标签法」「元标签」两种）。
+ * 译法：这本书已保存的译文里用过的写法（同一组里用得最多的），没用过时取术语表的第一个中文写法。
+ * first：多词术语和缩写（meta-labeling、information coefficient、CAPM）在本节前面的译文里还没出现过时，第一次写成「元标签（meta-labeling）」；
+ * 单词术语（momentum、factor）不加括号。公式、代码、网址里的词不算。
+ */
+export function termHints(text: string, prior: { book: string; section: string }, max = 16): TermHint[] {
+  const prose = text.replace(/\$\$[\s\S]*?\$\$|(?<!\\)\$(?:\\.|[^$])*?\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|`[^`]*`|https?:\/\/\S+/g, ' ');
+  const out: (TermHint & { at: number })[] = [];
+  for (const g of GROUPS) {
+    const zh = g.filter(w => HAN.test(w));
+    const en = g.filter(w => !HAN.test(w) && /[A-Za-z]/.test(w) && !LOOSE.has(w.toLowerCase()));
+    if (!zh.length || !en.length) {
+      continue;
+    }
+    let hit: { at: number; said: string } | null = null;
+    for (const w of en) {
+      const upper = w === w.toUpperCase();
+      const m = new RegExp('(?<![A-Za-z])' + escape(w).replace(/ /g, '[\\s-]+') + (upper ? '' : '(?:e?s)?') + '(?![A-Za-z])', upper ? '' : 'i').exec(prose);
+      if (m && (!hit || m.index < hit.at)) {
+        hit = { at: m.index, said: m[0] };
+      }
+    }
+    if (!hit) {
+      continue;
+    }
+    const used = usage(zh, prior.book);
+    const best = used.reduce((b, n, i) => (n > used[b] ? i : b), 0);
+    const pick = zh[used[best] > 0 ? best : 0];
+    const multi = /[\s-]/.test(hit.said) || hit.said === hit.said.toUpperCase();
+    out.push({ en: hit.said, zh: pick, first: multi && !prior.section.includes(pick), at: hit.at });
+  }
+  return out.sort((a, b) => a.at - b.at).slice(0, max).map(t => ({ en: t.en, zh: t.zh, first: t.first }));
+}
+
+/** 讲解里附的一行：「术语：meta-labeling = 元标签；triple-barrier = 三重屏障」，讲解的译法和中文对照一致。 */
+export const termLine = (hints: TermHint[]) => (hints.length ? '术语（和中文对照同一张术语表）：' + hints.map(h => h.en + ' = ' + h.zh).join('；') : '');

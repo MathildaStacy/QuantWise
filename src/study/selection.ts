@@ -7,7 +7,9 @@ import { secLabel } from '../book/book';
 import type { BookBlock, BookSection } from '../book/types';
 import { toBlock, type BlockRow } from '../data/bookRepo';
 import type { Db } from '../data/db';
+import { termHints, termLine } from './glossary';
 import { blockText } from './prompt';
+import { canTranslate } from './translation';
 
 export type RefKind = 'figure' | 'table' | 'equation' | 'snippet' | 'section';
 
@@ -145,6 +147,9 @@ export function selectedContext(o: {
   }
   if (mention.length) lines.push('段里提到的内容：', ...mention.map(m => '- ' + m));
   if (o.translation) lines.push('用户正在看中文对照，这一段的译文是：「' + clip(o.translation, 400) + '」。讲解里的术语和译文保持一致；译文有错时直接指出。');
+  // 外文段命中的术语：讲解用和中文对照同一张术语表的译法（PM 走查第 5 项）
+  const terms = canTranslate(block) ? termLine(termHints(block.text, { book: o.translation ?? '', section: '' })) : '';
+  if (terms) lines.push(terms + '。讲解里第一次提到时写「中文（English）」，之后只写中文。');
   lines.push('</selected_block>');
   return { text: lines.join('\n'), cites };
 }

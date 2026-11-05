@@ -87,6 +87,42 @@ test('部分译文有独立单段入口；切换分组不发请求，失败重�
   expect(Object.keys(await translations.loadTranslations(core.db, session.book.id, session.blocks))).toHaveLength(2);
 });
 
+test('中文为主：只显示译文，段旁「原文」展开英文；菜单里预览先写中文，已开着对照时不出「查看中文译文」（PM 走查第 6 项）', async () => {
+  await render();
+  await press('对照方式：按段阅读');
+  await press('中文为主');
+  expect(text()).toContain('"中文为主"');
+  const first = session.blocks[0];
+  // 译好的那段：正文是中文，原文收着；没译的那段照常显示原文
+  const visible = () => tree!.root.findAll(n => typeof n.props.text === 'string').map(n => n.props.text as string);
+  expect(visible()).toContain('收益具有不确定性。');
+  expect(visible()).not.toContain(first.text);
+  expect(visible()).toContain(session.blocks[1].text);
+  await press('看这一段的原文');
+  expect(visible()).toContain(first.text);
+  await press('收起这一段的原文');
+  expect(visible()).not.toContain(first.text);
+  // 段落菜单：预览先写中文、下面小字附原文；对照已经开着，不再出「查看中文译文」
+  const open = tree!.root.findAll(n => typeof n.props.onPress === 'function' && String(n.props.accessibilityLabel).startsWith(citeLabel(session.section, first) + '：'))[0];
+  await act(async () => { open.props.onPress(); });
+  const menu = visible();
+  expect(menu.indexOf('收益具有不确定性。')).toBeLessThan(menu.lastIndexOf(first.text));
+  expect(text()).not.toContain('查看中文译文');
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+test('中文书的脚注不算待译：顶栏写「本节无需翻译」，不出「翻译本节」「翻译此段」（PM 走查第 4 项）', async () => {
+  const { bookId } = await importMarkdownText(core.db, '# 3 动量\n\n动量效应在 A 股的表现和美国市场有明显不同，我们用 1997 年到 2019 年的数据检验了价格动量和盈利动量两种口径。\n\n[3]见Liu and Lee（2001）和Li et al.（2010）等研究。\n\n[4]参见Zhang（2004）和Dobrynskaya（2017）等。', 'zh-notes.md', 'zh-notes', now);
+  await openSection(core, bookId, undefined, 'read');
+  session = useStudy.getState().s!;
+  await render();
+  expect(text()).toContain('本节无需翻译');
+  expect(text()).toContain('原文保留展示，中文内容无需重复翻译。');
+  expect(text()).not.toContain('翻译本节');
+  expect(text()).not.toContain('翻译此段');
+  expect(text()).not.toContain('待译');
+});
+
 test('缓存读取失败时重试重新读本地译文，不发翻译请求', async () => {
   const read = jest.spyOn(translations, 'loadTranslations').mockRejectedValueOnce(new Error('临时读取失败'));
   await render();

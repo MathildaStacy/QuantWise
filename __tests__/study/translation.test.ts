@@ -7,11 +7,11 @@ import type { BookBlock, BookSection } from '../../src/book/types';
 import { createBook, deleteBook, saveContent } from '../../src/data/bookRepo';
 import { openMemoryDb } from '../../src/data/drivers/nodeSqlite';
 import { migrate, migrations } from '../../src/data/migrations';
-import { loadTranslations } from '../../src/data/translationRepo';
+import { loadTranslations, saveTranslation } from '../../src/data/translationRepo';
 import * as repo from '../../src/data/repos';
 import { STUDY_LAST_CONFIG_KEY } from '../../src/study/config';
-import { translateBlocks } from '../../src/study/translate';
-import { canTranslate, parseTranslations, splitTranslationSource, translationBatches, translationUnits } from '../../src/study/translation';
+import { TRANSLATION_PROMPT, translateBlocks } from '../../src/study/translate';
+import { canTranslate, chineseSection, isNote, parseTranslations, sectionTargets, splitTranslationSource, translationBatches, translationUnits } from '../../src/study/translation';
 
 jest.mock('../../src/data/drivers/opSqlite', () => ({ openDeviceDb: jest.fn() }));
 jest.mock('../../src/app/tracker', () => ({ nativeTracker: () => null }));
@@ -173,6 +173,53 @@ test('v1.1 数据库无损升级：旧表保留，新增译文外键', async () 
   await db.close();
 });
 
+test('脚注、参考文献和以中文为主的一节不算待译；外文正文照常（PM 走查第 4 项）', () => {
+  // 《因子投资》3.5.3 节末的三条脚注：作者名的字母比中文多
+  const notes = ['[3]见Liu and Lee（2001）和Li et al.（2010）等研究。', '[4]参见Zhang（2004）和Dobrynskaya（2017）等。', '[6]更多相关研究见Frazzini（2006）和Bhootra and Hur（2012）。'];
+  const zh = [block('动量效应在 A 股的表现和美国市场有明显不同，我们用 1997 年到 2019 年的数据检验了价格动量和盈利动量两种口径。', 0), ...notes.map((t, i) => block(t, i + 1))];
+  expect(notes.map(t => isNote(block(t)))).toEqual([true, true, true]);
+  expect(chineseSection(zh)).toBe(true);
+  expect(sectionTargets(section, zh)).toEqual([]);
+  // 英文书：脚注不算，正文照常；^1、上标、圈码也认作脚注
+  const en = [block('Momentum strategies earn abnormal returns over 3 to 12 months.', 0), block('1 See Jegadeesh and Titman (1993).', 1), block('^2 Data from CRSP.', 2), block('² Data from CRSP.', 3), block('① Data from CRSP.', 4)];
+  expect(chineseSection(en)).toBe(false);
+  expect(sectionTargets(section, en).map(b => b.seq)).toEqual([0, 1]);
+  // 参考文献一节整节不译
+  expect(sectionTargets({ title: 'References' }, en)).toEqual([]);
+  expect(sectionTargets({ title: '7 参考文献' }, en)).toEqual([]);
+  // 日文不算中文
+  expect(chineseSection([block('日本語の投資戦略を説明します。', 0)])).toBe(false);
+});
+
+test('翻译请求附上这一段命中的术语：沿用本书以前的译法，本节第一次出现时写「中文（English）」（PM 走查第 5 项）', async () => {
+  const blocks = [block('I call this problem meta-labeling.', 0), block('Meta-labeling is useful when the primary model has high recall.', 1)];
+  const core = await setup();
+  await saveContent(core.db, book.id, {
+    title: book.title, author: '', warnings: [],
+    sections: [{ ...section, blockTo: 1 }, { ...section, id: '0', ord: -1, no: '0', title: 'Preface', blockFrom: 2, blockTo: 2 }],
+    blocks: [...blocks, { ...block('Meta-labeling, again.', 2), sectionId: '0' }],
+  }, now);
+  const earlier = { ...block('Meta-labeling, again.', 2), sectionId: '0' };
+  await saveTranslation(core.db, book.id, earlier, { source: earlier.text, pairs: [{ source: earlier.text, translation: '又是元标注，元标注。' }], providerId: service.id, model: 'test-model', updatedAt: now });
+  const reply = (b: BookBlock, text: string) => ({ status: 200, text: async () => JSON.stringify(envelope(JSON.stringify({ translations: translationUnits(b).map(u => ({ id: u.id, text })) }), 'anthropic')) });
+  const fetchMock = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>()
+    .mockResolvedValueOnce(reply(blocks[0], '我把这个问题称为元标注（meta-labeling）。'))
+    .mockResolvedValueOnce(reply(blocks[1], '主模型召回率高时，元标注很有用。'));
+  setAiDeps({ fetch: fetchMock });
+  await translateBlocks(core, book, section, blocks, {}, new AbortController().signal, jest.fn(), jest.fn());
+  const sent = (i: number) => {
+    const body = JSON.parse(fetchMock.mock.calls[i][1].body as string);
+    const content = body.messages[body.messages.length - 1].content;
+    return JSON.parse(typeof content === 'string' ? content : content.map((p: { text: string }) => p.text).join(''));
+  };
+  // 本书以前译成「元标注」：沿用；第一段是本节第一次出现
+  expect(sent(0).terms).toEqual([{ en: 'meta-labeling', zh: '元标注', first: true }]);
+  // 第二段：本节前面已经写过，不再加括号；recall 是日常词，不自动对译
+  expect(sent(1).terms).toEqual([{ en: 'Meta-labeling', zh: '元标注', first: false }]);
+  expect(TRANSLATION_PROMPT).toContain('「元标签（meta-labeling）」');
+  await core.db.close();
+});
+
 test('翻译用这一节讲解的模型，不跟 AI 助手当前打开的对话走；不发缓存和思考参数', async () => {
   const core = await setup();
   const ps = await loadProviders(core.db);
@@ -187,6 +234,8 @@ test('翻译用这一节讲解的模型，不跟 AI 助手当前打开的对话�
   expect(body.model).toBe('lecture-model');
   expect(JSON.stringify(body)).not.toContain('cache_control');
   expect(body.tools ?? []).toEqual([]);
+  // 这一段没有命中术语：请求里不带 terms
+  expect(JSON.stringify(body.messages)).not.toContain('terms');
   useChat.setState({ config: null });
   await core.db.close();
 });

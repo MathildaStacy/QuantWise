@@ -33,6 +33,7 @@ import { loadReadingState, saveReadingState } from './readingState';
 import { runStudyTool, STUDY_TOOL_DEFS } from './tools';
 import { bookLanguage } from './search';
 import { refsIn, resolveRefs, selectedContext } from './selection';
+import { termHints, termLine } from './glossary';
 import { canTranslate } from './translation';
 import { loadTranslations } from '../data/translationRepo';
 
@@ -571,9 +572,12 @@ async function askContext(core: AppCore, s: StudySession, a: StudyAsk): Promise<
   if (!at) return { text: '', cites: [] };
   const translation = a.translation ? await savedTranslation(core, s, at) : undefined;
   const head = at.text.replace(/\s+/g, ' ').slice(0, 60);
+  // 外文段命中的术语：讲解和中文对照用同一张术语表
+  const terms = canTranslate(at) ? termLine(termHints(at.text, { book: translation ?? '', section: '' })) : '';
   return {
     text: '<reading_position>\n用户在原文里最近读到 [' + s.section.id + '#' + at.no + ']' + (at.page != null ? '（p.' + at.page + '）' : '') + '：「' + head + (at.text.length > 60 ? '…' : '') + '」。问题里的「这里」「这段」「这个公式」多半指这附近。' +
-      (translation ? '\n用户开着中文对照，这一段的译文：「' + translation.slice(0, 300) + '」；术语和译文保持一致。' : '') + '\n</reading_position>',
+      (translation ? '\n用户开着中文对照，这一段的译文：「' + translation.slice(0, 300) + '」；术语和译文保持一致。' : '') +
+      (terms ? '\n' + terms + '。' : '') + '\n</reading_position>',
     cites: [],
   };
 }

@@ -129,6 +129,16 @@ describe('选段讲解的上下文', () => {
     expect(text).toContain('「第2.2.4节」是 2.2.4 Fama-MacBeth回归');
     expect(text).toContain('译文是：「如图 3.20 所示……」');
     expect(cites).toEqual(['3.1.4#7', '3.1.4#8']);
+    // 中文段不附术语行
+    expect(text).not.toContain('术语（');
+  });
+
+  it('外文段：附上命中的术语，讲解和中文对照用同一张术语表；对照译文里用过的写法优先', () => {
+    const section = sec('3.6', 'Meta-Labeling');
+    const blocks = [blk('3.6', 1, 'Suppose that you have a model for setting the side of the bet. I call this problem meta-labeling, and the triple-barrier method labels each event.', 'p', 50)];
+    const base = { section, blocks, block: blocks[0], sections: [section], resolved: [] };
+    expect(selectedContext(base).text).toContain('术语（和中文对照同一张术语表）：meta-labeling = 元标签；triple-barrier = 三重屏障。讲解里第一次提到时写「中文（English）」');
+    expect(selectedContext({ ...base, translation: '我把这个问题称为元标注（meta-labeling）……' }).text).toContain('meta-labeling = 元标注');
   });
 });
 
