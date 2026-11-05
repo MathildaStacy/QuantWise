@@ -9,6 +9,8 @@ export interface FactorSnapshot {
   codes: number;
   from: string;
   computedAt: string;
+  /** 指数池没取全时用的随机样本：只数和全部成分数。 */
+  sample?: { n: number; of: number };
 }
 
 export function factorConclusion(r: TestResult): string {
@@ -32,6 +34,7 @@ export function snapshotQuestion(s: FactorSnapshot): string {
       longShortAnnual: `最高组减最低组；${r.input.costBp ? '已按两端换手扣除交易成本（换手比例 × 单边成本 × 2）' : '未扣交易成本'}；按每年 252 个交易日复利年化，数值用小数表示`,
       turnover: '最高组每次调仓的平均换手比例，不含首次建仓',
     },
-    limits: '股票池使用当前成分，有幸存者偏差；本次样本结果不代表未来收益。',
+    limits: '股票池使用当前成分，有幸存者偏差；本次样本结果不代表未来收益。' +
+      (s.sample ? '数据被行情接口限流没取全：这次只用了按固定随机顺序取全的 ' + s.sample.n + ' 只（' + s.sample.of + ' 只当前成分的随机样本），只数少，噪声更大，检验通常更弱；这次不显著也不说明全部成分不显著。' : ''),
   });
 }

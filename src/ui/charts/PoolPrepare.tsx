@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { universeEnv } from '../../ai/tools/quant';
 import type { AppCore } from '../../app/boot';
-import { INDEX_POOLS, poolStatus, prepareBars, refreshIndex, type IndexPoolId } from '../../quant/universe';
+import { afterPrepare, INDEX_POOLS, poolStatus, prepareBars, refreshIndex, SAMPLE_MIN, type IndexPoolId } from '../../quant/universe';
 import { rc } from '../readTheme';
 import { num } from '../theme';
 
@@ -18,8 +18,11 @@ export interface PrepState {
   error?: string;
 }
 
-/** 准备一个指数池；准备好（成分取全、九成以上有日线）后调 onReady。离开页面时停下。 */
-export function usePoolPrepare(core: AppCore, onReady: (pool: IndexPoolId, codes: number) => void) {
+/**
+ * 准备一个指数池；准备好（成分取全、九成以上有日线）后调 onReady(pool, 只数)。被限流没取全、
+ * 但随机样本比准备前多且够 SAMPLE_MIN 只时调 onReady(pool, 样本只数, true)。离开页面时停下。
+ */
+export function usePoolPrepare(core: AppCore, onReady: (pool: IndexPoolId, codes: number, sample?: boolean) => void) {
   const [prep, setPrep] = useState<PrepState | null>(null);
   const abort = useRef<AbortController | null>(null);
   const busy = useRef(false);
@@ -42,18 +45,19 @@ export function usePoolPrepare(core: AppCore, onReady: (pool: IndexPoolId, codes
     const env = universeEnv(core);
     try {
       const codes = await refreshIndex(env, pool);
+      const before = await poolStatus(env, pool);
       const p = await prepareBars(env, codes, x => setPrep({ pool, done: x.done, total: x.total, running: true }), ctl.signal);
       if (ctl.signal.aborted) {
         setPrep({ pool, done: p.done, total: p.total, running: false, error: '已停下，已取到的留着，下次只补没取到的' });
         return;
       }
-      const st = await poolStatus(env, pool);
-      if (p.halted || !st.ready) {
-        setPrep({ pool, done: p.done, total: p.total, running: false, error: p.halted ?? p.failed.length + ' 只没取到，数据还不够用，过几分钟再试' });
+      const out = afterPrepare(pool, before, await poolStatus(env, pool), p);
+      if (out.use === 'none') {
+        setPrep({ pool, done: p.done, total: p.total, running: false, error: out.error });
         return;
       }
-      setPrep({ pool, done: p.total, total: p.total, running: false, ...(p.failed.length ? { error: p.failed.length + ' 只没取到（停牌或接口出错），用其余的继续' } : {}) });
-      ready.current(pool, st.codes.length);
+      setPrep({ pool, done: out.use === 'ready' && !p.halted ? p.total : p.done, total: p.total, running: false, ...(out.note ? { error: out.note } : {}) });
+      ready.current(pool, out.n, out.use === 'sample');
     } catch (e) {
       setPrep({ pool, done: 0, total: INDEX_POOLS[pool].size, running: false, error: e instanceof Error ? e.message : String(e) });
     }
@@ -61,10 +65,12 @@ export function usePoolPrepare(core: AppCore, onReady: (pool: IndexPoolId, codes
   return { prep, start, stop: () => abort.current?.abort() };
 }
 
-/** pending：还没准备（没算）；否则是数据过期或只有约 3 年，可以更新。 */
-export function PrepareCard({ pool, pending, prep, onStart, onStop, after }: {
+/** pending：还没准备（没算）；sample：没取全，这次用了随机样本；否则是数据过期或只有约 3 年，可以更新。 */
+export function PrepareCard({ pool, pending, sample, prep, onStart, onStop, after }: {
   pool: IndexPoolId;
   pending: boolean;
+  /** 没取全，这次用随机样本算的只数。 */
+  sample?: number;
   prep: PrepState | null;
   onStart: () => void;
   onStop: () => void;
@@ -74,13 +80,20 @@ export function PrepareCard({ pool, pending, prep, onStart, onStop, after }: {
   const p = INDEX_POOLS[pool];
   const mine = prep?.pool === pool ? prep : null;
   const running = !!mine?.running;
+  const verb = pending ? '准备数据' : sample ? '接着取数据' : '更新数据';
   // 要写 accessibilityLabel：Android 上没有它时 busy 变回 false 不会清掉读屏文字，按钮会一直读「busy」。
-  const label = running ? '下载中…' : (pending ? '准备数据' : '更新数据') + (after ?? '');
+  const label = running ? '下载中…' : verb + (after ?? '');
+  const title = pending ? '准备' + p.short + ' 数据' : sample ? p.short + ' 还没取全' : p.short + ' 的数据较旧';
+  const lead = pending
+    ? ''
+    : sample
+    ? '被行情接口限流，这次先用了按固定随机顺序取全的 ' + sample + ' 只（随机样本，不是全部成分；只数少，噪声更大）。'
+    : '本地数据过期或只有约 3 年，这次先用了已有的。';
   return (
     <View style={st.card}>
-      <Text style={st.h}>{pending ? '准备' + p.short + ' 数据' : p.short + ' 的数据较旧'}</Text>
+      <Text style={st.h}>{title}</Text>
       <Text style={st.k}>
-        {(pending ? '' : '本地数据过期或只有约 3 年，这次先用了已有的。') + '取当前 ' + p.size + ' 只成分（' + p.source + '），每只约 5 年前复权日线（东方财富，取不到的用腾讯），约 ' + p.minutes + ' 分钟、' + p.mb + ' MB 流量，建议连 Wi-Fi。行情接口限流时会先停下，隔一两个小时再点接着取。之后用到时只补过期的。'}
+        {lead + '取当前 ' + p.size + ' 只成分（' + p.source + '），每只约 5 年前复权日线（东方财富，取不到的用腾讯），约 ' + p.minutes + ' 分钟、' + p.mb + ' MB 流量，建议连 Wi-Fi。行情接口限流时会先停下，隔一两个小时再点接着取；成分按固定的随机顺序取，取全 ' + SAMPLE_MIN + ' 只以上就先用这个随机样本算。之后用到时只补过期的。'}
       </Text>
       {mine && (running || mine.done > 0) ? <Text style={[st.k, num]}>已完成 {mine.done} / {mine.total}</Text> : null}
       {mine?.error ? <Text style={st.err}>{mine.error}</Text> : null}

@@ -215,9 +215,14 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
   };
   sendRef.current = send;
   // 讲解里 factor_test 说指数池数据没准备：准备好后接着让 AI 用这个池子重做刚才那次检验
-  const pool = usePoolPrepare(core, (id, n) => {
+  // 被限流没取全时用随机样本先重做（只数够、比上次多才会来），问题里写明是随机样本
+  const pool = usePoolPrepare(core, (id, n, sample) => {
     const name = INDEX_POOLS[id].short;
-    sendRef.current({ label: '数据准备好了：用' + name + '重做这次检验', question: name + '的数据准备好了（' + n + ' 只当前成分）。请用 universe = ' + id + ' 重做刚才那次因子检验，口径（因子、分组、调仓、加权、控制变量）不变，再和书里的数字逐项对照。' });
+    sendRef.current(
+      sample
+        ? { label: name + ' 取到随机 ' + n + ' 只：用样本重做这次检验', question: name + ' 被行情接口限流，还没取全，按固定随机顺序已取全 ' + n + ' 只（' + name + ' 当前成分的随机样本）。请用 universe = ' + id + ' 重做刚才那次因子检验，口径（因子、分组、调仓、加权、控制变量）不变；工具会用这个随机样本算。和书里的数字对照时说明这是随机 ' + n + ' 只，不是全部成分：只数少，噪声更大，检验通常更弱，这次不显著也不说明全部成分不显著。' }
+        : { label: '数据准备好了：用' + name + '重做这次检验', question: name + '的数据准备好了（' + n + ' 只当前成分）。请用 universe = ' + id + ' 重做刚才那次因子检验，口径（因子、分组、调仓、加权、控制变量）不变，再和书里的数字逐项对照。' },
+    );
   });
   /** 发出去就清空输入框；没问完的问题留在重试区（pending），不会丢。 */
   const sendDraft = () => {

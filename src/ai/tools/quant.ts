@@ -40,6 +40,7 @@ import {
   poolStatus,
   prepareBars,
   QFQ_DAYS,
+  SAMPLE_MIN,
   universeCodes,
   UNIVERSE_IDS,
   UNIVERSE_NAME,
@@ -56,8 +57,11 @@ export interface QuantOutcome {
   output: string;
   label: string;
   charts?: ChartData[];
-  /** 指数池要准备或更新数据：讲解里这条结果下面出「准备数据」（pending = 还没算，只是提示）。 */
-  prepare?: { pool: IndexPoolId; pending: boolean };
+  /**
+   * 指数池要准备或更新数据：讲解里这条结果下面出「准备数据」（pending = 还没算，只是提示）；
+   * sample = 没取全，这次用的是随机样本的只数（结果下面出「接着取数据」）。
+   */
+  prepare?: { pool: IndexPoolId; pending: boolean; sample?: number };
 }
 
 /** 讲解里按块号取书里的分组表，合并到本次的组数（取不到时是原因）。 */
@@ -159,7 +163,7 @@ async function needCode(core: AppCore, v: unknown) {
 }
 
 type Pool =
-  | { codes: string[]; name: string; id: string; stale?: IndexPoolId; note?: string }
+  | { codes: string[]; name: string; id: string; stale?: IndexPoolId; note?: string; sample?: { pool: IndexPoolId; n: number } }
   | { pending: string; pool?: IndexPoolId };
 
 /**
@@ -177,10 +181,21 @@ async function poolOf(core: AppCore, args: Record<string, unknown>): Promise<Poo
   if (isIndexPool(id)) {
     const p = INDEX_POOLS[id];
     const st = await poolStatus(env, id);
+    if (!st.ready && st.sample.length >= SAMPLE_MIN) {
+      // 被限流没取全：用按固定随机顺序取全的那一段（成分的随机样本）先算，写明是样本
+      const n = st.sample.length;
+      return {
+        codes: st.sample,
+        name: p.short + ' 随机 ' + n + ' 只（' + (st.asOf ? '成分取于 ' + st.asOf + '，' : '') + '共 ' + st.codes.length + ' 只）',
+        id: id + '-sample',
+        sample: { pool: id, n },
+        note: p.short + ' 的日线被行情接口限流，还没取全：这次用的是按固定随机顺序取全的 ' + n + ' 只（' + p.short + ' ' + st.codes.length + ' 只当前成分的随机样本），不是全部成分。只数少，噪声更大，检验通常更弱；这次不显著也不说明全部成分不显著。讲结果时写明「' + p.short + ' 随机 ' + n + ' 只」。讲解里结果下面有「接着取数据并重做这次检验」，取到更多后用更大的样本重做；AI 助手里请用户去「学习 → 读书 → 因子实验室」接着取。',
+      };
+    }
     if (!st.ready) {
       return {
         pool: id,
-        pending: p.short + ' 的数据还没准备（' + p.size + ' 只当前成分，每只约 5 年前复权日线，约 ' + p.minutes + ' 分钟、' + p.mb + ' MB 流量）。讲解里这条结果下面有「准备数据」按钮，用户点了会在准备好后接着重做这次检验；AI 助手里请用户去「学习 → 读书 → 因子实验室」准备。现在不要编结果；可以先用 universe = sample（示例池 25 只大盘股）做一次示意，并说明示例池说明不了书里的结论。',
+        pending: p.short + ' 的数据还没准备（' + p.size + ' 只当前成分，每只约 5 年前复权日线，约 ' + p.minutes + ' 分钟、' + p.mb + ' MB 流量）。讲解里这条结果下面有「准备数据」按钮，用户点了会在准备好后接着重做这次检验（被限流取不全时，随机取全 ' + SAMPLE_MIN + ' 只以上就先用这个随机样本重做）；AI 助手里请用户去「学习 → 读书 → 因子实验室」准备。现在不要编结果；可以先用 universe = sample（示例池 25 只大盘股）做一次示意，并说明示例池说明不了书里的结论。',
       };
     }
     const stale = st.stale > st.codes.length * 0.1;
@@ -324,7 +339,12 @@ export async function runQuantTool(
       ...(control ? { control } : {}),
     };
     const bookPeriods = args.book_periods == null ? undefined : int(args.book_periods, 0, 0, 2000) || undefined;
-    const stale = pool.stale ? { prepare: { pool: pool.stale, pending: false } } : {};
+    // 过期：结果下面出「更新数据」；随机样本：出「接着取数据」
+    const stale = pool.stale
+      ? { prepare: { pool: pool.stale, pending: false } }
+      : pool.sample
+      ? { prepare: { pool: pool.sample.pool, pending: false, sample: pool.sample.n } }
+      : {};
     try {
       const res = runFactorTest(panel, input);
       const how = control ? '先按市值分 ' + control.groups + ' 组 × ' : '';
@@ -349,7 +369,8 @@ export async function runQuantTool(
       throw e;
     }
   }
-  return valuesOf(core, panel, factor, pool.name, args);
+  const values = await valuesOf(core, panel, factor, pool.name, args);
+  return pool.sample ? { ...values, output: values.output + '\n' + pool.note } : values;
 }
 
 async function valuesOf(core: AppCore, panel: Awaited<ReturnType<typeof loadPanel>>, factor: FactorId, poolName: string, args: Record<string, unknown>): Promise<QuantOutcome> {

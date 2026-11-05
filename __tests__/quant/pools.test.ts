@@ -20,7 +20,7 @@ import { runFactorTest, SampleError, testSummary } from '../../src/quant/backtes
 import { factorCharts } from '../../src/quant/charts';
 import { buildPanel } from '../../src/quant/factors';
 import { spearman } from '../../src/quant/indicators';
-import { isAStock, klineSince, loadPanel, poolStatus, prepareBars, refreshIndex, type UniverseEnv } from '../../src/quant/universe';
+import { afterPrepare, isAStock, klineSince, loadPanel, poolStatus, prepareBars, randomOrder, refreshIndex, SAMPLE_MIN, type PoolStatus, type UniverseEnv } from '../../src/quant/universe';
 
 const snap = JSON.parse(readFileSync(join(__dirname, '../../docs/design/prototype/snapshot-2026-10-26.json'), 'utf8')) as {
   kline: Record<string, [string, number, number, number, number, number][]>;
@@ -272,6 +272,70 @@ describe('准备数据和按批组面板', () => {
   });
 });
 
+describe('被限流取不全时用随机样本', () => {
+  // 像中证 1000 那样按代码排好的成分表：深市主板、中小板、创业板、沪市主板、科创板
+  const boards: [string, number][] = [['sz000', 110], ['sz001', 20], ['sz002', 290], ['sz300', 190], ['sh600', 140], ['sh601', 30], ['sh603', 110], ['sh605', 20], ['sh688', 90]];
+  const csi = boards.flatMap(([p, n]) => Array.from({ length: n }, (_, i) => p + String(100 + i * 7).padStart(3, '0')));
+  const share = (xs: string[], p: string) => xs.filter(c => c.startsWith(p)).length / xs.length;
+
+  it('固定随机顺序：每次一样、和输入顺序无关；排在前面的 300 只各板块的占比和全部成分差不多', () => {
+    expect(csi).toHaveLength(1000);
+    const order = randomOrder(csi);
+    expect([...order].sort()).toEqual([...csi].sort());
+    expect(randomOrder([...csi].reverse())).toEqual(order);
+    // 按代码取的前 300 只全是深市 000、001、002；随机顺序的前 300 只各板块都有
+    expect(share(csi.slice(0, 300), 'sz00')).toBe(1);
+    for (const p of ['sz00', 'sz300', 'sh60', 'sh688']) {
+      expect(Math.abs(share(order.slice(0, 300), p) - share(csi, p))).toBeLessThan(0.08);
+    }
+  });
+
+  it('准备数据按固定随机顺序取', async () => {
+    const asked: string[] = [];
+    const e = await env({ klineRange: async (code: string) => { asked.push(code); return barsOf('sh600036'); } });
+    const list = csi.slice(0, 40);
+    await prepareBars(e, list);
+    expect(asked.slice(0, 3)).toEqual(randomOrder(list).slice(0, 3));
+    expect([...asked].sort()).toEqual([...list].sort());
+  });
+
+  it('随机样本只算按随机顺序排在前面、缺的不超过 1/20 的那一段；后面零散取到的（以前按代码取的）不算', async () => {
+    const e = await env();
+    await quantRepo.saveUniverse(e.db, { id: 'zz1000', codes: csi, asOf: NOW.date, fetchedAt: 'x' });
+    const order = randomOrder(csi);
+    const bar = [{ date: NOW.date, open: 1, close: 1, high: 1, low: 1, volume: 1 }];
+    const missing = new Set(order.slice(0, 200).filter((_, i) => i % 40 === 7));
+    for (const c of new Set([...order.slice(0, 200), ...csi.slice(0, 300)])) {
+      if (!missing.has(c)) await quantRepo.saveQfq(e.db, { code: c, name: c, fetchedAt: 'x', totalCap: 1, floatCap: 1, price: 1 }, bar);
+    }
+    const st = await poolStatus(e, 'zz1000');
+    expect(st.ready).toBe(false);
+    expect(st.sample.length).toBeGreaterThanOrEqual(195);
+    expect(st.sample.length).toBeLessThan(210);
+    const head = new Set(order.slice(0, 220));
+    expect(st.sample.every(c => head.has(c) && !missing.has(c))).toBe(true);
+    // 样本的板块占比接近全部成分（以前按代码取的那 300 只都是深市 00 开头）
+    expect(Math.abs(share(st.sample, 'sz00') - share(csi, 'sz00'))).toBeLessThan(0.1);
+    // 成分不够（没取全成分表）时没有样本
+    await quantRepo.saveUniverse(e.db, { id: 'zz1000', codes: csi.slice(0, 500), asOf: NOW.date, fetchedAt: 'x' });
+    expect((await poolStatus(e, 'zz1000')).sample).toEqual([]);
+  });
+
+  it('准备完：取全了照常用；没取全、随机样本比准备前多且够数时先用样本；样本没变多或不够时说清楚', () => {
+    const st = (n: number, ready = false): PoolStatus => ({ codes: csi, asOf: NOW.date, ready, stale: 0, lastDate: NOW.date, sample: csi.slice(0, n) });
+    const halted = '连续 12 只没取到（行情接口限流，最后一只：东方财富 网络错误，腾讯 行情接口返回 501），先停下；已取到的照常用。限流一般要隔一两个小时再点，只补没取到的';
+    expect(afterPrepare('zz1000', st(0), st(950, true), { done: 1000, total: 1000, failed: [] })).toEqual({ use: 'ready', n: 1000 });
+    expect(afterPrepare('zz1000', st(0), st(950, true), { done: 980, total: 1000, failed: fakeCodes(12), halted })).toEqual({ use: 'ready', n: 1000, note: halted });
+    const used = afterPrepare('zz1000', st(40), st(252), { done: 380, total: 1000, failed: fakeCodes(12), halted });
+    expect(used).toMatchObject({ use: 'sample', n: 252 });
+    expect(used.use === 'sample' && used.note).toContain('先停下；已取到的照常用。限流一般要隔一两个小时再点，只补没取到的。先用按固定随机顺序取全的 252 只（中证 1000 的随机样本）算');
+    const same = afterPrepare('zz1000', st(252), st(252), { done: 400, total: 1000, failed: fakeCodes(12), halted });
+    expect(same.use === 'none' && same.error).toContain('。随机样本还是 252 只，没有多取到');
+    const few = afterPrepare('zz1000', st(0), st(90), { done: 300, total: 1000, failed: fakeCodes(12), halted });
+    expect(few.use === 'none' && few.error).toContain('。按固定随机顺序已取全 90 只，取全 ' + SAMPLE_MIN + ' 只以后就先用这个随机样本算');
+  });
+});
+
 describe('factor_test 的指数池和双重排序参数', () => {
   // 快照里每只都有市值（控制市值要用），价格随便给：市值只用来排大小
   const quotes = async (list: string[]) =>
@@ -303,6 +367,43 @@ describe('factor_test 的指数池和双重排序参数', () => {
     const small = await runQuantTool(c, 'factor_test', { factor: 'mom20', universe: 'sample', control: 'size', control_groups: 2 });
     expect(small.label).toBe('因子检验：样本不够');
     expect(small.output).toContain('2 个市值组 × 5 个因子组，每期至少要 20 只');
+  });
+
+  it('中证 1000 被限流没取全：随机样本够 150 只时先用样本算，标签和摘要写明「随机 N 只」，结果下面出「接着取数据」；不够时照常提示准备', async () => {
+    const c = await core();
+    const list = Array.from({ length: 1000 }, (_, i) => (i % 2 ? 'sz' + (300000 + i) : 'sh' + (600000 + i)));
+    await quantRepo.saveUniverse(c.db, { id: 'zz1000', codes: list, asOf: NOW.date, fetchedAt: 'x' });
+    const order = randomOrder(list);
+    const days: string[] = [];
+    for (let d = NOW.date; days.length < 160; d = cal.prev(d)) days.unshift(d);
+    const save = async (from: number, to: number) => {
+      for (let j = from; j < to; j++) {
+        let px = 10000;
+        const bars = days.map((date, t) => {
+          px = Math.max(1000, Math.round(px * (1 + 0.02 * Math.sin((t * ((j % 9) + 1)) / 7 + j))));
+          return { date, open: px, close: px, high: px, low: px, volume: 1000 + j };
+        });
+        await quantRepo.saveQfq(c.db, { code: order[j], name: order[j], fetchedAt: 'x', totalCap: 1000 + j * 10, floatCap: 500, price: px }, bars);
+      }
+    };
+    // 随机顺序取全 100 只：不够 150，照常提示准备
+    await save(0, 100);
+    const few = await runQuantTool(c, 'factor_test', { factor: 'mom20', universe: 'zz1000' });
+    expect(few.prepare).toEqual({ pool: 'zz1000', pending: true });
+    expect(few.output).toContain('随机取全 150 只以上就先用这个随机样本重做');
+    // 160 只：用样本算，处处写明是随机样本
+    await save(100, 160);
+    const r = await runQuantTool(c, 'factor_test', { factor: 'mom20', universe: 'zz1000' });
+    const name = '中证 1000 随机 160 只（成分取于 2026-10-26，共 1000 只）';
+    expect(r.prepare).toEqual({ pool: 'zz1000', pending: false, sample: 160 });
+    expect(r.label).toContain(name);
+    expect(r.output).toContain('股票池：' + name + '，160 只');
+    expect(r.output).toContain('不是全部成分');
+    expect(r.output).toContain('写明「中证 1000 随机 160 只」');
+    expect(r.charts?.[0]).toMatchObject({ universe: 'zz1000-sample', stats: { universe: name } });
+    const v = await runQuantTool(c, 'get_factor_values', { factor: 'mom20', universe: 'zz1000' });
+    expect(v.output).toContain(name);
+    expect(v.output).toContain('不是全部成分');
   });
 
   it('工具定义：五个股票池、控制变量、书里的期数', () => {

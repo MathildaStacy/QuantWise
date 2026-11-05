@@ -19,4 +19,8 @@ test('解释使用该份结果的参数、日期、时间及统计值', () => {
   expect(prompt).toContain('不调用 factor_test 重跑');
   const data = JSON.parse(prompt.slice(prompt.indexOf('{')));
   expect(data).toMatchObject({ input: result.input, rankIc: 0.051, t: 1.35, longShortAnnual: -0.104, resultFrom: '2025-10-20', resultTo: '2026-10-20', computedAt: '2026-11-01T10:00:00+08:00' });
+  expect(data.limits).not.toContain('随机样本');
+  // 指数池没取全、用随机样本算的：边界里写明只数和全部成分数
+  const sampled = snapshotQuestion({ r: result, universe: 'zz1000', codes: 252, from: '2021-08-13', computedAt: '2026-11-05T22:30:00+08:00', sample: { n: 252, of: 1000 } });
+  expect(JSON.parse(sampled.slice(sampled.indexOf('{'))).limits).toContain('按固定随机顺序取全的 252 只（1000 只当前成分的随机样本）');
 });

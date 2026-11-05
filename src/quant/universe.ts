@@ -35,6 +35,41 @@ export const INDEX_POOLS: Record<IndexPoolId, { short: string; size: number; min
 export const UNIVERSE_IDS = Object.keys(UNIVERSE_NAME) as UniverseId[];
 export const isIndexPool = (id: string): id is IndexPoolId => id in INDEX_POOLS;
 
+/**
+ * 成分按代码的哈希排成固定的随机顺序（FNV-1a 再混一次）：同一只股票每次排在同一处，和板块、市值、代码大小无关。
+ * 准备数据按这个顺序取；被限流停下时，排在前面、已经取全的那一段就是成分的一个随机样本（成分表本身按代码排，
+ * 前几百只几乎都是深市 000、002 开头的）。
+ */
+/* eslint-disable no-bitwise -- 哈希本来就是按位运算 */
+export function randomOrder(codes: string[]): string[] {
+  const key = (c: string) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < c.length; i++) {
+      h = Math.imul(h ^ c.charCodeAt(i), 0x01000193);
+    }
+    h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+    h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+    return (h ^ (h >>> 16)) >>> 0;
+  };
+  return codes.map(c => [key(c), c] as const).sort((a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : 1)).map(x => x[1]);
+}
+/* eslint-enable no-bitwise */
+/** 指数池没取全时，随机样本至少这么多只才拿来算（中证 1000 先按市值分 5 组 × 10 组，每期至少要 100 只）。 */
+export const SAMPLE_MIN = 150;
+/**
+ * 随机样本 = 按固定随机顺序排在最前、缺的不超过 1/20 的最长一段里有日线的股票。缺的多半是被限流时没取到的，
+ * 和这只股票是什么样的无关；更后面零散取到的（以前按代码顺序取的）不算，免得样本偏向某个板块。
+ */
+function samplePrefix(order: string[], have: (c: string) => boolean): string[] {
+  let got = 0;
+  let end = 0;
+  order.forEach((c, i) => {
+    if (have(c)) got++;
+    if (got * 20 >= (i + 1) * 19) end = i + 1;
+  });
+  return order.slice(0, end).filter(have);
+}
+
 /** 每只股票大约取多少根日线（约 5 年）：按日期段取，往回 1,900 个自然日。 */
 export const QFQ_BARS = 1250;
 export const QFQ_DAYS = 1900;
@@ -125,8 +160,20 @@ export async function universeCodes(
   return { codes: u?.codes ?? [], asOf: u?.asOf ?? null };
 }
 
+export interface PoolStatus {
+  codes: string[];
+  asOf: string | null;
+  /** 成分取全了、九成以上有日线。 */
+  ready: boolean;
+  /** 过期或只有约 3 年数据、或者还没有日线的只数。 */
+  stale: number;
+  lastDate: string | null;
+  /** 没取全时能拿来算的随机样本（见 samplePrefix）；不到 SAMPLE_MIN 只时不能用。 */
+  sample: string[];
+}
+
 /** 指数池的数据够不够用：成分取全了、九成以上有日线；stale 是过期或只有 3 年数据的只数。 */
-export async function poolStatus(env: UniverseEnv, id: IndexPoolId): Promise<{ codes: string[]; asOf: string | null; ready: boolean; stale: number; lastDate: string | null }> {
+export async function poolStatus(env: UniverseEnv, id: IndexPoolId): Promise<PoolStatus> {
   const { codes, asOf } = await universeCodes(env, id);
   const meta = await quantRepo.qfqMeta(env.db, codes);
   const want = lastClosedDay(env.calendar, env.now());
@@ -136,7 +183,37 @@ export async function poolStatus(env: UniverseEnv, id: IndexPoolId): Promise<{ c
     if (m.lastDate < want || LEGACY_BARS.has(m.bars)) stale++;
     if (!lastDate || m.lastDate > lastDate) lastDate = m.lastDate;
   }
-  return { codes, asOf, ready: codes.length >= INDEX_POOLS[id].min && meta.size >= codes.length * 0.9, stale: stale + codes.length - meta.size, lastDate };
+  return {
+    codes,
+    asOf,
+    ready: codes.length >= INDEX_POOLS[id].min && meta.size >= codes.length * 0.9,
+    stale: stale + codes.length - meta.size,
+    lastDate,
+    sample: codes.length >= INDEX_POOLS[id].min ? samplePrefix(randomOrder(codes), c => meta.has(c)) : [],
+  };
+}
+
+/** 准备完以后怎么办：ready = 取全了；sample = 没取全，但随机样本比准备前多、够 SAMPLE_MIN 只，先用它算；否则 error 是要给用户看的话。 */
+export type PrepareOutcome = { use: 'ready' | 'sample'; n: number; note?: string } | { use: 'none'; error: string };
+
+export function afterPrepare(id: IndexPoolId, before: PoolStatus, after: PoolStatus, p: PrepareProgress): PrepareOutcome {
+  const name = INDEX_POOLS[id].short;
+  const n = after.sample.length;
+  if (after.ready) {
+    return { use: 'ready', n: after.codes.length, ...(p.halted ? { note: p.halted } : p.failed.length ? { note: p.failed.length + ' 只没取到（停牌或接口出错），用其余的继续' } : {}) };
+  }
+  if (n >= SAMPLE_MIN && n > before.sample.length) {
+    return { use: 'sample', n, note: (p.halted ? p.halted + '。' : '') + '先用按固定随机顺序取全的 ' + n + ' 只（' + name + ' 的随机样本）算' };
+  }
+  const why = p.halted ?? p.failed.length + ' 只没取到，数据还不够用，过几分钟再试';
+  return {
+    use: 'none',
+    error:
+      why +
+      (n >= SAMPLE_MIN
+        ? '。随机样本还是 ' + n + ' 只，没有多取到'
+        : '。按固定随机顺序已取全 ' + n + ' 只，取全 ' + SAMPLE_MIN + ' 只以后就先用这个随机样本算'),
+  };
 }
 
 /**
@@ -177,7 +254,8 @@ export async function prepareBars(
 ): Promise<PrepareProgress> {
   const want = lastClosedDay(env.calendar, env.now());
   const meta = await quantRepo.qfqMeta(env.db, codes);
-  const stale = codes.filter(c => {
+  // 按固定随机顺序取：被限流停下时，已取到的是一个随机样本（见 randomOrder）
+  const stale = randomOrder(codes).filter(c => {
     const m = meta.get(c);
     return !m || m.lastDate < want || LEGACY_BARS.has(m.bars);
   });
