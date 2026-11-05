@@ -1,6 +1,6 @@
 /**
  * 股票池和数据准备（QUANTWISE_DESIGN.md §7.1）：示例池、自选 + 持仓、沪深 300、中证 500、中证 1000。
- * 准备数据 = 每只取约 5 年前复权日 K（腾讯，按日期段取，个股一次只回最近约 640 根，往前分段补齐）+ 快照里的市值，
+ * 准备数据 = 每只取约 5 年前复权日 K（先用东方财富，一次就能取全；取不到再用腾讯，个股一次只回最近约 640 根，往前分段补齐）+ 快照里的市值，
  * 整段写进 kline_qfq；最后一根不是最近收盘的交易日就重取，以前只取了 750 根（约 3 年）或 640 根的也重取一次。
  */
 import type { Db } from '../data/db';
@@ -77,10 +77,14 @@ export async function klineSince(
   return bars;
 }
 /**
- * 每只个股要取两段（见 klineSince）。验收时并发 6 取沪深 300，两百多只后被行情接口限流，一个多小时都取不到；
- * 并发 3 约每秒 1 只，补齐了沪深 300，但中证 1000 取到 158 只又被限流。大池子可能要分几次准备，所以停下时只留已取到的、下次只补没取到的。
+ * v1.10.0 验收时只用腾讯，每只个股要取两段（见 klineSince）：并发 6 取沪深 300，两百多只后被限流，一个多小时都取不到；
+ * 并发 3 补齐了沪深 300，中证 1000 取到 158 只又被限流（接口返回 501）。现在先用东方财富（一只一次），取不到再用腾讯，
+ * 请求少一半，两家的限流也分开算。两家都会限流（东方财富被限流时直接断开连接，App 里是「网络错误」），并发仍是 3；
+ * 停下时只留已取到的、下次只补没取到的。
  */
 const CONCURRENCY = 3;
+/** 东方财富连续这么多只取不到，这一轮剩下的只用腾讯（多半是被限流了，不再白发请求）。 */
+const EM_OFF_AFTER = 3;
 /** 连续这么多只取不到（接口限流、断网）就停下，不把剩下的都试一遍；下次准备只补没取到的。 */
 const HALT_AFTER = 12;
 
@@ -188,15 +192,43 @@ export async function prepareBars(
   const start = addDays(env.now().date, -QFQ_DAYS);
   let next = 0;
   let streak = 0;
+  let emFails = 0;
+  /** 东方财富最近一次取不到的原因；两家都取不到时一起写进停下的说明。 */
+  let emWhy = '';
+  const brief = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').slice(0, 40) || '原因不明';
+  /** 先东方财富（一次约 5 年），取不到或回空再腾讯分段取；两家的前复权价一致（eastmoney.ts 的 emDailyUrl）。 */
+  const daily = async (c: string, type: string): Promise<KBar[]> => {
+    if (env.client.emDaily && emFails < EM_OFF_AFTER) {
+      try {
+        const got = await env.client.emDaily(c, start);
+        if (got.length) {
+          emFails = 0;
+          return got;
+        }
+        emWhy = '没有日线';
+      } catch (e) {
+        emWhy = brief(e);
+      }
+      emFails++;
+    }
+    const both = (tx: string) => new Error(emWhy ? '东方财富 ' + emWhy + '，腾讯 ' + tx : tx);
+    let bars: KBar[];
+    try {
+      bars = await klineSince(env.client, c, type, start);
+    } catch (e) {
+      throw both(brief(e));
+    }
+    if (!bars.length) {
+      throw both('没有日线');
+    }
+    return bars;
+  };
   const worker = async () => {
     while (next < stale.length && !signal?.aborted && !prog.halted) {
       const c = stale[next++];
       try {
         const q = quotes.get(c);
-        const bars = await klineSince(env.client, c, q?.info.type ?? 'GP-A', start);
-        if (!bars.length) {
-          throw new Error('没有日线');
-        }
+        const bars = await daily(c, q?.info.type ?? 'GP-A');
         await quantRepo.saveQfq(
           env.db,
           {
@@ -213,7 +245,7 @@ export async function prepareBars(
       } catch (e) {
         prog.failed.push(c);
         if (++streak >= HALT_AFTER) {
-          const why = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').slice(0, 60) || '原因不明';
+          const why = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').slice(0, 100) || '原因不明';
           // 腾讯限流时返回 501（验收时看到的）；换成验证网页时 JSON 解析失败
           const limited = /返回 (?:429|501)|JSON/i.test(why);
           prog.halted = '连续 ' + streak + ' 只没取到（' + (limited ? '行情接口限流，' : '') + '最后一只：' + why + '），先停下；已取到的照常用。' + (limited ? '限流一般要隔一两个小时' : '网络恢复后') + '再点，只补没取到的';

@@ -80,7 +80,7 @@ export function PrepareCard({ pool, pending, prep, onStart, onStop, after }: {
     <View style={st.card}>
       <Text style={st.h}>{pending ? '准备' + p.short + ' 数据' : p.short + ' 的数据较旧'}</Text>
       <Text style={st.k}>
-        {(pending ? '' : '本地数据过期或只有约 3 年，这次先用了已有的。') + '取当前 ' + p.size + ' 只成分（' + p.source + '），每只约 5 年前复权日线（腾讯），约 ' + p.minutes + ' 分钟、' + p.mb + ' MB 流量，建议连 Wi-Fi。行情接口限流时会先停下，隔一两个小时再点接着取。之后用到时只补过期的。'}
+        {(pending ? '' : '本地数据过期或只有约 3 年，这次先用了已有的。') + '取当前 ' + p.size + ' 只成分（' + p.source + '），每只约 5 年前复权日线（东方财富，取不到的用腾讯），约 ' + p.minutes + ' 分钟、' + p.mb + ' MB 流量，建议连 Wi-Fi。行情接口限流时会先停下，隔一两个小时再点接着取。之后用到时只补过期的。'}
       </Text>
       {mine && (running || mine.done > 0) ? <Text style={[st.k, num]}>已完成 {mine.done} / {mine.total}</Text> : null}
       {mine?.error ? <Text style={st.err}>{mine.error}</Text> : null}

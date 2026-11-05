@@ -1,7 +1,7 @@
 /// <reference types="node" />
 /**
  * 复现书里的实证（docs/design/pm-reader-lecture-20261105.md 第 7 项）：控制市值的双重排序、中证 500 / 1000 股票池、
- * 准备数据（约 5 年、以前 750 根的重取、连续失败停下）、按批组面板。用原型快照日线（26 只个股约 250 个交易日）。
+ * 准备数据（约 5 年、先东方财富取不到再腾讯、以前 750 根的重取、连续失败停下）、按批组面板。用原型快照日线（26 只个股约 250 个交易日）。
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import { migrate } from '../../src/data/migrations';
 import * as quantRepo from '../../src/data/quantRepo';
 import { TradingCalendar } from '../../src/engine/calendar';
 import { T } from '../../src/engine/session';
-import { indexMembersUrl, parseIndexMembers } from '../../src/market/eastmoney';
+import { emDailyUrl, indexMembersUrl, parseEmDaily, parseIndexMembers } from '../../src/market/eastmoney';
 import type { MarketClient } from '../../src/market/client';
 import type { KBar } from '../../src/market/tencent';
 import { runFactorTest, SampleError, testSummary } from '../../src/quant/backtest';
@@ -65,6 +65,28 @@ describe('中证指数成分（东方财富数据中心）', () => {
     await expect(refreshIndex(e, 'zz500')).rejects.toThrow('中证 500 成分只取到 100 只');
     expect(await quantRepo.universe(e.db, 'zz500')).toBeNull();
     expect((await quantRepo.universe(e.db, 'hs300'))?.codes).toHaveLength(300);
+  });
+});
+
+describe('前复权日 K（东方财富 push2his）', () => {
+  it('沪市 secid 1.、深市 0.，起点去掉横线；价格换成厘、成交量从手换成股；坏行跳过；回的不是这只或没数据时为空', () => {
+    expect(emDailyUrl('sh688012', '2021-08-13')).toContain('secid=1.688012&');
+    expect(emDailyUrl('sz300750', '2021-08-13')).toContain('secid=0.300750&');
+    expect(emDailyUrl('sz000001', '2021-08-13')).toMatch(/klt=101&fqt=1&beg=20210813&end=20500101&lmt=2000$/);
+    const json = {
+      data: {
+        code: '600519',
+        name: '贵州茅台',
+        klines: ['2026-10-23,1452.00,1460.50,1466.88,1448.01,26913', '2026-10-26,1460.00,1470.20,1471.00,1455.10,31024', 'bad', '2026-10-27,-,1,1,1,1', 12],
+      },
+    };
+    expect(parseEmDaily(json, 'sh600519')).toEqual([
+      { date: '2026-10-23', open: 1452000, close: 1460500, high: 1466880, low: 1448010, volume: 2691300 },
+      { date: '2026-10-26', open: 1460000, close: 1470200, high: 1471000, low: 1455100, volume: 3102400 },
+    ]);
+    expect(parseEmDaily(json, 'sh600036')).toEqual([]);
+    expect(parseEmDaily({ rc: 0, data: null }, 'sh600519')).toEqual([]);
+    expect(parseEmDaily(null, 'sh600519')).toEqual([]);
   });
 });
 
@@ -193,6 +215,49 @@ describe('准备数据和按批组面板', () => {
     expect(off.halted).toContain('网络恢复后再点');
     expect(n).toBeLessThan(30);
     expect(p.failed).toHaveLength(n);
+  });
+
+  it('先东方财富一次取约 5 年；某只取不到或回空时这只换腾讯；连续 3 只取不到时这一轮剩下的只用腾讯', async () => {
+    const em: string[] = [];
+    const tx: string[] = [];
+    // 两家回的根数不同，存下来的根数能看出用的是哪家
+    const emBars = barsOf(codes[0]).slice(-200);
+    const txBars = barsOf(codes[1]);
+    const klineRange = async (code: string) => {
+      tx.push(code);
+      return txBars;
+    };
+    // 东方财富个别取不到：只有那几只换腾讯，后面的照常先东方财富
+    const one = await env({
+      emDaily: async (code: string, start: string) => {
+        em.push(code + '@' + start);
+        if (code === 'sh600001') throw new Error('行情接口返回 502');
+        return code === 'sh600003' ? [] : emBars;
+      },
+      klineRange,
+    });
+    const list = fakeCodes(6);
+    expect(await prepareBars(one, list)).toMatchObject({ done: 6, total: 6, failed: [] });
+    expect(em.sort()).toEqual(list.map(c => c + '@2021-08-13'));
+    expect(tx.sort()).toEqual(['sh600001', 'sh600003']);
+    const bars = await quantRepo.qfqMeta(one.db, list);
+    expect(list.map(c => bars.get(c)?.bars)).toEqual([200, txBars.length, 200, txBars.length, 200, 200]);
+    // 东方财富被限流：3 只都取不到后，剩下的直接腾讯，不再白发请求
+    em.length = 0;
+    tx.length = 0;
+    const off = await env({ emDaily: async (code: string) => { em.push(code); throw new Error('网络错误'); }, klineRange });
+    expect(await prepareBars(off, fakeCodes(10))).toMatchObject({ done: 10, failed: [] });
+    expect(em).toHaveLength(3);
+    expect(tx).toHaveLength(10);
+    // 两家都被限流：照样连续 12 只就停，说明里写腾讯的 501
+    em.length = 0;
+    tx.length = 0;
+    const both = await env({ emDaily: async (code: string) => { em.push(code); throw new Error('行情接口返回 502'); }, klineRange: async (code: string) => { tx.push(code); throw new Error('行情接口返回 501'); } });
+    const p = await prepareBars(both, fakeCodes(60));
+    // 两家的原因都写上，分得清是哪家取不到
+    expect(p.halted).toContain('行情接口限流，最后一只：东方财富 行情接口返回 502，腾讯 行情接口返回 501）');
+    expect(em).toHaveLength(3);
+    expect(tx.length).toBeLessThan(20);
   });
 
   it('指数池：九成以上有日线才算准备好；过期或缺的只数单独数', async () => {

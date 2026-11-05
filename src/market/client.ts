@@ -5,9 +5,11 @@
 import { beijingNow } from './clock';
 import {
   bonusUrl,
+  emDailyUrl,
   financeUrl,
   indexMembersUrl,
   parseBonus,
+  parseEmDaily,
   parseFinance,
   parseIndexMembers,
   parseProfile,
@@ -217,6 +219,11 @@ export class MarketClient {
       `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},day,${start},${end},2000,${adjust}`,
     );
     return parseKline(JSON.parse(text), code, 'day', type);
+  }
+
+  /** 东方财富前复权日 K，从 start 到最新，一次约 5 年。股票池准备数据先用它，取不到再用腾讯分段取（universe.ts）。 */
+  async emDaily(code: string, start: string): Promise<KBar[]> {
+    return parseEmDaily(JSON.parse(await this.get(emDailyUrl(code, start))), code);
   }
 
   /** 分钟 K 线（15 / 30 / 60 分钟，不复权）。 */
