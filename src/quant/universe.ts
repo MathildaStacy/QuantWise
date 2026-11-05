@@ -1,7 +1,8 @@
 /**
  * 股票池和数据准备（QUANTWISE_DESIGN.md §7.1）：示例池、自选 + 持仓、沪深 300、中证 500、中证 1000。
  * 准备数据 = 每只取约 5 年前复权日 K（先用东方财富，一次就能取全；取不到再用腾讯，个股一次只回最近约 640 根，往前分段补齐）+ 快照里的市值，
- * 整段写进 kline_qfq；最后一根不是最近收盘的交易日就重取，以前只取了 750 根（约 3 年）或 640 根的也重取一次。
+ * 只存到最近一个已收盘的交易日（盘中取到的当天那根还没收盘，不存），整段写进 kline_qfq；
+ * 最后一根不是最近收盘的交易日就重取，以前只取了 750 根（约 3 年）或 640 根的、以前盘中存下的当天那根，也重取一次（needsFetch）。
  */
 import type { Db } from '../data/db';
 import * as quantRepo from '../data/quantRepo';
@@ -135,6 +136,15 @@ export function lastClosedDay(
     : cal.prev(now.date);
 }
 
+/**
+ * 这只要不要重取：没有日线；最后一根早于 want（最近收盘的交易日）；以前只取了 750 / 640 根；
+ * 或者最后一根是在那天 15:30 以前取的（v1.10.2 以前盘中准备会存下当天还没收盘的那根，日期已经是最新的，
+ * 收盘后照旧算不过期，要到下一个交易日收盘才重取）。fetchedAt 是北京时间的 ISO（带 +08:00），按字符串比。
+ */
+function needsFetch(m: quantRepo.QfqMeta | undefined, want: DateStr): boolean {
+  return !m || m.lastDate < want || LEGACY_BARS.has(m.bars) || m.fetchedAt < m.lastDate + 'T15:30';
+}
+
 export interface UniverseEnv {
   db: Db;
   client: MarketClient;
@@ -165,7 +175,7 @@ export interface PoolStatus {
   asOf: string | null;
   /** 成分取全了、九成以上有日线。 */
   ready: boolean;
-  /** 过期或只有约 3 年数据、或者还没有日线的只数。 */
+  /** 要重取的只数（needsFetch）：过期、只有约 3 年数据、最后一根是盘中存的，或者还没有日线。 */
   stale: number;
   lastDate: string | null;
   /** 没取全时能拿来算的随机样本（见 samplePrefix）；不到 SAMPLE_MIN 只时不能用。 */
@@ -180,7 +190,7 @@ export async function poolStatus(env: UniverseEnv, id: IndexPoolId): Promise<Poo
   let stale = 0;
   let lastDate: string | null = null;
   for (const m of meta.values()) {
-    if (m.lastDate < want || LEGACY_BARS.has(m.bars)) stale++;
+    if (needsFetch(m, want)) stale++;
     if (!lastDate || m.lastDate > lastDate) lastDate = m.lastDate;
   }
   return {
@@ -245,7 +255,7 @@ export interface PrepareProgress {
   halted?: string;
 }
 
-/** 过期、没有或只有 750 根的才取；返回取失败的代码（数据照常用其余的）。 */
+/** 要重取的才取（needsFetch），只存到最近一个已收盘的交易日；返回取失败的代码（数据照常用其余的）。 */
 export async function prepareBars(
   env: UniverseEnv,
   codes: string[],
@@ -255,10 +265,7 @@ export async function prepareBars(
   const want = lastClosedDay(env.calendar, env.now());
   const meta = await quantRepo.qfqMeta(env.db, codes);
   // 按固定随机顺序取：被限流停下时，已取到的是一个随机样本（见 randomOrder）
-  const stale = randomOrder(codes).filter(c => {
-    const m = meta.get(c);
-    return !m || m.lastDate < want || LEGACY_BARS.has(m.bars);
-  });
+  const stale = randomOrder(codes).filter(c => needsFetch(meta.get(c), want));
   const prog: PrepareProgress = { done: codes.length - stale.length, total: codes.length, failed: [] };
   onProgress?.({ ...prog });
   const quotes = new Map<string, Awaited<ReturnType<MarketClient['quotes']>>[number]>();
@@ -306,19 +313,23 @@ export async function prepareBars(
       const c = stale[next++];
       try {
         const q = quotes.get(c);
-        const bars = await daily(c, q?.info.type ?? 'GP-A');
-        await quantRepo.saveQfq(
-          env.db,
-          {
-            code: c,
-            name: q?.info.name ?? c,
-            fetchedAt: env.isoNow(),
-            totalCap: q?.info.totalCap ?? null,
-            floatCap: q?.info.floatCap ?? null,
-            price: q?.snapshot.last ?? q?.snapshot.prevClose ?? null,
-          },
-          bars,
-        );
+        // 盘中取到的当天那根还没收盘，不存；15:30 以后这只算过期，会再取到当天
+        const bars = (await daily(c, q?.info.type ?? 'GP-A')).filter(b => b.date <= want);
+        // 只有当天一根（当天上市）时什么都不存，收盘后再取
+        if (bars.length) {
+          await quantRepo.saveQfq(
+            env.db,
+            {
+              code: c,
+              name: q?.info.name ?? c,
+              fetchedAt: env.isoNow(),
+              totalCap: q?.info.totalCap ?? null,
+              floatCap: q?.info.floatCap ?? null,
+              price: q?.snapshot.last ?? q?.snapshot.prevClose ?? null,
+            },
+            bars,
+          );
+        }
         streak = 0;
       } catch (e) {
         prog.failed.push(c);
