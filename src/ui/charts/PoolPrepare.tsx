@@ -74,6 +74,8 @@ export function PrepareCard({ pool, pending, prep, onStart, onStop, after }: {
   const p = INDEX_POOLS[pool];
   const mine = prep?.pool === pool ? prep : null;
   const running = !!mine?.running;
+  // 要写 accessibilityLabel：Android 上没有它时 busy 变回 false 不会清掉读屏文字，按钮会一直读「busy」。
+  const label = running ? '下载中…' : (pending ? '准备数据' : '更新数据') + (after ?? '');
   return (
     <View style={st.card}>
       <Text style={st.h}>{pending ? '准备' + p.short + ' 数据' : p.short + ' 的数据较旧'}</Text>
@@ -83,8 +85,8 @@ export function PrepareCard({ pool, pending, prep, onStart, onStop, after }: {
       {mine && (running || mine.done > 0) ? <Text style={[st.k, num]}>已完成 {mine.done} / {mine.total}</Text> : null}
       {mine?.error ? <Text style={st.err}>{mine.error}</Text> : null}
       <View style={st.row}>
-        <Pressable onPress={onStart} disabled={running} style={[st.btn, st.main, running && st.off]} accessibilityRole="button" accessibilityState={{ disabled: running, busy: running }}>
-          <Text style={st.mainT}>{running ? '下载中…' : (pending ? '准备数据' : '更新数据') + (after ?? '')}</Text>
+        <Pressable onPress={onStart} disabled={running} style={[st.btn, st.main, running && st.off]} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: running, busy: running }}>
+          <Text style={st.mainT}>{label}</Text>
         </Pressable>
         {running ? (
           <Pressable onPress={onStop} style={st.btn} accessibilityRole="button">

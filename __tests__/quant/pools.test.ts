@@ -177,12 +177,15 @@ describe('准备数据和按批组面板', () => {
     expect((await quantRepo.qfqMeta(e.db, ['sh600519'])).get('sh600519')?.bars).toBe(1280);
   });
 
-  it('连续取不到（接口限流）时停下，不把剩下的都试一遍；说明下次只补没取到的', async () => {
+  it('连续取不到（接口限流）时停下，不把剩下的都试一遍；说明里写最后一只的原因、下次只补没取到的', async () => {
     let n = 0;
     const e = await env({ klineRange: async () => { n++; throw new Error('行情接口返回 501'); } });
     const p = await prepareBars(e, fakeCodes(60));
     expect(p.halted).toContain('先停下');
     expect(p.halted).toContain('只补没取到的');
+    // 写出最后一只的原因，用户（和排查的人）能分清是限流、断网还是别的
+    expect(p.halted).toContain('最后一只：行情接口返回 501');
+    expect(p.halted).toContain('一两个小时');
     expect(n).toBeLessThan(30);
     expect(p.failed).toHaveLength(n);
   });

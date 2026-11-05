@@ -27,9 +27,9 @@ export const UNIVERSE_NAME: Record<UniverseId, string> = {
 
 /** 要用户点「准备数据」的指数池：成分数、少于多少只算没取全、大约要多久和多少流量（每只约 80 KB）。 */
 export const INDEX_POOLS: Record<IndexPoolId, { short: string; size: number; min: number; source: string; minutes: number; mb: number }> = {
-  hs300: { short: '沪深 300', size: 300, min: 250, source: '新浪', minutes: 3, mb: 25 },
-  zz500: { short: '中证 500', size: 500, min: 420, source: '东方财富', minutes: 5, mb: 40 },
-  zz1000: { short: '中证 1000', size: 1000, min: 850, source: '东方财富', minutes: 9, mb: 80 },
+  hs300: { short: '沪深 300', size: 300, min: 250, source: '新浪', minutes: 5, mb: 25 },
+  zz500: { short: '中证 500', size: 500, min: 420, source: '东方财富', minutes: 8, mb: 40 },
+  zz1000: { short: '中证 1000', size: 1000, min: 850, source: '东方财富', minutes: 16, mb: 80 },
 };
 
 export const UNIVERSE_IDS = Object.keys(UNIVERSE_NAME) as UniverseId[];
@@ -76,7 +76,8 @@ export async function klineSince(
   }
   return bars;
 }
-const CONCURRENCY = 6;
+/** 每只个股要取两段（见 klineSince）。验收时并发 6 取沪深 300，两百多只后被行情接口限流，一个多小时都取不到；并发 3 时约每秒 1 只，没有再被拦。 */
+const CONCURRENCY = 3;
 /** 连续这么多只取不到（接口限流、断网）就停下，不把剩下的都试一遍；下次准备只补没取到的。 */
 const HALT_AFTER = 12;
 
@@ -206,10 +207,11 @@ export async function prepareBars(
           bars,
         );
         streak = 0;
-      } catch {
+      } catch (e) {
         prog.failed.push(c);
         if (++streak >= HALT_AFTER) {
-          prog.halted = '连续 ' + streak + ' 只没取到（行情接口限流或断网），先停下；已取到的照常用，过几分钟再点「准备数据」只补没取到的';
+          const why = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').slice(0, 60);
+          prog.halted = '连续 ' + streak + ' 只没取到（' + (why ? '最后一只：' + why : '行情接口限流或断网') + '），先停下；已取到的照常用。断网的话恢复后再点一次；被行情接口限流可能要等一两个小时。再点只补没取到的';
         }
       }
       prog.done++;
