@@ -1,7 +1,7 @@
 /**
  * 因子和行情图的几何（纯函数，可单测）：坐标换算、折线路径、刻度、十字线读数。画图组件在 QuantChart.tsx。
  */
-import { fmtSub, focusSpan, md, SUB_NAME, type ChartData, type Focus } from '../../quant/charts';
+import { fmtSub, focusSpan, groupScale, icSummary, md, MONTH_DAYS, signed, SUB_NAME, WEIGHT_NAME, type ChartData, type Focus, type IcChart } from '../../quant/charts';
 import type { Series } from '../../quant/indicators';
 
 export function bounds(values: Series[], include: number[] = []): [number, number] {
@@ -260,9 +260,44 @@ export function readout(c: ChartData, i: number, focusNote = true): string {
       return c.dates[i] + ' · ' + c.groups.map((g, k) => 'Q' + (k + 1) + ' ' + g[i].toFixed(3)).join(' ') + ' · 基准 ' + c.bench[i].toFixed(3) + ' · 多空 ' + c.longShort[i].toFixed(3);
     case 'ic':
       return c.dates[i] + ' · Rank IC ' + (c.ic[i] > 0 ? '+' : '') + c.ic[i].toFixed(3) + ' · 累计 IC ' + c.ic.slice(0, i + 1).reduce((sum, v) => sum + v, 0).toFixed(3);
-    case 'groups':
-      return 'Q' + (i + 1) + ' 每期平均 ' + pct(c.means[i], 2);
+    case 'groups': {
+      const g = groupScale(c);
+      const pp = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+      return g.book
+        ? 'Q' + (i + 1) + ' 本次' + (g.unit === 'monthly' ? '折成月均 ' : '折成年化 ') + pp(g.ours[i]) + ' · 书中 ' + pp(g.book[i]) + '（每期平均 ' + pct(c.means[i], 2) + '）'
+        : 'Q' + (i + 1) + ' 每期平均 ' + pct(c.means[i], 2);
+    }
   }
+}
+
+/**
+ * IC 图的走势，一句话：累计 IC 一路向上 / 一路向下 / 来回摆动（按 t 值和最后落在哪），
+ * 加一句噪声提醒（大部分柱子在噪声带里时）。
+ */
+export function icTrend(c: IcChart): string[] {
+  const s = icSummary(c);
+  const cum: number[] = [];
+  c.ic.reduce((a, b, i) => (cum[i] = a + b), 0);
+  const end = cum[cum.length - 1] ?? 0;
+  const hi = Math.max(0, ...cum);
+  const lo = Math.min(0, ...cum);
+  const f2 = (v: number) => signed(v, 2);
+  const trend =
+    s.t >= 2
+      ? '这次累计 IC 一路向上（到 ' + f2(end) + '）：因子排名高的股票下一期多数涨得更多，方向稳定'
+      : s.t <= -2
+      ? '这次累计 IC 一路向下（到 ' + f2(end) + '）：因子排名高的股票下一期反而涨得少，方向稳定但和预期相反'
+      : end > 0 && end >= hi * 0.6
+      ? '这次累计 IC 大体向上（到 ' + f2(end) + '），但 |t| < 2，还说不上稳定'
+      : end < 0 && end <= lo * 0.6
+      ? '这次累计 IC 大体向下（到 ' + f2(end) + '），但 |t| < 2，还说不上稳定'
+      : '这次累计 IC 来回摆动（最高 ' + f2(hi) + '、最低 ' + f2(lo) + '，最后 ' + f2(end) + '）：方向不稳定';
+  const inside = c.noise ? c.ic.filter(v => Math.abs(v) <= c.noise!).length : 0;
+  const noisy = c.noise && inside >= c.ic.length * 0.7;
+  return [
+    trend,
+    ...(noisy ? [s.n + ' 期里 ' + inside + ' 期的柱子在灰色噪声带里：单期 IC 多半是噪声，看均值和 t 值，不看某一期'] : []),
+  ];
 }
 
 /** 「怎么看」：卡片里给刚入门的人的读图说明，只说这张图上真有的东西（口径公式在全屏的「怎么算的」）。 */
@@ -301,17 +336,31 @@ export function howToRead(c: ChartData): string[] {
       ];
     case 'factor':
       return [
-        '按因子值把股票从低到高分成几组（Q1 最低），每条线是这一组的净值',
-        '最高组和最低组拉得越开、各组排得越整齐，说明这个因子越能区分股票',
-        '虚线是池子里全部股票等权的基准，多空线是最高组减最低组',
+        '按因子值把股票从低到高分成几组（Q1 最低），每条线是这一组的净值，从 1.00 出发' + (c.stats?.weight === 'cap' ? '；组内按市值加权' : ''),
+        '最高组和最低组拉得越开、各组排得越整齐，说明这个因子越能区分股票；默认只画最高、最低两组，「看全部分组」画出每一组',
+        '灰色虚线是池子里全部股票等权的基准' + (c.stats?.weight === 'cap' ? '（这次各组是市值加权，基准仍是等权，两者口径不同）' : '') + '，锈红虚线是多空：最高组减最低组',
       ];
     case 'ic':
       return [
-        '每根柱子是一期的 Rank IC：因子排名和下一期收益排名有多一致，红柱为正、绿柱为负',
-        '累计 IC 一路向上，说明因子的方向长期稳定',
+        '每根柱子是一期的 Rank IC：因子排名和下一期收益排名有多一致，红柱为正、绿柱为负；左上、左下写着柱子的刻度',
+        ...(c.noise ? ['灰色带是 ±' + c.noise.toFixed(2) + '：因子完全没有预测力时，约 95% 的柱子也会落在这里（股票越少，带越宽）'] : []),
+        '虚线是累计 IC（把每期的 IC 加起来），刻度写在右侧，和柱子共用 0 线',
+        ...icTrend(c),
       ];
-    case 'groups':
-      return ['每根柱子是一组的每期平均收益，从左到右因子值从低到高；从左到右一路升高或降低，说明因子能区分好坏'];
+    case 'groups': {
+      const g = groupScale(c);
+      return [
+        g.book
+          ? '每根柱子是这次一组的收益，按调仓周期折成' + (g.unit === 'monthly' ? '月均' : '年化') + '，和书里的数同一个单位；从左到右因子值从低到高'
+          : '每根柱子是一组的每期平均收益，从左到右因子值从低到高；从左到右一路升高或降低，说明因子能区分好坏',
+        ...(c.book
+          ? [
+              '空心点连虚线是书中 ' + c.book.label + ' 的数（App 从书里的表格读出' + (c.book.merged ? '，' + c.book.merged : '') + '），两边样本期、股票池不同，先比形状再比大小',
+              '形状用秩相关看：组序和各组收益排名的相关，一路升高是 +1，一路降低是 −1，没有单调关系时在 0 附近',
+            ]
+          : []),
+      ];
+    }
   }
 }
 
@@ -347,11 +396,35 @@ export function howComputed(c: ChartData): string[] {
           : '每只的收盘价除以第一天的收盘价 × 100，只用几只都有数据的交易日',
         ...focus,
       ];
-    case 'factor':
-      return ['每个调仓日按因子从低到高分组，每组等权持有到下一个调仓日', '虚线是池子里全部股票等权的基准', '成本只扣最高组和最低组（按换手）'];
+    case 'factor': {
+      const cap = c.stats?.weight === 'cap';
+      return [
+        '每个调仓日按因子从低到高分组，每组' + (cap ? '按调仓日总市值加权' : '等权') + '持有到下一个调仓日' + (cap ? '（市值用今天的股本往回推，近似）' : ''),
+        ...(c.stats?.control ? ['控制市值：先按调仓日总市值分 ' + c.stats.control.groups + ' 组，' + (c.stats.control.sort === 'conditional' ? '在每个市值组里再按因子分组' : '因子另外按全部股票分组，两边取交集') + '；因子各组的收益是各市值组同一因子组的平均'] : []),
+        '虚线是池子里全部股票等权的基准' + (cap ? '（' + WEIGHT_NAME.cap + '的各组和它口径不同）' : ''),
+        '成本只扣最高组和最低组（按换手）',
+      ];
+    }
     case 'ic':
-      return ['每期的 Rank IC：因子值排名和下一期收益排名的相关系数', '虚线是累计 IC'];
-    case 'groups':
-      return ['各组每期收益的平均值；从左到右因子值从低到高'];
+      return [
+        '每期的 Rank IC：因子值排名和下一期收益排名的相关系数' + (c.stats?.control ? '（在每个市值组里算再平均）' : ''),
+        ...(c.noise && c.stats?.avgStocks ? ['噪声带 ±' + c.noise.toFixed(2) + '：每期平均 ' + c.stats.avgStocks + ' 只，没有预测力时单期 Rank IC 的标准差约 1/√(只数 − 1)，取 ±2 倍'] : []),
+        '虚线是累计 IC（每期 IC 的累加），刻度在右侧',
+        'IC 只看排名，组内等权还是市值加权都一样',
+      ];
+    case 'groups': {
+      const g = groupScale(c);
+      const hold = c.stats?.hold;
+      return [
+        '各组每期收益的平均值；从左到右因子值从低到高',
+        ...(g.book && hold
+          ? [
+              (g.unit === 'monthly' ? '折成月均：每期收益 × ' + MONTH_DAYS + ' / ' + hold : '折成年化：每期收益 × 252 / ' + hold) + '（单利近似），和书里的数同一个单位',
+              '书中的数由 App 从 ' + c.book!.cite + ' 的表格单元格读出' + (c.book!.merged ? '，' + c.book!.merged : ''),
+              '秩相关：组序（1、2、…）和各组收益的 Spearman 相关；书中按原书的组数算',
+            ]
+          : []),
+      ];
+    }
   }
 }

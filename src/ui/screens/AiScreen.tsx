@@ -102,10 +102,12 @@ import {
   type BriefDue,
 } from '../../ai/flows';
 import { ChartCard } from '../charts/ChartCard';
+import { chartItems, FactorResult } from '../charts/FactorResult';
 import { LockScroll } from '../charts/scrub';
 import { ChatProcess, conversationTurns } from '../components/ChatProcess';
 import { Button } from '../components/ui';
 import { useCore } from '../hooks';
+import type { ChartData } from '../../quant/charts';
 import type { RootStackParamList } from '../navigation/types';
 import { color, num } from '../theme';
 import { aiColor as c } from '../aiTheme';
@@ -652,6 +654,9 @@ export function AiScreen() {
         {turns.map((turn, turnIndex) => (
           <View key={turn.key} style={s.turn}>
             {(() => {
+              const chartFlow = turn.flow.filter((x): x is { id: number; charts: ChartData[] } => 'charts' in x);
+              const cards = new Map(chartItems(chartFlow.map(x => x.charts)).map((list, k) => [chartFlow[k].id, list]));
+              let hinted = false;
               const renderMessage = (m: StoredMessage) => (
                 <MessageView
                   m={m}
@@ -710,19 +715,22 @@ export function AiScreen() {
                     busy={turnIndex === turns.length - 1 ? busy : null}
                     onLink={onLink}
                   />
-                  {/* QuantWise 行情与因子工具画的图按消息顺序：紧跟在调用它的那一步后面、讲它的文字之前 */}
-                  {turn.flow.map((x, i) =>
-                    'charts' in x ? (
-                      x.charts.map((chart, k) => (
-                        <ChartCard
-                          key={'chart' + x.id + ':' + k}
-                          data={chart}
-                        />
-                      ))
-                    ) : (
-                      <View key={i}>{renderMessage(x.m)}</View>
-                    ),
-                  )}
+                  {/* QuantWise 行情与因子工具画的图按消息顺序：紧跟在调用它的那一步后面、讲它的文字之前；
+                      一次 factor_test 一张结果卡，「点一下或按住拖动」一问只写一次 */}
+                  {turn.flow.map((x, i) => {
+                    if (!('charts' in x)) {
+                      return <View key={i}>{renderMessage(x.m)}</View>;
+                    }
+                    return (cards.get(x.id) ?? []).map((it, k) => {
+                      const showHint = !hinted && (it.kind === 'factor' || it.data.kind !== 'groups');
+                      hinted = hinted || showHint;
+                      return it.kind === 'factor' ? (
+                        <FactorResult key={'chart' + x.id + ':' + k} runs={it.runs} hint={showHint} />
+                      ) : (
+                        <ChartCard key={'chart' + x.id + ':' + k} data={it.data} hint={showHint} />
+                      );
+                    });
+                  })}
                 </>
               );
             })()}

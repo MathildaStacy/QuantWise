@@ -216,12 +216,20 @@ type ChartData =
       sub?: {kind: 'mom20'|'mom60'|'vol20'|'dd'|'rsi14'|'volume'; values}; marks?: {date; label; below?; kind?: 'point'}[];
       focus?: {from; to; label}[]; takeaway? }
   | { kind: 'compare'; dates; series: {code; name; values /* base 那天 = 100 */}[]; base? /* 不写 = 第一天 */; focus?; takeaway? }
-  | { kind: 'factor'; factor; universe; dates; groups: number[][]; bench: number[]; longShort: number[] }
-  | { kind: 'ic'; dates; ic: number[] }
-  | { kind: 'groups'; means: number[] };
+  | { kind: 'factor'; factor; universe; dates; groups: number[][]; bench: number[]; longShort: number[]; stats? }
+  | { kind: 'ic'; factor; dates; ic: number[]; noise? /* 2/√(每期只数 − 1) */; stats? }
+  | { kind: 'groups'; factor; means: number[]; stats?; book? };
 ```
 
-同一个 `QuantChart` 组件（react-native-svg）画对话里的卡片和全屏图：卡片里点一下、按住或左右拖动出十字线，跟着手指走、页面不滚（和个股页 `ChartInspector` 同一套手势），全屏一按下就跟手。讲解页读到图卡滚出屏幕时，小图钉在页顶对照讲解（图文同屏）。讲解里的行情图怎么标重点区间、坐标轴和读数怎么画，见 [ai-lecture-charts.md](design/ai-lecture-charts.md)。
+`stats` 是这次检验的口径和关键统计（股票池、加权、组数、调仓周期、成本、市值控制、期数、每期平均只数、多空和 IC 的均值与 t 值、IC 为正的期数），三张图带同一份，旧图没有。标题写加权方式（「分组净值 · 20 日动量 · 等权」），页脚写口径（「示例池 · 等权 · 5 组 · 每 20 日调仓 · 24 期 · 当前成分」）。
+
+- **IC 图**：柱子后面一条灰色噪声带 ±2/√(n − S)（n 是每期平均只数，S 是控制市值时的市值组数，不控制时 1）：没有预测力时约 95% 的单期 Rank IC 落在里面。累计 IC 和柱子共用 0 线，刻度单独写在右侧，线尾一个点写「累计 +4.08」。页脚「24 期 · 均值 -0.006（t -0.08）· 为正 14/24」。「怎么看」按 t 值和累计 IC 的走势写一路向上、一路向下、大体向上（向下）或来回摆动；七成以上的柱子在噪声带里时提醒看均值和 t 值。
+- **各组收益图和书里的表**：讲解里 `factor_test` 可以带 `book_table`（书中分组收益表的块号）和 `book_panel`、`book_row`。App 从表格单元格读出每组的数（`study/bookTable.ts`：找「Low、2、…、High」或「1…10」这样的表头，Panel 标题行、行名、单独一行的 t 值都认），存在 `groups.book`：`{label, cite, raw, spread?, values, merged?, unit, rho}`。组数不同时按分位重叠加权合并到本次组数（10 组到 5 组就是每相邻 2 组取平均），`merged` 写明怎么合并的；`rho` 是组序和原书各组收益的秩相关，用原书的组数算。书里是月均（或年化）时，本次的每期收益按 × 21 / hold（或 × 252 / hold）单利折算后画在同一个刻度上，书中的数画成空心点和虚线，图下写「分组收益的形状（秩相关）：书中 -0.333（10 组）· 本次 -0.300（5 组）」和一张小表；书里看不出单位时只写不画。工具摘要里写书中的数、合并方式和两边的秩相关，不让模型自己抄书里的数。读不出来时摘要写原因（不是表格、没有分组表头、要指定 Panel 或行），这次照常检验、不叠画。
+- **摘要的月度行**：`testSummary` 多一行「折成月度（每期 × 21 / hold，单利近似，t 值不变）」，和书里的「月均收益」对照时用这一行。
+
+讲解和助手里，一次 `factor_test` 排成一张结果卡（`ui/charts/FactorResult.tsx`），不再连排三张图卡：标题「因子检验 · 名字」和「历史回测」标签、口径一行，统计一行（多空每期和 t 值，持有期不是 20 日时加「月均约」；Rank IC 均值、t 值、为正的期数），下面一张图用「净值 / IC / 各组」切换，默认净值，净值图默认只画最高、最低两组（「看全部分组」展开）。同一问里同一因子、同一股票池和口径、只换加权方式的几次检验合成一张卡，加「等权 / 市值加权」切换（`chartItems`）；IC 不随加权变，IC 页写一句「IC 只看排名，等权和市值加权两次一样」。操作提示「点一下或按住拖动」一问只写一次。因子实验室仍是一张张的图卡。
+
+同一个 `QuantChart` 组件（react-native-svg）画对话里的卡片和全屏图：卡片里点一下、按住或左右拖动出十字线，跟着手指走、页面不滚（和个股页 `ChartInspector` 同一套手势），全屏一按下就跟手。讲解页读到图卡滚出屏幕时，小图钉在页顶对照讲解（图文同屏）；因子检验的结果卡滚出去时钉的是一条结果条（[ai-lecture-charts.md](design/ai-lecture-charts.md) §2.9）。讲解里的行情图怎么标重点区间、坐标轴和读数怎么画，见同一篇。
 
 ## 8. AI：两个入口共用一套行情与因子工具
 

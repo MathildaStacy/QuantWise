@@ -13,7 +13,7 @@ import { previewCard } from './actions';
 import { feeCalcSummary, parseFeeCalc } from '../../sim/feeCalc';
 import { CARD_TOOLS, NAV_ROUTES } from './defs';
 import { EXTERNAL_TOOLS, external } from '../external';
-import { QUANT_TOOLS, runQuantTool } from './quant';
+import { QUANT_TOOLS, runQuantTool, type BookTableResolver } from './quant';
 import { mcpCall, mcpSearch } from '../mcp';
 import {
   activityText,
@@ -67,6 +67,8 @@ export interface ToolEnv {
   /** 下一张操作卡的编号。 */
   nextCardNo: () => number;
   signal?: AbortSignal;
+  /** 讲解里 factor_test 的 book_table：按块号取书里的分组表（只有伴读给）。 */
+  bookTable?: BookTableResolver;
 }
 
 export interface ToolOutcome {
@@ -147,7 +149,7 @@ async function dispatch(
     ui: { id, name, label },
   });
   if (QUANT_TOOLS.has(name)) {
-    const q = await runQuantTool(core, name, args);
+    const q = await runQuantTool(core, name, args, env.bookTable);
     return { output: q.output, ui: { id, name, label: q.label, ...(q.charts ? { charts: q.charts } : {}), ...(q.prepare ? { prepare: q.prepare } : {}) } };
   }
   switch (name) {

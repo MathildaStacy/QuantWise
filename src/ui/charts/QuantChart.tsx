@@ -17,12 +17,16 @@ import {
   fmtSub,
   focusSpan,
   focusStats,
+  groupScale,
   md,
   pct,
+  signed,
   SUB_NAME,
   type ChartData,
   type CompareChart,
   type Focus,
+  type GroupsChart,
+  type IcChart,
   type PriceChart,
   type SubKind,
 } from '../../quant/charts';
@@ -126,7 +130,7 @@ export function QuantChart({
       onLayout={(e: LayoutChangeEvent) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
       accessible={!mini}
       accessibilityRole="image"
-      accessibilityLabel={mini ? undefined : chartTitle(data) + focusSpeech(data) + (full ? '，按住或拖动看每一天的数' : '，点一下或按住拖动看每一天的数，全屏有数据表')}
+      accessibilityLabel={mini ? undefined : chartTitle(data) + focusSpeech(data) + touchSpeech(data, full)}
       collapsable={false}
       {...(touch ? scrub.outer : null)}
     >
@@ -140,6 +144,15 @@ export function QuantChart({
       </View>
     </View>
   );
+}
+
+/** 读屏：图上能怎么点。各组收益图在卡片里不能点，全屏里按住看每一组；IC 图是每一期。 */
+function touchSpeech(c: ChartData, full: boolean): string {
+  if (c.kind === 'groups') {
+    return full ? '，按住或拖动看每一组的数' : '，各组的数写在图下，全屏有数据表';
+  }
+  const unit = c.kind === 'ic' ? '每一期' : '每一天';
+  return full ? '，按住或拖动看' + unit + '的数' : '，点一下或按住拖动看' + unit + '的数，全屏有数据表';
 }
 
 /** 读屏：「，重点区间 9 月 -19.93%」。 */
@@ -275,6 +288,15 @@ function plotBox(c: ChartData, w: number, h: number, fontScale: number, full: bo
   if (c.kind === 'compare') {
     const f = compareFrame(c, w, h, fontScale, full);
     return { L, R: f.R, top: f.top, bottom: f.axisY, y: f.main.y };
+  }
+  // 柱状图：十字线的第 i 个点是第 i 根柱子的中心
+  if (c.kind === 'ic') {
+    const f = icFrame(c, w, h, fontScale);
+    return { L: f.X(0), R: f.X(f.n - 1), top: 0, bottom: f.axisY };
+  }
+  if (c.kind === 'groups') {
+    const f = groupsFrame(c, w, h);
+    return { L: f.X(0), R: f.X(f.n - 1), top: 0, bottom: h - 16 };
   }
   return { L, R: w - 4, top: 0, bottom: h - 16 };
 }
@@ -542,50 +564,123 @@ function draw(c: ChartData, w: number, h: number, extremes: boolean, fontScale: 
       const X = (i: number) => xAt(i, c.dates.length, L, R);
       const xs = c.dates.map((_, i) => X(i));
       const G = c.groups.length;
+      // 净值 1.00 那条线写上数（写在右端：所有线都从左端的 1.00 出发）；离最高、最低的数太近时不写
+      const one = Y(1);
+      const roomy = one - 9 > tick * 1.4 && h - 24 - one > tick * 1.4;
       return [
-        <Line key="one" x1={0} x2={w} y1={Y(1)} y2={Y(1)} stroke={rc.grid} />,
+        <Line key="one" x1={0} x2={w} y1={one} y2={one} stroke={rc.line} />,
         ...c.groups.map((g, k) => (!extremes || k === 0 || k === G - 1) ? <Path key={'g' + k} d={linePath(xs, g.map(Y))} stroke={groupColor(k, G)} strokeWidth={k === 0 || k === G - 1 ? 2 : 1.3} strokeDasharray={k === 0 ? '6,3' : undefined} fill="none" /> : null),
         <Path key="bench" d={linePath(xs, c.bench.map(Y))} stroke={rc.bench} strokeWidth={1} strokeDasharray="3,3" fill="none" />,
         <Path key="ls" d={linePath(xs, c.longShort.map(Y))} stroke={rc.accent} strokeWidth={1.2} strokeDasharray="5,2" fill="none" />,
         label(L, 9, hi.toFixed(2)),
         label(L, h - 24, lo.toFixed(2)),
+        ...(roomy ? [label(R, one - 3, '1.00', 'end')] : []),
         ...timeAxis(c.dates, X, R, h - (tick + 9), w, tick),
       ];
     }
-    case 'ic': {
-      const lim = Math.max(0.2, ...c.ic.map(Math.abs));
-      const Y = (v: number) => 8 + ((h - 30) * (lim - v)) / (2 * lim);
-      const bw = (w - 8) / Math.max(1, c.ic.length);
-      const X = (i: number) => L + i * bw + bw / 2;
-      const cum: number[] = [];
-      c.ic.reduce((a, b, i) => (cum[i] = a + b), 0);
-      const [clo, chi] = bounds([cum]);
-      const CY = (v: number) => 8 + ((h - 30) * (chi - v)) / (chi - clo);
-      return [
-        <Line key="zero" x1={0} x2={w} y1={Y(0)} y2={Y(0)} stroke={rc.grid} />,
-        ...c.ic.map((v, i) => <Rect key={'b' + i} x={L + i * bw + 1} y={Math.min(Y(0), Y(v))} width={Math.max(1, bw - 2)} height={Math.abs(Y(v) - Y(0))} fill={v >= 0 ? '#C7533A' : '#3E7C5A'} />),
-        <Path key="cum" d={linePath(cum.map((_, i) => X(i)), cum.map(CY))} stroke={rc.ink} strokeWidth={1.2} strokeDasharray="4,2" fill="none" />,
-        label(L, 9, '+' + lim.toFixed(2)),
-        label(L, h - 24, '−' + lim.toFixed(2)),
-        label(w - 4, 9, '虚线：累计 IC', 'end'),
-        ...timeAxis(c.dates, X, R, h - (tick + 9), w, tick),
-      ];
-    }
-    case 'groups': {
-      const v = c.means.map(x => x * 100);
-      const lim = Math.max(...v.map(Math.abs)) * 1.2 || 1;
-      const Y = (x: number) => 14 + ((h - 36) * (lim - x)) / (2 * lim);
-      const bw = (w - 8) / v.length;
-      return [
-        <Line key="zero" x1={0} x2={w} y1={Y(0)} y2={Y(0)} stroke={rc.grid} />,
-        ...v.flatMap((x, i) => [
-          <Rect key={'r' + i} x={L + i * bw + bw * 0.2} y={Math.min(Y(0), Y(x))} width={bw * 0.6} height={Math.abs(Y(x) - Y(0))} fill={groupColor(i, v.length)} />,
-          bw >= 48 * fontScale ? label(L + i * bw + bw / 2, x >= 0 ? Y(x) - 3 : Y(x) + 11, (x > 0 ? '+' : '') + x.toFixed(2) + '%', 'middle', rc.ink) : null,
-          label(L + i * bw + bw / 2, h - 4, 'Q' + (i + 1), 'middle'),
-        ]),
-      ];
-    }
+    case 'ic':
+      return drawIc(c, w, h, fontScale);
+    case 'groups':
+      return drawGroups(c, w, h, fontScale);
   }
+}
+
+const IC_UP = '#C7533A';
+const IC_DOWN = '#3E7C5A';
+
+/**
+ * IC 图的布局：柱子和累计 IC 共用 0 线；柱子的刻度（±lim）写在左上、左下，累计 IC 的刻度单独写在右侧刻度栏。
+ * 柱子 i 的中心就是十字线的第 i 个点（xAt 的 L、R 取第一根和最后一根柱子的中心）。
+ */
+function icFrame(c: IcChart, w: number, h: number, fontScale: number) {
+  const tick = TICK * fontScale;
+  const n = Math.max(1, c.ic.length);
+  const cum: number[] = [];
+  c.ic.reduce((a, b, i) => (cum[i] = a + b), 0);
+  const cl0 = Math.max(0.1, ...cum.map(Math.abs));
+  const { ticks, step } = niceTicks(-cl0, cl0, 4);
+  const dp = tickDecimals(step);
+  const right = ticks.filter(t => t !== 0 && Math.abs(t) <= cl0 * 1.08);
+  const fmt = (t: number) => (t > 0 ? '+' : '') + t.toFixed(dp);
+  const gutter = Math.ceil(Math.max(labelWidth('+0.0', tick), ...right.map(t => labelWidth(fmt(t), tick)))) + 8;
+  const top = 8;
+  const axisY = h - (tick + 9);
+  const bottom = axisY - 4;
+  const lim = Math.max(0.2, ...c.ic.map(Math.abs), (c.noise ?? 0) * 1.15);
+  const cl = cl0 * 1.08;
+  const Y = (v: number) => top + ((bottom - top) * (lim - v)) / (2 * lim);
+  const CY = (v: number) => top + ((bottom - top) * (cl - v)) / (2 * cl);
+  const bw = (w - gutter - L) / n;
+  const X = (i: number) => L + i * bw + bw / 2;
+  return { tick, n, cum, right, fmt, gutter, top, axisY, bottom, lim, Y, CY, bw, X, R: w - gutter };
+}
+
+/** 噪声带（没有预测力时约 95% 的单期 IC 在里面）在柱子后面；累计 IC 是虚线，线尾一个点写「累计 +4.08」。 */
+function drawIc(c: IcChart, w: number, h: number, fontScale: number): ReactElement[] {
+  const f = icFrame(c, w, h, fontScale);
+  const last = f.cum[f.cum.length - 1];
+  const size = FONT * fontScale;
+  const endY = last == null ? 0 : f.CY(last);
+  return [
+    ...(c.noise
+      ? [
+          <Rect key="noise" x={0} y={f.Y(c.noise)} width={f.R} height={f.Y(-c.noise) - f.Y(c.noise)} fill={rc.ink} fillOpacity={0.07} />,
+          <Line key="nz+" x1={0} x2={f.R} y1={f.Y(c.noise)} y2={f.Y(c.noise)} stroke={rc.ink} strokeOpacity={0.18} strokeWidth={GRID} />,
+          <Line key="nz-" x1={0} x2={f.R} y1={f.Y(-c.noise)} y2={f.Y(-c.noise)} stroke={rc.ink} strokeOpacity={0.18} strokeWidth={GRID} />,
+        ]
+      : []),
+    <Line key="zero" x1={0} x2={f.R} y1={f.Y(0)} y2={f.Y(0)} stroke={rc.line} />,
+    ...c.ic.map((v, i) => <Rect key={'b' + i} x={L + i * f.bw + 1} y={Math.min(f.Y(0), f.Y(v))} width={Math.max(1, f.bw - 2)} height={Math.abs(f.Y(v) - f.Y(0))} fill={v >= 0 ? IC_UP : IC_DOWN} />),
+    <Path key="cum" d={linePath(f.cum.map((_, i) => f.X(i)), f.cum.map(f.CY))} stroke={rc.ink} strokeWidth={1.4} strokeDasharray="4,2" fill="none" />,
+    ...f.right.map(t => yLabel('cr' + t, w, f.CY(t), f.fmt(t), f.tick, rc.ink)),
+    yLabel('c0', w, f.CY(0), '0', f.tick, rc.ink),
+    label(L, f.top + size * 0.9, '+' + f.lim.toFixed(2)),
+    label(L, f.bottom - 2, '−' + f.lim.toFixed(2)),
+    ...(last == null
+      ? []
+      : [
+          <Circle key="ce" cx={f.X(f.cum.length - 1)} cy={endY} r={3} fill={rc.ink} stroke={rc.paper} strokeWidth={1.2} />,
+          label(f.R - 6, Math.max(f.top + size, Math.min(f.bottom - 2, last >= 0 ? endY - 6 : endY + size + 2)), '累计 ' + signed(last, 2), 'end', rc.ink, true),
+        ]),
+    ...timeAxis(c.dates, f.X, f.R, f.axisY, w, f.tick),
+  ];
+}
+
+/** 各组收益图的布局：组 i 的柱子中心就是第 i 个点。 */
+function groupsFrame(c: GroupsChart, w: number, h: number) {
+  const g = groupScale(c);
+  const n = Math.max(1, g.ours.length);
+  const lim = Math.max(...g.ours.map(Math.abs), ...(g.book ?? []).map(Math.abs)) * 1.2 || 1;
+  const top = 14;
+  const bottom = h - 22;
+  const Y = (x: number) => top + ((bottom - top) * (lim - x)) / (2 * lim);
+  const bw = (w - 8) / n;
+  const X = (i: number) => L + i * bw + bw / 2;
+  return { g, n, Y, bw, X };
+}
+
+/** 组宽够写数时柱子上写这次的收益；叠了书里的数（空心点连虚线）时不写，数在图下的小表里。 */
+export const barLabelsFit = (width: number, groups: number, fontScale: number) => (width - 8) / Math.max(1, groups) >= 48 * fontScale;
+
+function drawGroups(c: GroupsChart, w: number, h: number, fontScale: number): (ReactElement | null)[] {
+  const f = groupsFrame(c, w, h);
+  const v = f.g.ours;
+  const book = f.g.book;
+  const write = !book && barLabelsFit(w, v.length, fontScale);
+  return [
+    <Line key="zero" x1={0} x2={w} y1={f.Y(0)} y2={f.Y(0)} stroke={rc.line} />,
+    ...v.flatMap((x, i) => [
+      <Rect key={'r' + i} x={L + i * f.bw + f.bw * 0.2} y={Math.min(f.Y(0), f.Y(x))} width={f.bw * 0.6} height={Math.abs(f.Y(x) - f.Y(0))} fill={groupColor(i, v.length)} />,
+      write ? label(f.X(i), x >= 0 ? f.Y(x) - 3 : f.Y(x) + 11, (x > 0 ? '+' : '') + x.toFixed(2) + '%', 'middle', rc.ink) : null,
+      label(f.X(i), h - 4, 'Q' + (i + 1), 'middle'),
+    ]),
+    ...(book
+      ? [
+          <Path key="bk" d={linePath(book.map((_, i) => f.X(i)), book.map(f.Y))} stroke={rc.book} strokeWidth={1.2} strokeDasharray="3,3" fill="none" />,
+          ...book.map((x, i) => <Circle key={'bp' + i} cx={f.X(i)} cy={f.Y(x)} r={4} fill={rc.paper} stroke={rc.book} strokeWidth={2} />),
+        ]
+      : []),
+  ];
 }
 
 /**

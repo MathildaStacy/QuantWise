@@ -37,7 +37,7 @@ import {
 } from '../../study/session';
 import { notesOf, stuckOf } from '../../data/studyRepo';
 import { INDEX_POOLS } from '../../quant/universe';
-import { ChartPin, pinnable, pinOf, type PinSpot } from '../charts/ChartPin';
+import { ChartPin, FactorPin, factorRows, pinnable, pinOf, type PinSpot } from '../charts/ChartPin';
 import { usePoolPrepare } from '../charts/PoolPrepare';
 import { LockScroll } from '../charts/scrub';
 import { AiSheet, EffortPicker, ModelPicker, SearchUnavailable } from '../components/AiOptions';
@@ -383,7 +383,17 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
   const bar = quickBar({ steps: s.steps, step: s.state.step, taught: p.taught, detour: !!p.detour, factor: factorish(s.section.title + s.blocks.map(b => b.text).join('')) });
   // 步骤面板打开时先露出步骤入口。
   const pinSpot = pin && !stepsOpen ? chartSpots.current.get(pin.key) : undefined;
-  const pinned = pin && pinSpot && pinnable(pinSpot.data) ? { reading: pin.reading, data: pinSpot.data } : null;
+  const pinned = pin && pinSpot && !pinSpot.runs && pinnable(pinSpot.data) ? { reading: pin.reading, data: pinSpot.data } : null;
+  // 因子检验的结果卡滚过去之后钉一条结果条：每次检验一行，点一行跳回那张卡
+  const results = pin && pinSpot?.runs ? { reading: pin.reading, rows: factorRows(chartSpots.current, pin.key) } : null;
+  const covered = !!pinned || !!results?.rows.length;
+  const jumpTo = (key: string) => {
+    const spot = chartSpots.current.get(key);
+    const turn = spot && turnLayouts.current.get(spot.turn);
+    if (!spot || !turn || threadTop.current == null) return;
+    holdThread();
+    scroll.current?.scrollTo({ y: Math.max(0, threadTop.current + turn.y + spot.y - 8), animated: true });
+  };
   /** 收起钉图：正在读的这一问不再钉，读到下一问照常钉。 */
   const closePin = (turn: number) => {
     const next = new Set(unpinned).add(turn);
@@ -423,8 +433,8 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
           onConfigure={() => nav.navigate('AiServices', { returnToStudy: { bookId, sectionId: s.section.id } })} />
       ) : (
         <>
-          <View style={pinned && st.pinHost}>
-          <View style={[st.head, pinned && st.coveredHead]} pointerEvents={pinned ? 'none' : 'auto'} importantForAccessibility={pinned ? 'no-hide-descendants' : 'auto'}>
+          <View style={covered && st.pinHost}>
+          <View style={[st.head, covered && st.coveredHead]} pointerEvents={covered ? 'none' : 'auto'} importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}>
             <View style={st.headRow} onLayout={e => setCover(e.nativeEvent.layout.y + e.nativeEvent.layout.height)}>
             <Pressable style={st.stepToggle} onPress={() => setStepsOpen(v => !v)} accessibilityRole="button" accessibilityLabel="本节讲解步骤" accessibilityValue={{ text: '第 ' + (s.state.step + 1) + ' / ' + s.steps.length + ' 步，' + s.steps[s.state.step]?.title }} accessibilityState={{ expanded: stepsOpen }}>
               <Text style={st.stepTitle}>第 {s.state.step + 1} / {s.steps.length} 步 · {s.steps[s.state.step]?.title}</Text><ChevronDown size={18} color={rc.secondary} />
@@ -436,6 +446,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
           </View>
           {/* 小图按自身高度占位；紧凑的步骤栏保留测量，但不遮住对话。 */}
           {pinned ? <ChartPin data={pinned.data} style={{ minHeight: cover }} onClose={() => closePin(pinned.reading)} /> : null}
+          {results?.rows.length ? <FactorPin rows={results.rows} style={{ minHeight: cover }} onJump={jumpTo} onClose={() => closePin(results.reading)} /> : null}
             {p.detour ? (
               <View style={st.detour}>
                 <Text style={st.detourT} numberOfLines={1}>岔路 · {secLabel(s.sections.find(x => x.id === p.detour!.sectionId) ?? { no: '', title: p.detour.sectionId })}</Text>

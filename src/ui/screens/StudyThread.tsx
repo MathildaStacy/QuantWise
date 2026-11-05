@@ -18,6 +18,7 @@ import { MARKET_TOOLS } from '../../study/tools';
 import type { IndexPoolId } from '../../quant/universe';
 import { ChartCard } from '../charts/ChartCard';
 import { pinnable, type PinSpot, type TurnInfo } from '../charts/ChartPin';
+import { chartItems, FactorResult } from '../charts/FactorResult';
 import { PrepareCard, type PrepState } from '../charts/PoolPrepare';
 import { StudyText } from '../components/StudyText';
 import { rc } from '../readTheme';
@@ -132,7 +133,10 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
   busy: string | null;
   a: ThreadActions;
   onTurnLayout?: (id: number, box: TurnBox | null) => void;
-  /** 价格图和对比图的画线区域在它那一问里的位置（讲解页滚过去之后钉小图用）；图卸下时报 null。折叠的岔路里的图不报。 */
+  /**
+   * 价格图和对比图的画线区域、因子检验结果卡在它那一问里的位置（讲解页滚过去之后钉小图或结果条用）；
+   * 图卸下时报 null。折叠的岔路里的图不报。
+   */
   onChartBox?: (key: string, spot: PinSpot | null) => void;
 }) {
   const [open, setOpen] = useState<Record<number, boolean>>({});
@@ -198,6 +202,10 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
 function TurnView({ t, detour, a, check, streaming, realOk, onChartBox, prepare }: { t: Turn; detour: boolean; a: ThreadActions; check: CiteCheck; streaming: boolean; realOk: boolean; onChartBox?: (key: string, spot: PinSpot | null) => void; prepare?: boolean }) {
   const offer = t.answers.map(m => m.ui?.searchOffer).find(Boolean);
   const prep = prepare && !streaming && a.onPrepare ? [...t.tools].reverse().find(x => x.prepare)?.prepare : undefined;
+  // 一次 factor_test 一张结果卡；同一口径只换加权方式的并进前面那张
+  const chartFlow = t.flow.filter((x): x is { id: number; charts: ChartData[] } => 'charts' in x);
+  const items = new Map(chartItems(chartFlow.map(x => x.charts)).map((list, k) => [chartFlow[k].id, list]));
+  let hinted = false;
   return (
     <View style={detour && st.detour}>
       {t.divider ? <Text style={st.sys}>{t.divider}</Text> : null}
@@ -214,13 +222,19 @@ function TurnView({ t, detour, a, check, streaming, realOk, onChartBox, prepare 
       <ToolRecords tools={t.tools} onDisclosure={a.onDisclosure} />
       {t.flow.map(x => {
         if ('charts' in x) {
-          return x.charts.map((c, k) => {
+          return (items.get(x.id) ?? []).map((it, k) => {
             const key = x.id + ':' + k;
+            // 「点一下或按住拖动」一问只写一次：写在第一张能点的图下
+            const showHint = !hinted && (it.kind === 'factor' || it.data.kind !== 'groups');
+            hinted = hinted || showHint;
+            if (it.kind === 'factor') {
+              const box = onChartBox ? (b: { y: number; h: number } | null) => onChartBox(key, b && { turn: t.first, ...b, data: it.runs[0].nav, runs: it.runs }) : undefined;
+              const save = a.onSaveResearch ? (nav: Extract<ChartData, { kind: 'factor' }>) => a.onSaveResearch!(nav, t.source?.text ?? t.question ?? '', t.answers.map(textOf).join('\n')) : undefined;
+              return <FactorResult key={'f' + key} runs={it.runs} onBox={box} onAsk={a.onAskChart} onSave={save} hint={showHint} />;
+            }
+            const c = it.data;
             const box = onChartBox && pinnable(c) ? (b: { y: number; h: number } | null) => onChartBox(key, b && { turn: t.first, ...b, data: c }) : undefined;
-            const save = c.kind === 'factor' && c.stats && a.onSaveResearch
-              ? () => a.onSaveResearch!(c, t.source?.text ?? t.question ?? '', t.answers.map(textOf).join('\n'))
-              : undefined;
-            return <ChartCard key={'c' + key} data={c} onBox={box} onAsk={a.onAskChart} onSave={save} />;
+            return <ChartCard key={'c' + key} data={c} onBox={box} onAsk={a.onAskChart} hint={showHint} />;
           });
         }
         const m = x.m;

@@ -218,6 +218,10 @@ export function runFactorTest(p: Panel, input: TestInput): TestResult {
 const pct = (v: number, d = 1) => (v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
 const sgn = (v: number, d: number) => (v > 0 ? '+' : '') + v.toFixed(d);
 
+/** 约一个月的交易日数：每期收益按调仓周期等比例折成月度（单利），和书里的月均收益对照。 */
+export const MONTH_DAYS = 21;
+export const monthly = (v: number, hold: number) => (v * MONTH_DAYS) / hold;
+
 /**
  * 给模型看的结果：全部统计 + 怎么读（经验线、样本够不够），数字和图里的一致。
  * bookPeriods 是书里那张表的期数（例如 2000—2019 年月频约 240 期）：给了就写明本次少多少、t 值为什么会小。
@@ -237,6 +241,7 @@ export function testSummary(r: TestResult, universeName: string, bookPeriods?: n
     'Rank IC 均值 ' + sgn(r.icMean, 3) + (ctl ? '（在每个市值组里算再平均）' : '') + '，标准差 ' + r.icStd.toFixed(3) + '，ICIR ' + r.icir.toFixed(2) + '（年化 ' + r.icirAnnual.toFixed(2) + '），IC 为正 ' + (r.icPositive * 100).toFixed(0) + '%，t 值 ' + r.t.toFixed(2),
     '各组每期平均收益（Q1 因子最低 → Q' + r.input.groups + ' 最高）：' + r.groupMeans.map(x => pct(x, 2)).join('，') + '；单调性 ' + r.monotonicity.toFixed(2),
     '多空（最高组 − 最低组' + (r.input.costBp ? '，已扣费' : '') + '）每期平均 ' + pct(r.longShortMean, 2) + '（t 值 ' + r.longShortT.toFixed(2) + '，' + r.periods + ' 期，普通 t 值、没做 Newey-West 调整），年化 ' + pct(r.longShortAnnual) + '；最高组每期平均换手 ' + (r.turnover * 100).toFixed(0) + '%',
+    '折成月度（每期 × ' + MONTH_DAYS + ' / ' + r.input.hold + '，单利近似，t 值不变；和书里的「月均收益」对照时用这一行）：多空月均约 ' + pct(monthly(r.longShortMean, r.input.hold), 2) + '，各组月均约 ' + r.groupMeans.map(x => pct(monthly(x, r.input.hold), 2)).join('，'),
   ];
   if (r.controlLongShort) {
     lines.push('各市值组的多空（从小市值到大市值，未扣费，对应书里双重排序表里每个市值组的 High−Low）：' + r.controlLongShort.map((x, k) => 'S' + (k + 1) + ' ' + pct(x.mean, 2) + '（t ' + x.t.toFixed(2) + '）').join('，') + '；上面的多空是它们的平均');
@@ -245,6 +250,6 @@ export function testSummary(r: TestResult, universeName: string, bookPeriods?: n
     const k = bookPeriods / r.periods;
     lines.push('期数对照：本次 ' + r.periods + ' 期（约 ' + years.toFixed(1) + ' 年），书中约 ' + bookPeriods + ' 期' + (k >= 1.5 ? '，约为本次的 ' + k.toFixed(k >= 10 ? 0 : 1) + ' 倍。同样的每期收益和波动，t 值大约随期数的平方根变大，书中的 t 值相当于本次的 ' + Math.sqrt(k).toFixed(1) + ' 倍左右，所以本次 |t| 小不等于和书里矛盾' : ''));
   }
-  lines.push('怎么读：月度 Rank IC 均值绝对值 0.03 是常见的关注线；' + (sig ? 'IC 的 |t| ≥ 2，在这个样本里显著。' : 'IC 的 |t| < 2，在这个样本里不显著，期数少时多空收益很可能是噪声。') + '和书里的分组表对照时看多空每期平均和它的 t 值。股票池用的是当前成分，有幸存者偏差；回测区间只有约 ' + years.toFixed(1) + ' 年，期数远少于学术研究。' + (f.approx || r.input.weight === 'cap' || ctl ? '市值用今天的股本往回推，有误差。' : ''));
+  lines.push('怎么读：月度 Rank IC 均值绝对值 0.03 是常见的关注线；' + (sig ? 'IC 的 |t| ≥ 2，在这个样本里显著。' : 'IC 的 |t| < 2，在这个样本里不显著，期数少时多空收益很可能是噪声。') + '和书里的分组表对照时看多空每期平均和它的 t 值，以及分组收益的形状（单调性，书里常写成组序和收益的秩相关）。股票池用的是当前成分，有幸存者偏差；回测区间只有约 ' + years.toFixed(1) + ' 年，期数远少于学术研究。' + (f.approx || r.input.weight === 'cap' || ctl ? '市值用今天的股本往回推，有误差。' : ''));
   return lines.join('\n');
 }

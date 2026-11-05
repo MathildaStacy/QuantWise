@@ -6,11 +6,14 @@ import type { AppCore } from '../../app/boot';
 import { addDays, type DateStr } from '../../engine/calendar';
 import { beijingIso, beijingNow } from '../../market/clock';
 import { T } from '../../engine/session';
-import { runFactorTest, SampleError, testSummary } from '../../quant/backtest';
+import { monthly, runFactorTest, SampleError, testSummary, type TestResult } from '../../quant/backtest';
+import { TRADING_DAYS } from '../../quant/indicators';
 import {
   benchFocus,
   compareChart,
   factorCharts,
+  shapeRho,
+  type BookGroups,
   findEpisode,
   FIND_NAME,
   focusStats,
@@ -52,6 +55,33 @@ export interface QuantOutcome {
   charts?: ChartData[];
   /** 指数池要准备或更新数据：讲解里这条结果下面出「准备数据」（pending = 还没算，只是提示）。 */
   prepare?: { pool: IndexPoolId; pending: boolean };
+}
+
+/** 讲解里按块号取书里的分组表，合并到本次的组数（取不到时是原因）。 */
+export type BookTableResolver = (ref: { cite: string; panel?: string; row?: string }, groups: number) => Promise<BookGroups | string>;
+
+const pp = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+
+/** 和书里那一行分组收益对照（书里的数由 App 从表格单元格取，本次的数按书里的单位折算）。 */
+function bookLines(b: BookGroups, r: TestResult): string[] {
+  const hold = r.input.hold;
+  const ours = r.groupMeans.map(v => (b.unit === 'annual' ? (v * TRADING_DAYS) / hold : monthly(v, hold)) * 100);
+  const unit = b.unit === 'monthly' ? '月均' : b.unit === 'annual' ? '年化' : '（表注没写单位）';
+  const lines = [
+    '书中 ' + b.label + '（App 从书里的表格单元格读出，' + b.cite + '）' + unit + '，' + b.raw.length + ' 组从低到高：' + b.raw.map(pp).join('，') +
+      (b.spread ? '；多空 ' + pp(b.spread.mean) + (b.spread.t != null ? '（t ' + b.spread.t.toFixed(2) + '）' : '') : ''),
+  ];
+  // 本次的月均在摘要的「折成月度」一行；年化另写一行
+  const merged = b.merged ? '按本次 ' + r.input.groups + ' 组对照（' + b.merged + '）：书中 ' + b.values.map(pp).join('，') : '';
+  if (b.unit === 'annual') {
+    lines.push((merged ? merged + '；' : '') + '本次折成年化（每期 × 252 / ' + hold + '）：' + ours.map(pp).join('，'));
+  } else if (b.unit === 'monthly') {
+    if (merged) lines.push(merged + '（本次的月均见上面「折成月度」一行）');
+  } else {
+    lines.push('书里的表没写单位，只对照形状，不对照大小' + (merged ? '；' + merged : ''));
+  }
+  lines.push('分组收益的形状（组序和各组收益的秩相关，App 算）：书中 ' + b.rho.toFixed(3) + '（' + b.raw.length + ' 组）· 本次 ' + shapeRho(r.groupMeans).toFixed(3) + '（' + r.input.groups + ' 组）');
+  return lines;
 }
 
 export function universeEnv(core: AppCore): UniverseEnv {
@@ -177,6 +207,7 @@ export async function runQuantTool(
   core: AppCore,
   name: string,
   args: Record<string, unknown>,
+  bookTable?: BookTableResolver,
 ): Promise<QuantOutcome> {
   if (name === 'plot_chart') {
     const r = await needCode(core, args.code);
@@ -265,10 +296,18 @@ export async function runQuantTool(
     try {
       const res = runFactorTest(panel, input);
       const how = control ? '先按市值分 ' + control.groups + ' 组 × ' : '';
+      // 书里同口径的分组表：App 从表格单元格取数，画在各组收益图上；取不到时照常出结果，原因写给模型
+      const cite = typeof args.book_table === 'string' ? args.book_table.trim() : '';
+      const opt = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+      const found = cite && bookTable
+        ? await bookTable({ cite, panel: opt(args.book_panel), row: opt(args.book_row) }, input.groups).catch((e: unknown) => (e instanceof Error ? e.message : String(e)))
+        : null;
+      const book = found && typeof found !== 'string' ? found : undefined;
+      const bookNote = typeof found === 'string' ? ['书中的表（' + cite + '）没读出来：' + found + '。这次没有叠画书里的数'] : book ? bookLines(book, res) : [];
       return {
-        output: [testSummary(res, pool.name, bookPeriods), ...(pool.note ? [pool.note] : [])].join('\n'),
-        label: '因子检验：' + FACTORS[factor].name + ' · ' + pool.name + ' · ' + how + input.groups + ' 组' + (input.weight === 'cap' ? '市值加权' : '') + ' · 每 ' + input.hold + ' 日 · ' + res.periods + ' 期',
-        charts: factorCharts(res, pool.id, pool.name),
+        output: [testSummary(res, pool.name, bookPeriods), ...bookNote, ...(pool.note ? [pool.note] : [])].join('\n'),
+        label: '因子检验：' + FACTORS[factor].name + ' · ' + pool.name + ' · ' + how + input.groups + ' 组' + (input.weight === 'cap' ? '市值加权' : '') + ' · 每 ' + input.hold + ' 日 · ' + res.periods + ' 期' + (book ? ' · 对照' + book.label : ''),
+        charts: factorCharts(res, pool.id, pool.name, book),
         ...stale,
       };
     } catch (e) {

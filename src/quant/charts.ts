@@ -5,16 +5,20 @@
  */
 import { addDays, type DateStr } from '../engine/calendar';
 import type { KBar } from '../market/tencent';
-import type { TestResult } from './backtest';
+import { monthly, MONTH_DAYS, type TestResult } from './backtest';
 import { FACTORS, type FactorId } from './factors';
 import {
   bollinger,
   drawdown,
   extremes,
+  mean,
   momentum,
   rollingVol,
   rsi,
   sma,
+  spearman,
+  stdev,
+  TRADING_DAYS,
   type Series,
 } from './indicators';
 
@@ -77,11 +81,43 @@ export type ChartData =
     }
   | {
       kind: 'factor'; factor: FactorId; universe: string; dates: DateStr[]; groups: number[][]; bench: number[]; longShort: number[];
-      /** 这次检验的口径和关键统计（存进研究手记用）；旧图没有。 */
+      /** 这次检验的口径和关键统计（图卡标题、页脚、结果卡和研究手记用）；旧图没有。 */
       stats?: FactorStats;
     }
-  | { kind: 'ic'; factor: FactorId; dates: DateStr[]; ic: number[] }
-  | { kind: 'groups'; factor: FactorId; means: number[] };
+  | {
+      kind: 'ic'; factor: FactorId; dates: DateStr[]; ic: number[];
+      /** 没有预测力时单期 Rank IC 约 95% 落在 ±noise 以内（2/√(每期只数 − 1)）；旧图没有。 */
+      noise?: number;
+      stats?: FactorStats;
+    }
+  | {
+      kind: 'groups'; factor: FactorId; means: number[];
+      stats?: FactorStats;
+      /** 书里同口径那张分组表的一行（App 从解析好的表格取数，不经模型）。 */
+      book?: BookGroups;
+    };
+
+/**
+ * 书里分组表的一行：表名和 Panel、每组的数（原书的组数和单位）、合并到本次组数后的数，以及两边的秩相关。
+ * values 的单位是 unit 写的（monthly / annual / 不知道）、百分数（2.0 = 2%）。
+ */
+export interface BookGroups {
+  /** 「表3.20 Panel A: 等权重」。 */
+  label: string;
+  /** 块号「3.5.3#14」：讲解里点得回原文。 */
+  cite: string;
+  /** 原书每组的数，从因子最低到最高。 */
+  raw: number[];
+  /** 原书的多空列（High−Low）和它的 t 值；没有这一列时不写。 */
+  spread?: { mean: number; t: number | null };
+  /** 合并（或拆分）到本次组数后的数，和 means 一一对应。 */
+  values: number[];
+  /** 「10 组每相邻 2 组取平均」；组数一样时不写。 */
+  merged?: string;
+  unit: 'monthly' | 'annual' | 'unknown';
+  /** 组序和原书各组收益的秩相关（用原书的组数算）。 */
+  rho: number;
+}
 
 export interface FactorStats {
   universe: string;
@@ -97,10 +133,16 @@ export interface FactorStats {
   longShortAnnual: number;
   /** 控制市值的双重排序：几个市值组、条件还是独立排序（旧图没有）。 */
   control?: { groups: number; sort: 'conditional' | 'independent' };
+  /** 每期平均几只股票、IC 为正的期数（旧图没有）。 */
+  avgStocks?: number;
+  icPositive?: number;
 }
 
 export type PriceChart = Extract<ChartData, { kind: 'price' }>;
 export type CompareChart = Extract<ChartData, { kind: 'compare' }>;
+export type FactorChart = Extract<ChartData, { kind: 'factor' }>;
+export type IcChart = Extract<ChartData, { kind: 'ic' }>;
+export type GroupsChart = Extract<ChartData, { kind: 'groups' }>;
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const r4 = (v: number) => Math.round(v * 10000) / 10000;
@@ -589,18 +631,86 @@ export function compareChart(
   return { chart, text: lines.join('\n') };
 }
 
-export function factorCharts(r: TestResult, universe: string, universeName = universe): ChartData[] {
+/**
+ * 一次因子检验的三张图：分组净值、每期 Rank IC、各组每期平均收益，都带同一份口径和统计（stats）。
+ * IC 图另带噪声带：没有预测力时单期 Rank IC 的标准差约 1/√(n − 1)（n 是每期只数；控制市值时是 S 个市值组各算再平均，
+ * 约 1/√(n − S)），约 95% 落在 ±2 倍以内。book 是书里同口径那张分组表的一行（只画在各组收益图上）。
+ */
+export function factorCharts(r: TestResult, universe: string, universeName = universe, book?: BookGroups): ChartData[] {
   const f = r.input.factor;
   const stats: FactorStats = {
     universe: universeName, hold: r.input.hold, groups: r.input.groups, weight: r.input.weight ?? 'equal', costBp: r.input.costBp, periods: r.periods,
     icMean: r4(r.icMean), icT: Math.round(r.t * 100) / 100, longShortMean: r4(r.longShortMean), longShortT: Math.round(r.longShortT * 100) / 100, longShortAnnual: r4(r.longShortAnnual),
     ...(r.input.control ? { control: { groups: r.input.control.groups, sort: r.input.control.sort } } : {}),
+    avgStocks: Math.round(r.avgStocks),
+    icPositive: r.ic.filter(x => x.ic > 0).length,
   };
+  const dof = r.avgStocks - (r.input.control?.groups ?? 1);
   return [
     { kind: 'factor', factor: f, universe, dates: r.dates, groups: r.groupNav.map(g => g.map(r4)), bench: r.benchNav.map(r4), longShort: r.longShortNav.map(r4), stats },
-    { kind: 'ic', factor: f, dates: r.ic.map(x => x.date), ic: r.ic.map(x => r4(x.ic)) },
-    { kind: 'groups', factor: f, means: r.groupMeans.map(r4) },
+    { kind: 'ic', factor: f, dates: r.ic.map(x => x.date), ic: r.ic.map(x => r4(x.ic)), ...(dof > 1 ? { noise: r3(2 / Math.sqrt(dof)) } : {}), stats },
+    { kind: 'groups', factor: f, means: r.groupMeans.map(r4), stats, ...(book ? { book } : {}) },
   ];
+}
+
+export const WEIGHT_NAME = { equal: '等权', cap: '市值加权' } as const;
+export { MONTH_DAYS, monthly };
+
+/** 检验口径：「等权 · 5 组 · 每 20 日调仓」；控制市值时「先按市值分 2 组 × 5 组」，扣费时加「单边万 15」。 */
+/** 用「 · 」连起来；前一段以全角括号收尾时不再空一格（「（独立排序）· 每 20 日调仓」）。 */
+export const dots = (parts: string[]) => parts.reduce((a, b, i) => (i === 0 ? b : a + (a.endsWith('）') ? '· ' : ' · ') + b), '');
+
+/** 带正负号的数；四舍五入后是 0 的不写「-0.00」。 */
+export const signed = (v: number, d: number) => {
+  const x = Number(v.toFixed(d)) || 0;
+  return (x > 0 ? '+' : '') + x.toFixed(d);
+};
+
+export function factorBasis(s: FactorStats): string {
+  return dots([
+    WEIGHT_NAME[s.weight],
+    (s.control ? '先按市值分 ' + s.control.groups + ' 组 × ' : '') + s.groups + ' 组' + (s.control?.sort === 'independent' ? '（独立排序）' : ''),
+    '每 ' + s.hold + ' 日调仓',
+    ...(s.costBp ? ['单边万 ' + s.costBp] : []),
+  ]);
+}
+
+const sgn3 = (v: number) => signed(v, 3);
+
+/** 关键统计一行：「多空 -0.59%（t -0.45）· IC -0.006（t -0.08）」。 */
+export const factorStatsLine = (s: FactorStats) =>
+  '多空 ' + pct(s.longShortMean, 2) + '（t ' + s.longShortT.toFixed(2) + '）· IC ' + sgn3(s.icMean) + '（t ' + s.icT.toFixed(2) + '）';
+
+/** IC 图的统计：期数、均值、t 值、为正的期数（新图用检验算好的数，旧图从柱子现算）。 */
+export function icSummary(c: IcChart): { n: number; mean: number; t: number; positive: number } {
+  const n = c.ic.length;
+  const m = mean(c.ic);
+  const sd = stdev(c.ic);
+  return {
+    n,
+    mean: c.stats?.icMean ?? m,
+    t: c.stats?.icT ?? (sd ? m / (sd / Math.sqrt(n)) : 0),
+    positive: c.stats?.icPositive ?? c.ic.filter(v => v > 0).length,
+  };
+}
+
+/** 分组收益的形状：组序和各组收益的秩相关（从低到高一路升是 1，一路降是 −1）。 */
+export const shapeRho = (xs: number[]) => spearman(xs.map((_, i) => i), xs);
+
+/**
+ * 各组收益图的纵轴（百分数）：对照书里的月度（或年化）分组表时，本次每期收益按调仓周期折成同一单位，和书里的数画在一起；
+ * 书里没写单位时不叠画，只在图下的小表里并排列出。
+ */
+export function groupScale(c: GroupsChart): { unit: 'period' | 'monthly' | 'annual'; ours: number[]; book: number[] | null } {
+  const hold = c.stats?.hold;
+  const b = c.book;
+  if (b && hold && b.unit === 'monthly') {
+    return { unit: 'monthly', ours: c.means.map(v => monthly(v, hold) * 100), book: b.values };
+  }
+  if (b && hold && b.unit === 'annual') {
+    return { unit: 'annual', ours: c.means.map(v => ((v * TRADING_DAYS) / hold) * 100), book: b.values };
+  }
+  return { unit: 'period', ours: c.means.map(v => v * 100), book: null };
 }
 
 export function chartTitle(c: ChartData): string {
@@ -610,10 +720,16 @@ export function chartTitle(c: ChartData): string {
     case 'compare':
       return c.series.map(s => s.name).join(' / ') + ' · ' + (c.base ? md(c.base) + ' = 100' : '起点 = 100');
     case 'factor':
-      return '分组净值 · ' + FACTORS[c.factor].name;
+      return '分组净值 · ' + FACTORS[c.factor].name + (c.stats ? ' · ' + WEIGHT_NAME[c.stats.weight] : '');
     case 'ic':
-      return 'Rank IC · 每期';
-    case 'groups':
-      return '各组每期平均收益 · ' + FACTORS[c.factor].name;
+      return 'Rank IC · 每期 · ' + FACTORS[c.factor].name;
+    case 'groups': {
+      const unit = groupScale(c).unit;
+      return dots([
+        unit === 'monthly' ? '各组月均收益（折算）' : unit === 'annual' ? '各组年化收益（折算）' : '各组每期平均收益',
+        FACTORS[c.factor].name,
+        ...(c.stats ? [WEIGHT_NAME[c.stats.weight]] : []),
+      ]);
+    }
   }
 }

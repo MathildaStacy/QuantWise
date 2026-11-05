@@ -9,7 +9,7 @@ import { setAiDeps, useChat } from '../../src/ai/chat';
 import type { FetchLike } from '../../src/ai/http';
 import { loadProviders, saveProviders, saveServices, type KeyStore } from '../../src/ai/services';
 import type { AiService } from '../../src/ai/types';
-import { runQuantTool } from '../../src/ai/tools/quant';
+import { QUANT_TOOL_DEFS, runQuantTool } from '../../src/ai/tools/quant';
 import type { AppCore } from '../../src/app/boot';
 import { SAMPLE_BOOK_ID } from '../../src/book/sample';
 import { openMemoryDb } from '../../src/data/drivers/nodeSqlite';
@@ -494,6 +494,34 @@ test('load_section 可以从指定块接着读；search_book 只给命中处前�
   expect(out.output).toContain('[3.1#2]');
   expect(snippetOf('a'.repeat(500) + '动量' + 'b'.repeat(500), '动量')).toBe('…' + 'a'.repeat(200) + '动量' + 'b'.repeat(200) + '…');
   expect(snippetOf('短句里有动量', '动量')).toBe('短句里有动量');
+  await core.db.close();
+});
+
+test('讲解里的 factor_test 带书中分组表：App 从表格单元格取数，摘要写两边的形状，各组收益图叠书里的数；取不到时照常出结果', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  const last = await core.db.get<{ seq: number; no: number }>('SELECT MAX(seq) AS seq, MAX(no) AS no FROM book_block WHERE book_id = ? AND section_id = ?', [SAMPLE_BOOK_ID, '3.1']);
+  const no = last!.no + 1;
+  const html = '<table><tr><td>Low</td><td>2</td><td>3</td><td>4</td><td>High</td><td>High-Low</td></tr>' +
+    '<tr><td>1.20(1.60)</td><td>1.50(2.00)</td><td>1.40(1.90)</td><td>1.30(1.80)</td><td>1.10(1.40)</td><td>-0.10(-0.30)</td></tr></table>';
+  await core.db.run('INSERT INTO book_block (book_id, seq, section_id, no, type, text, page, mark, image, html) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)',
+    [SAMPLE_BOOK_ID, 100000, '3.1', no, 'table', '表3.9 动量分组月均收益率（%）\nLow | 2 | 3 | 4 | High | High-Low', html]);
+  const env = { core, threadId: 0, bookId: SAMPLE_BOOK_ID, sectionId: '3.1', sections: s().sections };
+  const out = await runStudyTool(env, 'x', 'factor_test', JSON.stringify({ factor: 'mom20', universe: 'sample', book_table: '3.1#' + no }));
+  expect(out.output).toContain('书中 表3.9（App 从书里的表格单元格读出，3.1#' + no + '）月均，5 组从低到高：+1.20%，+1.50%，+1.40%，+1.30%，+1.10%；多空 -0.10%（t -0.30）');
+  expect(out.output).toMatch(/分组收益的形状（组序和各组收益的秩相关，App 算）：书中 -0\.400（5 组）· 本次 -?\d\.\d{3}（5 组）/);
+  expect(out.output).toMatch(/折成月度（每期 × 21 \/ 20/);
+  const groups = out.ui.charts?.find(c => c.kind === 'groups');
+  expect(groups).toMatchObject({ book: { label: '表3.9', unit: 'monthly', values: [1.2, 1.5, 1.4, 1.3, 1.1] } });
+  expect(out.ui.label).toContain('对照表3.9');
+  // 块号不是表格：照常检验，原因写给模型
+  const bad = await runStudyTool(env, 'x', 'factor_test', JSON.stringify({ factor: 'mom20', universe: 'sample', book_table: '3.1#1' }));
+  expect(bad.output).toContain('书中的表（3.1#1）没读出来：3.1#1 不是表格。这次没有叠画书里的数');
+  expect(bad.ui.charts?.find(c => c.kind === 'groups')).not.toHaveProperty('book');
+  // 只有讲解里的 factor_test 有 book_table；AI 助手的定义不变
+  const def = (list: typeof STUDY_TOOL_DEFS) => JSON.stringify(list.find(t => t.name === 'factor_test')!.schema);
+  expect(def(STUDY_TOOL_DEFS)).toContain('book_table');
+  expect(def(QUANT_TOOL_DEFS)).not.toContain('book_table');
   await core.db.close();
 });
 
