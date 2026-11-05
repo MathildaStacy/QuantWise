@@ -214,8 +214,8 @@ test('翻译请求附上这一段命中的术语：沿用本书以前的译法�
   };
   // 本书以前译成「元标注」：沿用；第一段是本节第一次出现
   expect(sent(0).terms).toEqual([{ en: 'meta-labeling', zh: '元标注', first: true }]);
-  // 第二段：本节前面已经写过，不再加括号；recall 是日常词，不自动对译
-  expect(sent(1).terms).toEqual([{ en: 'Meta-labeling', zh: '元标注', first: false }]);
+  // 第二段：元标签本节前面已经写过，不再加括号；主模型是第一次出现；recall 是日常词，不自动对译
+  expect(sent(1).terms).toEqual([{ en: 'Meta-labeling', zh: '元标注', first: false }, { en: 'primary model', zh: '主模型', first: true }]);
   expect(TRANSLATION_PROMPT).toContain('「元标签（meta-labeling）」');
   await core.db.close();
 });

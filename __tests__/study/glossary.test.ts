@@ -40,6 +40,17 @@ test('沿用这本书已有译文的写法；本节前面出现过就不再加�
   expect(termHints('Meta-labeling helps.', { book: '元标签法。元标注。元标注。', section: '' })[0].zh).toBe('元标注');
 });
 
+test('混淆矩阵的四个格子、主模型和次级模型有固定译法：同一节里 false positive 不再一会儿「假阳性」一会儿「假正例」', () => {
+  const text = 'Binary classification problems present a trade-off between type-I errors (false positives) and type-II errors (false negatives).';
+  expect(termHints(text, none).map(h => h.en + ' = ' + h.zh)).toEqual(['false positives = 假阳性', 'false negatives = 假阴性']);
+  expect(termHints('the true positive rate', none)[0]).toEqual({ en: 'true positive', zh: '真阳性', first: true });
+  // 这本书以前用的是「假正例」：沿用
+  expect(termHints('by filtering out the false positives', { book: '假正例。真正例还是假正例。', section: '' })[0].zh).toBe('假正例');
+  expect(expandTerm('假阳性')).toContain('false positive');
+  // 主模型、次级模型同理：本书以前「主模型」用得多，就不再出「初级模型」
+  expect(termHints('the buy recommendations of a primary model and a secondary model', { book: '主模型。主模型。初级模型。', section: '' }).map(h => h.zh)).toEqual(['主模型', '次级模型']);
+});
+
 test('讲解里的那一行和中文对照同一张术语表；没有命中时为空', () => {
   expect(termLine(termHints('meta-labeling and the triple barrier', none))).toBe('术语（和中文对照同一张术语表）：meta-labeling = 元标签；triple barrier = 三重屏障');
   expect(termLine([])).toBe('');

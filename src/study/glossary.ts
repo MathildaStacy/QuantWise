@@ -85,6 +85,9 @@ const GROUPS: string[][] = [
   ['分数阶差分', 'fractional differentiation', 'fractionally differentiated', '分数差分'],
   ['三重屏障', 'triple-barrier', 'triple barrier', '三重障碍'],
   ['元标签', 'meta-labeling', 'meta labeling', '元标注'],
+  // AFML 3.7 一节里 primary model 译成了「主模型」「初级模型」两种
+  ['主模型', '初级模型', 'primary model', 'primary models'],
+  ['次级模型', '辅助模型', 'secondary model', 'secondary models'],
   ['样本权重', 'sample weights', 'sample weight'],
   ['唯一性', 'uniqueness'],
   ['清洗', 'purging', 'purged'],
@@ -131,6 +134,11 @@ const GROUPS: string[][] = [
   ['混淆矩阵', 'confusion matrix'],
   ['精确率', 'precision'],
   ['召回率', 'recall'],
+  // 混淆矩阵的四个格子：统计里多说「阳性」，机器学习教材多说「正例」；两种都认，按这本书已经用过的那种（AFML 3.7 一节里出现过两种）
+  ['假阳性', '假正例', 'false positive', 'false positives'],
+  ['假阴性', '假反例', 'false negative', 'false negatives'],
+  ['真阳性', '真正例', 'true positive', 'true positives'],
+  ['真阴性', '真反例', 'true negative', 'true negatives'],
   ['投资者情绪', 'investor sentiment'],
   ['行为金融', 'behavioral finance'],
   ['有效市场', 'efficient market', 'efficient markets'],
