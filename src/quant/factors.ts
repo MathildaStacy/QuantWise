@@ -19,10 +19,45 @@ export interface Panel {
   cap: Record<string, { total: number | null; float: number | null }>;
 }
 
-/** 交易日 = 至少 minCoverage 比例的股票有数据的日期（停牌、新上市的不影响日历）。 */
+type PanelMeta = Pick<QfqMeta, 'name' | 'totalCap' | 'floatCap'>;
+
+/** 交易日 = 至少 minCoverage 比例的股票有数据的日期（停牌、新上市的不影响日历）；count 是每天有几只有数据。 */
+export function panelDates(count: Map<string, number>, codes: number, minCoverage = 0.5): DateStr[] {
+  const need = Math.max(1, Math.ceil(codes * minCoverage));
+  return [...count.entries()].filter(([, n]) => n >= need).map(([d]) => d).sort();
+}
+
+/** 在定好的交易日上建一个空面板，再一只一只放进去（本地库按批读，中证 1000 不用一次把全部日线读进内存）。 */
+export function panelBuilder(dates: DateStr[]) {
+  const at = new Map(dates.map((d, i) => [d, i]));
+  const p: Panel = { dates, codes: [], names: {}, close: {}, volume: {}, cap: {} };
+  return {
+    panel: p,
+    add(c: string, bars: Pick<KBar, 'date' | 'close' | 'volume'>[], m: PanelMeta | undefined) {
+      const cl = new Array<number | null>(dates.length).fill(null);
+      const vo = new Array<number | null>(dates.length).fill(null);
+      for (const b of bars) {
+        const i = at.get(b.date);
+        if (i != null) {
+          cl[i] = b.close / 1000;
+          vo[i] = b.volume;
+        }
+      }
+      p.codes.push(c);
+      p.close[c] = cl;
+      p.volume[c] = vo;
+      p.names[c] = m?.name ?? c;
+      p.cap[c] = {
+        total: m?.totalCap != null ? m.totalCap * 1e8 : null,
+        float: m?.floatCap != null ? m.floatCap * 1e8 : null,
+      };
+    },
+  };
+}
+
 export function buildPanel(
   bars: Map<string, KBar[]>,
-  meta: Map<string, Pick<QfqMeta, 'name' | 'totalCap' | 'floatCap'>>,
+  meta: Map<string, PanelMeta>,
   minCoverage = 0.5,
 ): Panel {
   const codes = [...bars.keys()].filter(c => (bars.get(c)?.length ?? 0) > 0);
@@ -32,33 +67,11 @@ export function buildPanel(
       count.set(b.date, (count.get(b.date) ?? 0) + 1);
     }
   }
-  const need = Math.max(1, Math.ceil(codes.length * minCoverage));
-  const dates = [...count.entries()].filter(([, n]) => n >= need).map(([d]) => d).sort();
-  const at = new Map(dates.map((d, i) => [d, i]));
-  const close: Panel['close'] = {};
-  const volume: Panel['volume'] = {};
-  const names: Panel['names'] = {};
-  const cap: Panel['cap'] = {};
+  const b = panelBuilder(panelDates(count, codes.length, minCoverage));
   for (const c of codes) {
-    const cl = new Array<number | null>(dates.length).fill(null);
-    const vo = new Array<number | null>(dates.length).fill(null);
-    for (const b of bars.get(c)!) {
-      const i = at.get(b.date);
-      if (i != null) {
-        cl[i] = b.close / 1000;
-        vo[i] = b.volume;
-      }
-    }
-    close[c] = cl;
-    volume[c] = vo;
-    const m = meta.get(c);
-    names[c] = m?.name ?? c;
-    cap[c] = {
-      total: m?.totalCap != null ? m.totalCap * 1e8 : null,
-      float: m?.floatCap != null ? m.floatCap * 1e8 : null,
-    };
+    b.add(c, bars.get(c)!, meta.get(c));
   }
-  return { dates, codes, names, close, volume, cap };
+  return b.panel;
 }
 
 export type FactorId =

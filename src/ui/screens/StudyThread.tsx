@@ -15,8 +15,10 @@ import type { ChartData } from '../../quant/charts';
 import type { CiteCheck } from '../../book/markup';
 import { citeCheck, progressNow, type StudySession } from '../../study/session';
 import { MARKET_TOOLS } from '../../study/tools';
+import type { IndexPoolId } from '../../quant/universe';
 import { ChartCard } from '../charts/ChartCard';
 import { pinnable, type PinSpot, type TurnInfo } from '../charts/ChartPin';
+import { PrepareCard, type PrepState } from '../charts/PoolPrepare';
 import { StudyText } from '../components/StudyText';
 import { rc } from '../readTheme';
 import { usageText } from './AiScreen';
@@ -72,7 +74,7 @@ export function realChecked(turns: Turn[]): Map<number, boolean> {
   const out = new Map<number, boolean>();
   let ok = false;
   for (const t of turns) {
-    ok = ok || t.tools.some(x => !x.error && MARKET_TOOLS.has(x.name));
+    ok = ok || t.tools.some(x => !x.error && !x.prepare?.pending && MARKET_TOOLS.has(x.name));
     out.set(t.first, ok);
   }
   return out;
@@ -119,6 +121,10 @@ export interface ThreadActions {
   onAskChart?: (text: string) => void;
   /** 因子检验的图「存进研究手记」：这张图、这一问的提问原文（或问题）和讲解。 */
   onSaveResearch?: (chart: Extract<ChartData, { kind: 'factor' }>, claim: string, answer: string) => void;
+  /** factor_test 说指数池数据没准备（或过期）时的「准备数据」：准备好后接着重做那次检验。 */
+  onPrepare?: (pool: IndexPoolId) => void;
+  onStopPrepare?: () => void;
+  prep?: PrepState | null;
 }
 
 export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
@@ -136,6 +142,8 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
   const folds = p.folds ?? [];
   const turns = turnsOf(s.messages);
   const checked = realChecked(turns);
+  // 「准备数据」只放在最近一次提到要准备的那一问下面：准备好后重做的那一问会成为新的最近一问
+  const prepTurn = [...turns].reverse().find(t => t.tools.some(x => x.prepare))?.first;
   const out: { id: number; node: ReactElement }[] = [];
   const compacted = turns.filter(t => t.compacted && t.question != null).length;
   for (let i = 0; i < turns.length; i++) {
@@ -178,7 +186,7 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
       continue;
     }
     const detour = !!p.detour && t.first >= p.detour.fromMsg;
-    out.push({ id: t.first, node: <TurnView t={t} detour={detour} a={a} check={check} streaming={!!busy && i === turns.length - 1} realOk={!!checked.get(t.first)} onChartBox={onChartBox} /> });
+    out.push({ id: t.first, node: <TurnView t={t} detour={detour} a={a} check={check} streaming={!!busy && i === turns.length - 1} realOk={!!checked.get(t.first)} onChartBox={onChartBox} prepare={t.first === prepTurn} /> });
   }
   return (
     <View>
@@ -187,8 +195,9 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
   );
 }
 
-function TurnView({ t, detour, a, check, streaming, realOk, onChartBox }: { t: Turn; detour: boolean; a: ThreadActions; check: CiteCheck; streaming: boolean; realOk: boolean; onChartBox?: (key: string, spot: PinSpot | null) => void }) {
+function TurnView({ t, detour, a, check, streaming, realOk, onChartBox, prepare }: { t: Turn; detour: boolean; a: ThreadActions; check: CiteCheck; streaming: boolean; realOk: boolean; onChartBox?: (key: string, spot: PinSpot | null) => void; prepare?: boolean }) {
   const offer = t.answers.map(m => m.ui?.searchOffer).find(Boolean);
+  const prep = prepare && !streaming && a.onPrepare ? [...t.tools].reverse().find(x => x.prepare)?.prepare : undefined;
   return (
     <View style={detour && st.detour}>
       {t.divider ? <Text style={st.sys}>{t.divider}</Text> : null}
@@ -223,6 +232,7 @@ function TurnView({ t, detour, a, check, streaming, realOk, onChartBox }: { t: T
           </View>
         );
       })}
+      {prep ? <PrepareCard pool={prep.pool} pending={prep.pending} prep={a.prep ?? null} onStart={() => a.onPrepare!(prep.pool)} onStop={() => a.onStopPrepare?.()} after="并重做这次检验" /> : null}
       {t.cards.map(({ msgId, tool }) => (tool.quiz ? <Quiz key={tool.id} msgId={msgId} tool={tool} a={a} check={check} /> : <Wrap key={tool.id} tool={tool} a={a} />))}
       {offer && a.onSearch && !streaming ? (
         <Pressable onPress={() => a.onSearch!(offer)} style={st.small} accessibilityRole="button">

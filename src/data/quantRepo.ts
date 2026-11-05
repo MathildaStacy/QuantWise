@@ -103,6 +103,45 @@ export async function qfqBars(db: Db, codes: string[]): Promise<Map<string, KBar
   return out;
 }
 
+/** 每个交易日有几只股票有数据（组面板的交易日用）。 */
+export async function qfqDateCounts(db: Db, codes: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < codes.length; i += 500) {
+    const part = codes.slice(i, i + 500);
+    const rows = await db.all<{ date: string; n: number }>(
+      'SELECT date, COUNT(*) AS n FROM kline_qfq WHERE code IN (' + part.map(() => '?').join(',') + ') GROUP BY date',
+      part,
+    );
+    for (const r of rows) {
+      out.set(r.date, (out.get(r.date) ?? 0) + Number(r.n));
+    }
+  }
+  return out;
+}
+
+/** 按批读收盘价和成交量（因子只用这两列），每读一批（size 只）就按代码交给 onCode；中证 1000 约 125 万行，不一次读进内存。 */
+export async function eachQfqCloseVolume(
+  db: Db,
+  codes: string[],
+  onCode: (code: string, bars: { date: string; close: number; volume: number }[]) => void,
+  size = 50,
+): Promise<void> {
+  for (let i = 0; i < codes.length; i += size) {
+    const part = codes.slice(i, i + size);
+    const rows = await db.all<{ code: string; date: string; close: number; volume: number }>(
+      'SELECT code, date, close, volume FROM kline_qfq WHERE code IN (' + part.map(() => '?').join(',') + ') ORDER BY code, date',
+      part,
+    );
+    const by = new Map<string, { date: string; close: number; volume: number }[]>(part.map(c => [c, []]));
+    for (const r of rows) {
+      by.get(r.code)?.push({ date: r.date, close: Number(r.close), volume: Number(r.volume) });
+    }
+    for (const c of part) {
+      onCode(c, by.get(c)!);
+    }
+  }
+}
+
 export interface Universe {
   id: string;
   codes: string[];

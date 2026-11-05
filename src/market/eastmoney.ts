@@ -173,3 +173,35 @@ export function parseFinance(json: unknown): FinancePeriod[] {
     grossMargin: numOrNull(r.XSMLL),
   }));
 }
+
+/**
+ * 中证指数当前成分（因子的中证 500 / 中证 1000 股票池）：数据中心 RPT_INDEX_TS_COMPONENT，按 TYPE 分指数，
+ * 2026-11-05 核对：1 = 沪深 300（300 只）、3 = 中证 500（500 只）、7 = 中证 1000（1000 只，pageSize 500 时 2 页），三者不重叠。
+ * SECUCODE 是「000012.SZ」，只有沪深两市。
+ */
+export const INDEX_MEMBER_TYPE = { hs300: '1', zz500: '3', zz1000: '7' } as const;
+
+export function indexMembersUrl(type: string, page: number): string {
+  return (
+    F10_BASE +
+    'RPT_INDEX_TS_COMPONENT&columns=SECUCODE,SECURITY_CODE,SECURITY_NAME_ABBR,TYPE' +
+    '&filter=(TYPE%3D%22' +
+    type +
+    '%22)&pageNumber=' +
+    page +
+    '&pageSize=500&sortColumns=SECURITY_CODE&sortTypes=1'
+  );
+}
+
+/** 一页成分和总页数；代码换成 sh600036 这种。 */
+export function parseIndexMembers(json: unknown): { rows: { code: string; name: string }[]; pages: number } {
+  const r = (json as any)?.result;
+  const data = Array.isArray(r?.data) ? r.data : [];
+  const rows = data
+    .map((x: any) => {
+      const m = /^(\d{6})\.(SH|SZ)$/.exec(str(x?.SECUCODE));
+      return m ? { code: m[2].toLowerCase() + m[1], name: str(x?.SECURITY_NAME_ABBR).replace(/\s+/g, '') } : null;
+    })
+    .filter((x: { code: string; name: string } | null): x is { code: string; name: string } => !!x);
+  return { rows, pages: typeof r?.pages === 'number' && r.pages > 0 ? r.pages : 1 };
+}

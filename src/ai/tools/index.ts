@@ -148,7 +148,7 @@ async function dispatch(
   });
   if (QUANT_TOOLS.has(name)) {
     const q = await runQuantTool(core, name, args);
-    return { output: q.output, ui: { id, name, label: q.label, ...(q.charts ? { charts: q.charts } : {}) } };
+    return { output: q.output, ui: { id, name, label: q.label, ...(q.charts ? { charts: q.charts } : {}), ...(q.prepare ? { prepare: q.prepare } : {}) } };
   }
   switch (name) {
     case 'get_quote': {

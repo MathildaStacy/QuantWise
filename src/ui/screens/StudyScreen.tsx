@@ -36,7 +36,9 @@ import {
   type StudySession,
 } from '../../study/session';
 import { notesOf, stuckOf } from '../../data/studyRepo';
+import { INDEX_POOLS } from '../../quant/universe';
 import { ChartPin, pinnable, pinOf, type PinSpot } from '../charts/ChartPin';
+import { usePoolPrepare } from '../charts/PoolPrepare';
 import { LockScroll } from '../charts/scrub';
 import { AiSheet, EffortPicker, ModelPicker, SearchUnavailable } from '../components/AiOptions';
 import { Button, NavBar } from '../components/ui';
@@ -211,6 +213,11 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     }
   };
   sendRef.current = send;
+  // 讲解里 factor_test 说指数池数据没准备：准备好后接着让 AI 用这个池子重做刚才那次检验
+  const pool = usePoolPrepare(core, (id, n) => {
+    const name = INDEX_POOLS[id].short;
+    sendRef.current({ label: '数据准备好了：用' + name + '重做这次检验', question: name + '的数据准备好了（' + n + ' 只当前成分）。请用 universe = ' + id + ' 重做刚才那次因子检验，口径（因子、分组、调仓、加权、控制变量）不变，再和书里的数字逐项对照。' });
+  });
   /** 发出去就清空输入框；没问完的问题留在重试区（pending），不会丢。 */
   const sendDraft = () => {
     const q = text.trim();
@@ -462,7 +469,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             <StudyThread
               onTurnLayout={(id, box) => { if (box) turnLayouts.current.set(id, box); else turnLayouts.current.delete(id); restoreThread(); updatePin(); }}
               onChartBox={(key, spot) => { if (spot) chartSpots.current.set(key, spot); else chartSpots.current.delete(key); updatePin(); }}
-              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread, onAskChart: askChart, onSaveResearch: (chart, claim, answer) => nav.navigate('ResearchEdit', { draft: researchFromFactor({ chart, book: s.book, section: s.section, claim, answer }) }) }} />
+              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread, onAskChart: askChart, onSaveResearch: (chart, claim, answer) => nav.navigate('ResearchEdit', { draft: researchFromFactor({ chart, book: s.book, section: s.section, claim, answer }) }), onPrepare: id => { pool.start(id).catch(fail); }, onStopPrepare: pool.stop, prep: pool.prep }} />
             </View>
             {ask && reading.pending && !busy ? <Button title={askLabel ?? '发送刚才的问题'} onPress={() => { nav.setParams({ ask: undefined, askLabel: undefined, askSnapshot: undefined }); send({ label: askLabel ?? ask, question: ask, snapshot: askSnapshot }); }} /> : null}
             {reading.pending && !busy ? <View style={st.retry}>

@@ -241,3 +241,25 @@ test('工具成功记录默认收起，错误、讲解和检查题保持可见',
   expect(text()).not.toContain('读取 Portfolio Risk 完成');
   expect(text()).toContain('行情读取超时');
 });
+
+test('因子检验说指数池数据没准备：最近那一问下面出「准备数据并重做这次检验」，不算真实行情', async () => {
+  const msg = (id: number, role: StoredMessage['role'], parts: StoredMessage['parts'], ui: StoredMessage['ui']): StoredMessage => ({ id, threadId: 1, role, parts, ui, raw: null, compacted: false, createdAt: now });
+  const pending = (id: string) => ({ id, name: 'factor_test', label: '12-1 月动量：数据还没准备', prepare: { pool: 'zz1000' as const, pending: true } });
+  const s = { ...session, messages: [
+    msg(1, 'user', [], { question: '在 A 股复现表 3.20' }), msg(2, 'tool', [], { tools: [pending('a')] }), msg(3, 'assistant', [{ t: 'text', text: '先准备数据。' }], null),
+    msg(4, 'user', [], { question: '再试一次' }), msg(5, 'tool', [], { tools: [pending('b')] }), msg(6, 'assistant', [{ t: 'text', text: '还没准备。' }], null),
+  ] };
+  const onPrepare = jest.fn();
+  await act(async () => { tree = create(<StudyThread s={s} busy={null} a={{ onLink() {}, onPick() {}, onWrapup() {}, onStuck() {}, onPrepare, prep: null }} />); });
+  expect(text()).toContain('准备中证 1000 数据');
+  expect(text()).toContain('约 4 分钟、80 MB 流量');
+  expect(tree!.root.findAll(n => n.props.children === '准备数据并重做这次检验' && typeof n.type === 'string')).toHaveLength(1);
+  await press('准备数据并重做这次检验');
+  expect(onPrepare).toHaveBeenCalledWith('zz1000');
+  const { realChecked, turnsOf } = require('../../src/ui/screens/StudyThread');
+  expect([...realChecked(turnsOf(s.messages)).values()]).toEqual([false, false]);
+  // 准备中：进度和停止
+  await act(async () => { tree!.update(<StudyThread s={s} busy={null} a={{ onLink() {}, onPick() {}, onWrapup() {}, onStuck() {}, onPrepare, prep: { pool: 'zz1000', done: 120, total: 1000, running: true } }} />); });
+  expect(text()).toContain('下载中…');
+  expect(text()).toContain('停止');
+});

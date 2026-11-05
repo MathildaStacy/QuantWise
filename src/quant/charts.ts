@@ -95,6 +95,8 @@ export interface FactorStats {
   longShortMean: number;
   longShortT: number;
   longShortAnnual: number;
+  /** 控制市值的双重排序：几个市值组、条件还是独立排序（旧图没有）。 */
+  control?: { groups: number; sort: 'conditional' | 'independent' };
 }
 
 export type PriceChart = Extract<ChartData, { kind: 'price' }>;
@@ -592,6 +594,7 @@ export function factorCharts(r: TestResult, universe: string, universeName = uni
   const stats: FactorStats = {
     universe: universeName, hold: r.input.hold, groups: r.input.groups, weight: r.input.weight ?? 'equal', costBp: r.input.costBp, periods: r.periods,
     icMean: r4(r.icMean), icT: Math.round(r.t * 100) / 100, longShortMean: r4(r.longShortMean), longShortT: Math.round(r.longShortT * 100) / 100, longShortAnnual: r4(r.longShortAnnual),
+    ...(r.input.control ? { control: { groups: r.input.control.groups, sort: r.input.control.sort } } : {}),
   };
   return [
     { kind: 'factor', factor: f, universe, dates: r.dates, groups: r.groupNav.map(g => g.map(r4)), bench: r.benchNav.map(r4), longShort: r.longShortNav.map(r4), stats },

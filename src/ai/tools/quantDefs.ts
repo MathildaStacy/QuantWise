@@ -23,8 +23,9 @@ const FACTOR = {
 };
 const UNIVERSE = {
   type: 'string',
-  enum: ['sample', 'watch', 'hs300'],
-  description: 'sample 示例池 25 只大盘股（随时可用）/ watch 自选 + 持仓 / hs300 沪深 300 当前成分（要用户先在因子实验室准备数据）',
+  enum: ['sample', 'watch', 'hs300', 'zz500', 'zz1000'],
+  description:
+    'sample 示例池 25 只大盘股（随时可用）/ watch 自选 + 持仓 / hs300 沪深 300 / zz500 中证 500 / zz1000 中证 1000（都是当前成分；指数池第一次用要准备数据，没准备好时工具返回提示，界面上给用户「准备数据」按钮）。书里用全市场或中小盘样本时优先 zz1000、zz500，大盘股用 hs300',
 };
 
 /** 按名字排序；AI 助手和伴读都用这一份。 */
@@ -32,7 +33,7 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
   {
     name: 'factor_test',
     description:
-      '因子分组回测和 Rank IC（本地前复权日线，约 3 年，口径见结果）：每 hold 个交易日按因子从低到高分组、等权或市值加权持有，算 IC 均值、ICIR、t 值、各组收益、多空每期平均收益和它的 t 值、多空年化、换手，界面画分组净值和 IC 图。用户问某个因子在 A 股有没有效、或要复现书里的分组检验时用：按书里的定义选因子和参数，结果和书里的数字逐项对照，结论按 t 值和期数说，样本不够就说不够。',
+      '因子分组回测和 Rank IC（本地前复权日线，约 5 年，口径见结果）：每 hold 个交易日按因子从低到高分组、等权或市值加权持有，算 IC 均值、ICIR、t 值、各组收益、多空每期平均收益和它的 t 值、多空年化、换手，界面画分组净值和 IC 图。control = size 时做控制市值的双重排序（书里「控制市值后」的表），另给每个市值组的多空和 t 值。用户问某个因子在 A 股有没有效、或要复现书里的分组检验时用：按书里的定义选因子和参数，结果和书里的数字逐项对照，结论按 t 值和期数说，样本不够就说不够。',
     schema: obj(
       {
         factor: FACTOR,
@@ -42,6 +43,10 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
         groups: { type: 'integer', enum: [3, 5, 10], description: '分几组，默认 5' },
         cost_bp: { type: 'integer', description: '单边成本（万分之），0–50，默认 0' },
         weight: { type: 'string', enum: ['equal', 'cap'], description: '组内加权：equal 等权（默认）/ cap 按调仓日总市值加权（对应书里的「市值加权」）' },
+        control: { type: 'string', enum: ['size'], description: '双重排序的控制变量：size 先按调仓日总市值分组，再看因子（复现书里「控制市值」的表时用；小市值因子本身不能用）' },
+        control_groups: { type: 'integer', enum: [2, 3, 5], description: '市值分几组，默认 5；示例池只有 25 只，用 2 组' },
+        control_sort: { type: 'string', enum: ['conditional', 'independent'], description: 'conditional 条件排序：在每个市值组里再按因子分组（默认）/ independent 独立排序：市值和因子各自分组再取交集。按书里写的选' },
+        book_periods: { type: 'integer', description: '书里那张表的期数（例如 2000—2019 年月频约 240 期），给了结果会写明本次期数少多少、t 值为什么小' },
       },
       ['factor'],
     ),

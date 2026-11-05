@@ -3,16 +3,16 @@
  */
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { universeEnv } from '../../ai/tools/quant';
 import { SAMPLE_BOOK_ID } from '../../book/sample';
-import * as quantRepo from '../../data/quantRepo';
 import { runFactorTest, SampleError } from '../../quant/backtest';
 import { chartTitle, factorCharts } from '../../quant/charts';
 import { FACTOR_IDS, FACTORS, type FactorId } from '../../quant/factors';
-import { loadPanel, prepareBars, refreshHs300, universeCodes, UNIVERSE_NAME, type PrepareProgress, type UniverseId } from '../../quant/universe';
+import { isIndexPool, loadPanel, poolStatus, prepareBars, universeCodes, UNIVERSE_IDS, UNIVERSE_NAME, type IndexPoolId, type PrepareProgress, type UniverseId } from '../../quant/universe';
 import { ChartCard, FocusReadout, Takeaway } from '../charts/ChartCard';
+import { PrepareCard, usePoolPrepare } from '../charts/PoolPrepare';
 import { QuantChart } from '../charts/QuantChart';
 import { LockScroll } from '../charts/scrub';
 import { focusAt, howComputed, pointCount, readout } from '../charts/quantDraw';
@@ -32,7 +32,12 @@ interface Cfg {
   hold: number;
   groups: number;
   costBp: number;
+  weight: 'equal' | 'cap';
+  /** 控制市值的双重排序：市值分几组（0 = 不控制），条件排序。 */
+  control: number;
 }
+
+const POOL_LABEL: Record<UniverseId, string> = { sample: '示例池', watch: '自选 + 持仓', hs300: '沪深 300', zz500: '中证 500', zz1000: '中证 1000' };
 
 function Chips<T extends string | number>({ label, items, value, onPick }: { label: string; items: [T, string][]; value: T; onPick: (v: T) => void }) {
   return (
@@ -53,11 +58,13 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
   const core = useCore();
   const nav = useNavigation<Nav>();
   const [cfg, setCfg] = useState<Cfg>({
-    universe: (['sample', 'watch', 'hs300'].includes(route.params?.universe ?? '') ? route.params!.universe : 'sample') as UniverseId,
+    universe: (UNIVERSE_IDS.includes(route.params?.universe as UniverseId) ? route.params!.universe : 'sample') as UniverseId,
     factor: (FACTOR_IDS.includes(route.params?.factor as FactorId) ? route.params!.factor : 'mom20') as FactorId,
     hold: 20,
     groups: 5,
     costBp: 15,
+    weight: 'equal',
+    control: 0,
   });
   const [draft, setDraft] = useState(cfg);
   const [paramsOpen, setParamsOpen] = useState(false);
@@ -66,34 +73,45 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
   const [res, setRes] = useState<FactorSnapshot | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ready, setReady] = useState<boolean | null>(null);
-  const abort = useRef<AbortController | null>(null);
+  /** 指数池的数据过期或只有约 3 年：照常算，下面提示可以更新。 */
+  const [stale, setStale] = useState(false);
   const env = universeEnv(core);
   const set = (p: Partial<Cfg>) => setDraft(c => ({ ...c, ...p }));
+  const pool = usePoolPrepare(core, () => setCfg(c => ({ ...c })));
 
-  // 沪深 300 要用户点「准备数据」；示例池和自选打开就自动准备（几只到几十只，几秒钟）
+  // 指数池要用户点「准备数据」；示例池和自选打开就自动准备（几只到几十只，几秒钟）
   useEffect(() => {
     let alive = true;
     setRes(null);
     setProg(null);
     setReady(null);
+    setStale(false);
     setErr(null);
     (async () => {
-      const { codes } = await universeCodes(env, cfg.universe);
-      const meta = await quantRepo.qfqMeta(core.db, codes);
-      const have = cfg.universe !== 'hs300' || (codes.length >= 250 && meta.size >= codes.length * 0.9);
+      if (cfg.control && cfg.factor === 'size') {
+        throw new Error('小市值因子本身就是按市值排序，不能再控制市值');
+      }
+      const index = isIndexPool(cfg.universe) ? await poolStatus(env, cfg.universe) : null;
+      const codes = index ? index.codes : (await universeCodes(env, cfg.universe)).codes;
+      const have = !index || index.ready;
       if (!alive) {
         return;
       }
       setReady(have);
+      setStale(!!index && index.stale > index.codes.length * 0.1);
       if (!have) {
         return;
       }
-      if (cfg.universe !== 'hs300') {
+      if (!index) {
         await prepareBars(env, codes.slice(0, 60), p => alive && setProg(p));
       }
-      const panel = await loadPanel(core.db, codes);
+      const panel = await loadPanel(core.db, index ? codes : codes.slice(0, 60));
       try {
-        const r = runFactorTest(panel, { factor: cfg.factor, hold: cfg.hold, groups: cfg.groups, costBp: cfg.costBp });
+        const r = runFactorTest(panel, {
+          factor: cfg.factor, hold: cfg.hold, groups: cfg.groups, costBp: cfg.costBp,
+          ...(cfg.weight === 'cap' ? { weight: 'cap' as const } : {}),
+          ...(cfg.control ? { control: { by: 'size' as const, groups: cfg.control, sort: 'conditional' as const } } : {}),
+        });
         if (alive) {
           setRes({ r, universe: cfg.universe, computedAt: beijingIso(), codes: panel.codes.length, from: panel.dates[0] ?? '' });
         }
@@ -110,27 +128,14 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [core, cfg]);
 
-  const prepareHs300 = async () => {
-    abort.current = new AbortController();
-    setErr(null);
-    try {
-      const codes = await refreshHs300(env);
-      const p = await prepareBars(env, codes, setProg, abort.current.signal);
-      if (p.failed.length) {
-        setErr(p.failed.length + ' 只没取到（停牌或接口出错），用其余的继续');
-      }
-      setCfg(c => ({ ...c }));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  };
   const f = FACTORS[cfg.factor];
+  const how = (cfg.weight === 'cap' ? '市值加权' : '等权') + (cfg.control ? ' · 先按市值分 ' + cfg.control + ' 组' : '');
   useAiContext('FactorLab', () => ({
     name: '因子实验室',
     lines: res
-      ? [f.name + '，' + UNIVERSE_NAME[cfg.universe] + '，' + res.codes + ' 只，每 ' + cfg.hold + ' 日调仓，' + cfg.groups + ' 组，单边成本万 ' + cfg.costBp, 'Rank IC 均值 ' + res.r.icMean.toFixed(3) + '，t ' + res.r.t.toFixed(2) + '，ICIR ' + res.r.icir.toFixed(2) + '，多空年化 ' + (res.r.longShortAnnual * 100).toFixed(1) + '%，' + res.r.periods + ' 期']
+      ? [f.name + '，' + UNIVERSE_NAME[cfg.universe] + '，' + res.codes + ' 只，每 ' + cfg.hold + ' 日调仓，' + cfg.groups + ' 组，' + how + '，单边成本万 ' + cfg.costBp, 'Rank IC 均值 ' + res.r.icMean.toFixed(3) + '，t ' + res.r.t.toFixed(2) + '，ICIR ' + res.r.icir.toFixed(2) + '，多空年化 ' + (res.r.longShortAnnual * 100).toFixed(1) + '%，' + res.r.periods + ' 期']
       : [f.name + '，' + UNIVERSE_NAME[cfg.universe] + '，' + (err ?? '计算中')],
-    tip: '股票池是当前成分，有幸存者偏差；样本只有约 3 年，结论只当练习。t 值不到 2 不算显著。',
+    tip: '股票池是当前成分，有幸存者偏差；本地约 5 年日线，期数远少于书里的样本，结论只当练习。t 值不到 2 不算显著。',
   }));
   const stat = (k: string, v: string, d: string, weak = false) => (
     <View key={k} style={st.stat}>
@@ -146,13 +151,15 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
       <NavBar title="因子实验室" back />
       <LockScroll contentContainerStyle={st.pad}>
         <View style={st.card}>
-          <Text style={st.h}>{f.name}</Text><Text style={st.k}>{UNIVERSE_NAME[cfg.universe]} · 每 {cfg.hold} 日调仓 · {cfg.groups} 组 · 单边成本 {cfg.costBp}bp</Text>
+          <Text style={st.h}>{f.name}</Text><Text style={st.k}>{UNIVERSE_NAME[cfg.universe]} · 每 {cfg.hold} 日调仓 · {cfg.groups} 组 · {how} · 单边成本 {cfg.costBp}bp</Text>
           <Button title={paramsOpen ? '收起参数' : '调整参数'} onPress={() => setParamsOpen(v => !v)} />
           {paramsOpen ? <>
-          <Chips label="股票池" items={(['sample', 'watch', 'hs300'] as UniverseId[]).map(u => [u, u === 'sample' ? '示例池' : u === 'watch' ? '自选 + 持仓' : '沪深 300'])} value={draft.universe} onPick={universe => set({ universe })} />
-          <Chips label="因子" items={FACTOR_IDS.map(id => [id, FACTORS[id].name])} value={draft.factor} onPick={factor => set({ factor })} />
+          <Chips label="股票池" items={UNIVERSE_IDS.map(u => [u, POOL_LABEL[u]])} value={draft.universe} onPick={universe => set({ universe })} />
+          <Chips label="因子" items={FACTOR_IDS.map(id => [id, FACTORS[id].name])} value={draft.factor} onPick={factor => set({ factor, ...(factor === 'size' ? { control: 0 } : {}) })} />
           <Chips label="调仓" items={[5, 10, 20, 60].map(v => [v, '每 ' + v + ' 日'])} value={draft.hold} onPick={hold => set({ hold })} />
           <Chips label="分组" items={[3, 5, 10].map(v => [v, v + ' 组'])} value={draft.groups} onPick={groups => set({ groups })} />
+          <Chips label="加权" items={[['equal', '等权'], ['cap', '市值加权']] as ['equal' | 'cap', string][]} value={draft.weight} onPick={weight => set({ weight })} />
+          {draft.factor === 'size' ? null : <Chips label="控制市值" items={[0, 2, 3, 5].map(v => [v, v ? '先分 ' + v + ' 组' : '不控制'])} value={draft.control} onPick={control => set({ control })} />}
           <Chips label="单边成本" items={[0, 15, 30].map(v => [v, v ? '万 ' + v : '不扣'])} value={draft.costBp} onPick={costBp => set({ costBp })} />
           <Button title="应用参数并计算" tone="learn" onPress={() => { setCfg({ ...draft }); setParamsOpen(false); }} />
           <Button title="取消修改" onPress={() => { setDraft(cfg); setParamsOpen(false); }} />
@@ -160,15 +167,9 @@ export function FactorLabScreen({ route }: RootScreenProps<'FactorLab'>) {
           <Text style={st.k}>{f.formula}{f.approx ? '（用今天的股本往回推，近似）' : ''} · 书里在 {f.section}</Text>
         </View>
         {changed ? <Note style={st.note}>参数已更改，下面仍是上次结果。应用参数后重新计算。</Note> : null}
-        {ready === false ? (
-          <View style={st.card}>
-            <Text style={st.h}>准备沪深 300 数据</Text>
-            <Text style={st.k}>取当前 300 只成分（新浪），每只 750 根前复权日线（腾讯，约 3 年），约 1 分钟、15 MB 流量。之后用到时只补过期的。</Text>
-            {prog ? <Text style={[st.k, num]}>已完成 {prog.done} / {prog.total}{prog.failed.length ? '，' + prog.failed.length + ' 只失败' : ''}</Text> : null}
-            <View style={st.row}>
-              <Button title={prog && prog.done < prog.total ? '下载中…' : '准备数据'} tone="learn" disabled={!!prog && prog.done < prog.total} onPress={prepareHs300} style={st.grow} />
-              {prog && prog.done < prog.total ? <Button title="停止" onPress={() => abort.current?.abort()} /> : null}
-            </View>
+        {isIndexPool(cfg.universe) && (ready === false || stale) ? (
+          <View style={st.padX}>
+            <PrepareCard pool={cfg.universe} pending={ready === false} prep={pool.prep} onStart={() => { pool.start(cfg.universe as IndexPoolId).catch(e => setErr(e instanceof Error ? e.message : String(e))); }} onStop={pool.stop} />
           </View>
         ) : null}
         {err ? <Note tone="warn" style={st.note}>{err}</Note> : null}
@@ -255,6 +256,7 @@ const st = StyleSheet.create({
   row2: { flexDirection: 'row', gap: 8, paddingHorizontal: 10 },
   grow: { flex: 1 },
   note: { marginHorizontal: 10, marginBottom: 8 },
+  padX: { paddingHorizontal: 10 },
   padH: { paddingHorizontal: PAD, paddingVertical: 8 },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 10, paddingBottom: 8 },
   stat: { width: '48%', backgroundColor: color.card, borderRadius: 10, padding: 8 },

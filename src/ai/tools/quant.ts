@@ -3,7 +3,6 @@
  * AI 助手和伴读共用。每个工具把算好的图存进 ToolUi.chart，给模型的是同一份数据的文字摘要。
  */
 import type { AppCore } from '../../app/boot';
-import * as quantRepo from '../../data/quantRepo';
 import { addDays, type DateStr } from '../../engine/calendar';
 import { beijingIso, beijingNow } from '../../market/clock';
 import { T } from '../../engine/session';
@@ -29,11 +28,16 @@ import {
 import { FACTOR_IDS, FACTORS, type FactorId } from '../../quant/factors';
 import { SUB_NAME } from '../../quant/charts';
 import {
+  INDEX_POOLS,
   isAStock,
+  isIndexPool,
   loadPanel,
+  poolStatus,
   prepareBars,
   universeCodes,
+  UNIVERSE_IDS,
   UNIVERSE_NAME,
+  type IndexPoolId,
   type UniverseEnv,
   type UniverseId,
 } from '../../quant/universe';
@@ -46,6 +50,8 @@ export interface QuantOutcome {
   output: string;
   label: string;
   charts?: ChartData[];
+  /** 指数池要准备或更新数据：讲解里这条结果下面出「准备数据」（pending = 还没算，只是提示）。 */
+  prepare?: { pool: IndexPoolId; pending: boolean };
 }
 
 export function universeEnv(core: AppCore): UniverseEnv {
@@ -119,28 +125,52 @@ async function needCode(core: AppCore, v: unknown) {
   }
 }
 
-/** 股票池 → 代码；自动准备示例池和自选，沪深 300 没准备好时返回提示（不是错误）。 */
-async function poolOf(core: AppCore, args: Record<string, unknown>) {
+type Pool =
+  | { codes: string[]; name: string; id: string; stale?: IndexPoolId; note?: string }
+  | { pending: string; pool?: IndexPoolId };
+
+/**
+ * 股票池 → 代码；自动准备示例池和自选。指数池（沪深 300、中证 500 / 1000）要用户点「准备数据」：
+ * 没准备好时返回提示（不是错误），过期或只有 3 年数据时照常算、提示可以更新。
+ */
+async function poolOf(core: AppCore, args: Record<string, unknown>): Promise<Pool> {
   const env = universeEnv(core);
   if (Array.isArray(args.codes) && args.codes.length) {
     const codes = [...new Set(args.codes.map(c => normalizeCode(String(c))).filter((c): c is string => !!c && isAStock(c)))].slice(0, 300);
     await prepareBars(env, codes);
     return { codes, name: '自定义 ' + codes.length + ' 只', id: 'custom' };
   }
-  const id = (['sample', 'watch', 'hs300'].includes(String(args.universe)) ? args.universe : 'sample') as UniverseId;
-  const { codes, asOf } = await universeCodes(env, id);
-  if (id === 'hs300') {
-    const ready = await quantRepo.qfqMeta(core.db, codes);
-    if (codes.length < 250 || ready.size < codes.length * 0.9) {
-      return { pending: '沪深 300 的数据还没准备：请用户在「学习 → 读书 → 因子实验室」点「准备数据」（约 1 分钟、15 MB 流量）。现在可以先用 universe = sample（示例池 25 只）。' };
+  const id = (UNIVERSE_IDS.includes(args.universe as UniverseId) ? args.universe : 'sample') as UniverseId;
+  if (isIndexPool(id)) {
+    const p = INDEX_POOLS[id];
+    const st = await poolStatus(env, id);
+    if (!st.ready) {
+      return {
+        pool: id,
+        pending: p.short + ' 的数据还没准备（' + p.size + ' 只当前成分，每只约 5 年前复权日线，约 ' + p.minutes + ' 分钟、' + p.mb + ' MB 流量）。讲解里这条结果下面有「准备数据」按钮，用户点了会在准备好后接着重做这次检验；AI 助手里请用户去「学习 → 读书 → 因子实验室」准备。现在不要编结果；可以先用 universe = sample（示例池 25 只大盘股）做一次示意，并说明示例池说明不了书里的结论。',
+      };
     }
-    return { codes, name: UNIVERSE_NAME.hs300 + (asOf ? '，成分取于 ' + asOf : ''), id };
+    const stale = st.stale > st.codes.length * 0.1;
+    return {
+      codes: st.codes,
+      name: UNIVERSE_NAME[id] + (st.asOf ? '，成分取于 ' + st.asOf : ''),
+      id,
+      ...(stale ? { stale: id, note: '本地数据有 ' + st.stale + ' 只过期或只有约 3 年（最新到 ' + (st.lastDate ?? '—') + '），这次照常用已有数据；讲解里结果下面有「更新数据并重做」' } : {}),
+    };
   }
+  const { codes } = await universeCodes(env, id);
   if (!codes.length) {
     return { pending: '自选和持仓里没有 A 股个股，换 universe = sample。' };
   }
   await prepareBars(env, codes.slice(0, 60));
   return { codes: codes.slice(0, 60), name: UNIVERSE_NAME[id], id };
+}
+
+/** factor_test 的双重排序参数：control = size 时按市值分 2 / 3 / 5 组，默认 5 组、条件排序。 */
+function controlOf(args: Record<string, unknown>) {
+  if (args.control !== 'size') return undefined;
+  const groups = [2, 3, 5].includes(Number(args.control_groups)) ? Number(args.control_groups) : 5;
+  return { by: 'size' as const, groups, sort: args.control_sort === 'independent' ? ('independent' as const) : ('conditional' as const) };
 }
 
 export async function runQuantTool(
@@ -212,19 +242,38 @@ export async function runQuantTool(
   if (!FACTORS[factor]) {
     throw new Error('factor 只能是 ' + FACTOR_IDS.join(' / '));
   }
+  const control = name === 'factor_test' ? controlOf(args) : undefined;
+  if (control && factor === 'size') {
+    throw new Error('小市值因子本身就是按市值排序，不能再控制市值；去掉 control，或者换一个因子');
+  }
   const pool = await poolOf(core, args);
   if ('pending' in pool) {
-    return { output: pool.pending!, label: FACTORS[factor].name + '：数据还没准备' };
+    return { output: pool.pending, label: FACTORS[factor].name + '：数据还没准备', ...(pool.pool ? { prepare: { pool: pool.pool, pending: true } } : {}) };
   }
   const panel = await loadPanel(core.db, pool.codes);
   if (name === 'factor_test') {
-    const input = { factor, hold: [5, 10, 20, 60].includes(Number(args.hold)) ? Number(args.hold) : 20, groups: [3, 5, 10].includes(Number(args.groups)) ? Number(args.groups) : 5, costBp: int(args.cost_bp, 0, 0, 50), ...(args.weight === 'cap' ? { weight: 'cap' as const } : {}) };
+    const input = {
+      factor,
+      hold: [5, 10, 20, 60].includes(Number(args.hold)) ? Number(args.hold) : 20,
+      groups: [3, 5, 10].includes(Number(args.groups)) ? Number(args.groups) : 5,
+      costBp: int(args.cost_bp, 0, 0, 50),
+      ...(args.weight === 'cap' ? { weight: 'cap' as const } : {}),
+      ...(control ? { control } : {}),
+    };
+    const bookPeriods = args.book_periods == null ? undefined : int(args.book_periods, 0, 0, 2000) || undefined;
+    const stale = pool.stale ? { prepare: { pool: pool.stale, pending: false } } : {};
     try {
       const res = runFactorTest(panel, input);
-      return { output: testSummary(res, pool.name), label: '因子检验：' + FACTORS[factor].name + ' · ' + pool.name + ' · ' + input.groups + ' 组' + (input.weight === 'cap' ? '市值加权' : '') + ' · 每 ' + input.hold + ' 日 · ' + res.periods + ' 期', charts: factorCharts(res, pool.id, pool.name) };
+      const how = control ? '先按市值分 ' + control.groups + ' 组 × ' : '';
+      return {
+        output: [testSummary(res, pool.name, bookPeriods), ...(pool.note ? [pool.note] : [])].join('\n'),
+        label: '因子检验：' + FACTORS[factor].name + ' · ' + pool.name + ' · ' + how + input.groups + ' 组' + (input.weight === 'cap' ? '市值加权' : '') + ' · 每 ' + input.hold + ' 日 · ' + res.periods + ' 期',
+        charts: factorCharts(res, pool.id, pool.name),
+        ...stale,
+      };
     } catch (e) {
       if (e instanceof SampleError) {
-        return { output: e.message, label: '因子检验：样本不够' };
+        return { output: e.message, label: '因子检验：样本不够', ...stale };
       }
       throw e;
     }

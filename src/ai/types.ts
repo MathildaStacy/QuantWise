@@ -227,6 +227,8 @@ export interface ToolUi {
   proposal?: { id: number; external?: string[] };
   /** QuantWise 行情与因子工具画的图（数据随消息存下，历史对话打开时和当时一样）。 */
   charts?: ChartData[];
+  /** factor_test 用的指数池要准备或更新数据（讲解里出「准备数据」按钮）；pending = 还没算，只是提示。 */
+  prepare?: { pool: 'hs300' | 'zz500' | 'zz1000'; pending: boolean };
   /** 伴读：load_section 的小节和是不是岔路（QUANTWISE_DESIGN.md §6.5）；partial 是长小节只读了一段（读到的块在 cites）。 */
   section?: { id: string; detour: boolean; partial?: boolean };
   /** 伴读：search_book 命中的块（「3.1#2」），这些块之后可以被引用。 */
