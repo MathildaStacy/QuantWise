@@ -1,7 +1,7 @@
 /// <reference types="node" />
 /**
  * 复现书里的实证（docs/design/pm-reader-lecture-20261105.md 第 7 项）：控制市值的双重排序、中证 500 / 1000 股票池、
- * 准备数据（约 5 年、先东方财富取不到再腾讯、以前 750 根的重取、连续失败停下）、按批组面板。用原型快照日线（26 只个股约 250 个交易日）。
+ * 准备数据（约 5 年、先东方财富取不到再腾讯、以前 750 根的重取、盘中不存当天那根、连续失败停下）、按批组面板。用原型快照日线（26 只个股约 250 个交易日）。
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -269,6 +269,42 @@ describe('准备数据和按批组面板', () => {
       await quantRepo.saveQfq(e.db, { code: c, name: c, fetchedAt: 'x', totalCap: 1, floatCap: 1, price: 1 }, [{ date: NOW.date, open: 1, close: 1, high: 1, low: 1, volume: 1 }]);
     }
     expect(await poolStatus(e, 'hs300')).toMatchObject({ ready: true, stale: 30, lastDate: NOW.date, asOf: NOW.date });
+  });
+
+  it('盘中取到的当天那根不存，15:30 以后再取；以前盘中存下的那根收盘后算过期', async () => {
+    const day = NOW.date;
+    const prev = cal.prev(day);
+    const clock = { now: { date: day, t: T(10, 0) }, iso: day + 'T10:00:00+08:00' };
+    const days: string[] = [];
+    for (let d = day; days.length < 300; d = cal.prev(d)) days.unshift(d);
+    const all = days.map(date => ({ date, open: 1, close: 1, high: 1, low: 1, volume: 1 }));
+    const asked: string[] = [];
+    // 和接口一样：盘中回的最后一根是当天的（还没收盘）；sh600001 当天上市，只有这一根
+    const base = await env({ klineRange: async (code: string) => { asked.push(code); return code === 'sh600001' ? all.slice(-1) : all; } });
+    const e: UniverseEnv = { ...base, now: () => clock.now, isoNow: () => clock.iso };
+    const metaOf = async (c: string) => (await quantRepo.qfqMeta(e.db, [c])).get(c);
+    // 10:00 盘中：只存到上一个交易日；只有当天一根的什么都不存，也不算没取到
+    expect(await prepareBars(e, ['sh600000', 'sh600001'])).toMatchObject({ done: 2, failed: [] });
+    expect(await metaOf('sh600000')).toMatchObject({ lastDate: prev, bars: 299 });
+    expect(await metaOf('sh600001')).toBeUndefined();
+    // 盘中再准备一次：上一个交易日已经是最新的，不重取
+    asked.length = 0;
+    await prepareBars(e, ['sh600000']);
+    expect(asked).toEqual([]);
+    // 16:00 收盘后：重取，存到当天
+    clock.now = { date: day, t: T(16, 0) };
+    clock.iso = day + 'T16:00:00+08:00';
+    await prepareBars(e, ['sh600000']);
+    expect(asked).toEqual(['sh600000']);
+    expect(await metaOf('sh600000')).toMatchObject({ lastDate: day, bars: 300 });
+    // 以前的版本 10:00 存下的当天那根：日期是最新的，收盘后也算过期、要重取；收盘后取的（sh600000）不算
+    await quantRepo.saveQfq(e.db, { code: 'sh600002', name: 'x', fetchedAt: day + 'T10:00:00+08:00', totalCap: 1, floatCap: 1, price: 1 }, all);
+    await quantRepo.saveUniverse(e.db, { id: 'hs300', codes: ['sh600000', 'sh600002'], asOf: day, fetchedAt: 'x' });
+    expect((await poolStatus(e, 'hs300')).stale).toBe(1);
+    asked.length = 0;
+    await prepareBars(e, ['sh600000', 'sh600002']);
+    expect(asked).toEqual(['sh600002']);
+    expect((await poolStatus(e, 'hs300')).stale).toBe(0);
   });
 });
 
