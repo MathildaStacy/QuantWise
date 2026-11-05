@@ -20,6 +20,8 @@ export interface SectionProgress {
   detour?: { sectionId: string; fromMsg: number } | null;
   /** 回到主线后折叠起来的岔路（只影响显示，发给模型的历史不变）。 */
   folds?: { sectionId: string; fromMsg: number; toMsg: number; title: string; step: number }[];
+  /** 模型给的中文步骤名（英文书第一次讲解时顺带给）；key 是路线图的切法（stepKey），切法变了就不用。 */
+  names?: { key: string; titles: string[] };
 }
 
 export interface StudyState {

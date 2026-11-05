@@ -32,7 +32,12 @@ const GROUPS: string[][] = [
   ['三因子模型', 'three-factor model'],
   ['五因子模型', 'five-factor model'],
   ['投资组合排序', 'portfolio sort', 'portfolio sorts', 'sorted portfolios', '排序法'],
+  ['单变量排序', 'univariate sort', 'univariate sorts', 'single sort', '单因子排序'],
   ['双重排序', 'double sort', 'double-sorted'],
+  ['等权重', 'equal-weighted', 'equally weighted', 'equal weight', '等权'],
+  ['市值加权', 'value-weighted', 'value weighted', 'cap-weighted', 'market-cap weighted'],
+  ['累计收益率', 'cumulative return', 'cumulative returns', '累计收益', '累积收益率'],
+  ['描述性统计', 'descriptive statistics', 'summary statistics'],
   ['多空组合', 'long-short', 'long/short', 'long–short'],
   ['分组回测', 'quantile portfolio', 'decile portfolio', '十分位'],
   ['信息系数', 'information coefficient', 'IC'],
@@ -107,6 +112,8 @@ const GROUPS: string[][] = [
   ['梯度提升', 'gradient boosting', 'boosting'],
   ['装袋', 'bagging'],
   ['支持向量机', 'support vector machine', 'SVM'],
+  ['卷积神经网络', 'convolutional neural network', 'convolutional neural networks', 'CNN', 'CNNs'],
+  ['循环神经网络', 'recurrent neural network', 'recurrent neural networks', 'RNN', 'RNNs'],
   ['神经网络', 'neural network', 'neural networks'],
   ['深度学习', 'deep learning'],
   ['自助法', 'bootstrap'],
@@ -212,3 +219,40 @@ export function termHints(text: string, prior: { book: string; section: string }
 
 /** 讲解里附的一行：「术语：meta-labeling = 元标签；triple-barrier = 三重屏障」，讲解的译法和中文对照一致。 */
 export const termLine = (hints: TermHint[]) => (hints.length ? '术语（和中文对照同一张术语表）：' + hints.map(h => h.en + ' = ' + h.zh).join('；') : '');
+
+/** 太泛的概念不拿来给讲解步骤起名（「因子」「收益率」在每一步都有）。 */
+const GENERIC = new Set(['因子', '收益率', '回测', '阿尔法', '贝塔', '分类', '残差', '相关系数', '显著性', 't 值', 'p 值']);
+
+/**
+ * 一段文字讲到的概念（中文写法），按出现次数、再按第一次出现的位置排（PM 走查第 3 项：讲解步骤用关键词起名）。
+ * 中英写法都算；长写法里的短写法不另算（「动量崩溃」不算「动量」）。公式、代码、网址不算。
+ */
+export function topicTerms(text: string, max = 3, min = 1): string[] {
+  const prose = text.replace(/\$\$[\s\S]*?\$\$|(?<!\\)\$(?:\\.|[^$])*?\$|`[^`]*`|https?:\/\/\S+/g, ' ');
+  const spans: { g: number; at: number; end: number }[] = [];
+  GROUPS.forEach((g, gi) => {
+    if (!g.some(w => HAN.test(w)) || GENERIC.has(g[0]) || g.some(w => LOOSE.has(w.toLowerCase()))) return;
+    for (const w of g) {
+      const latin = !HAN.test(w);
+      const re = latin
+        ? new RegExp('(?<![A-Za-z])' + escape(w).replace(/ /g, '[\\s-]+') + (w === w.toUpperCase() ? '' : '(?:e?s)?') + '(?![A-Za-z])', w === w.toUpperCase() ? 'g' : 'gi')
+        : new RegExp(escape(w), 'g');
+      for (const m of prose.matchAll(re)) spans.push({ g: gi, at: m.index!, end: m.index! + m[0].length });
+    }
+  });
+  // 被更长的写法盖住的那一次不算（「动量崩溃」里的「动量」），同一组同一位置只算一次
+  const kept = spans.filter(a => !spans.some(b => b !== a && b.g !== a.g && b.at <= a.at && b.end >= a.end && b.end - b.at > a.end - a.at));
+  const seen = new Set<string>();
+  const stat = new Map<number, { n: number; first: number }>();
+  for (const a of kept) {
+    if (seen.has(a.g + ':' + a.at)) continue;
+    seen.add(a.g + ':' + a.at);
+    const s0 = stat.get(a.g) ?? { n: 0, first: a.at };
+    stat.set(a.g, { n: s0.n + 1, first: Math.min(s0.first, a.at) });
+  }
+  return [...stat.entries()]
+    .filter(([, x]) => x.n >= min)
+    .sort((a, b) => b[1].n - a[1].n || a[1].first - b[1].first)
+    .slice(0, max)
+    .map(([g]) => GROUPS[g].find(w => HAN.test(w))!);
+}

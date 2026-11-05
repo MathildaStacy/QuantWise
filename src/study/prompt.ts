@@ -78,6 +78,8 @@ export function studyState(o: {
   today: string;
   /** 用户的自选和持仓（「贵州茅台 sh600519」）。 */
   stocks?: string[];
+  /** 英文书的路线图还没有中文步骤名：请模型在回答末尾顺带给出（PM 走查第 3 项）。 */
+  nameSteps?: boolean;
 }): string {
   const cur = o.steps[o.step];
   return [
@@ -89,6 +91,9 @@ export function studyState(o: {
     ...(o.stuck.length ? ['用户在这本书里没解决的卡点：' + o.stuck.join('；')] : []),
     '用户现在在' + (o.mode === 'read' ? '读书模式（自己读原文）' : '听讲模式'),
     ...(o.stocks?.length ? ['用户的自选和持仓：' + o.stocks.join('、') + '（真实行情举例优先从这里挑合适的）'] : []),
+    ...(o.nameSteps
+      ? ['本节路线图的步骤名是从英文原文截的：回答写完后，在最末尾另起一行写 [[steps]]名1|名2|…[[/steps]]，按顺序给上面 ' + o.steps.length + ' 步各起一个中文名（不超过 12 个字，说这一步讲什么，图表、代码保留编号，如「Snippet 3.6 扩展 getEvents」），用 | 隔开，不写序号；界面不显示这一行，只存下来当步骤名，正文里不要提它']
+      : []),
     '</study_state>',
   ].join('\n');
 }

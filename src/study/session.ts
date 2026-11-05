@@ -19,7 +19,8 @@ import type { AiService, ConversationConfig, ModelProgress, Part, StoredMessage,
 import type { AppCore } from '../app/boot';
 import { citeLabel, leavesOf, secLabel } from '../book/book';
 import { blockNumber } from '../book/blockTitle';
-import { planSteps, type LessonStep } from '../book/steps';
+import { stepNamesIn, withoutStepNames } from '../book/markup';
+import { applyNames, planSteps, stepKey, type LessonStep } from '../book/steps';
 import type { Book, BookBlock, BookSection } from '../book/types';
 import * as aiRepo from '../data/aiRepo';
 import * as bookRepo from '../data/bookRepo';
@@ -125,7 +126,8 @@ export async function openSection(
     sections: old?.sections ?? {},
   };
   const blocks = await bookRepo.sectionBlocks(core.db, bookId, target.id);
-  const steps = planSteps(blocks);
+  // 步骤名：本地按小节标题、图表号和关键词起；英文书讲过一次后换成模型给的中文名（切法没变时）
+  const steps = applyNames(planSteps(blocks, target), old?.sections[target.id]?.names);
   // 路线图的切法变了（比如脚注不再单独成步）时，旧进度不能指到最后一步之后
   state.step = Math.max(0, Math.min(state.step, steps.length - 1));
   const threadId = await studyRepo.studyThreadId(core.db, bookId, target.id);
@@ -335,7 +337,7 @@ async function compactStudy(core: AppCore, svc0: AiService, key: string, threadI
   for (let i = 0; i < 2 && !text && !signal.aborted; i++) {
     const r = await call(core, svc, key, threadId, signal, { extra: [{ t: 'text', text: STUDY_COMPACT_PROMPT }], noTools: true });
     svc = r.svc;
-    text = r.res.parsed.parts.map(x => (x.t === 'text' ? x.text : '')).join('').trim();
+    text = withoutStepNames(r.res.parsed.parts.map(x => (x.t === 'text' ? x.text : '')).join('')).trim();
   }
   if (!text || signal.aborted) {
     return false;
@@ -510,8 +512,10 @@ export async function askStudy(core: AppCore, a: StudyAsk): Promise<boolean> {
   const stuck = (await studyRepo.stuckOf(core.db, s0.book.id)).filter(x => !x.resolvedAt).map(x => x.sectionId + '：' + x.text);
   const results = await collectResults(core, await aiRepo.messages(core.db, threadId));
   const where = await askContext(core, s0, a);
+  // 英文书的路线图还没有中文步骤名：这一次讲解顺带请模型给（不为起名单独发请求）
+  const nameSteps = s0.language === 'en' && !a.snapshot && s0.steps.length > 1 && p.names?.key !== stepKey(s0.steps);
   const ctx =
-    studyState({ section: s0.section, steps: s0.steps, step, skipped: p.skipped, stuck, mode: s0.state.mode, today: now.slice(0, 10), stocks: await followedStocks(core) }) +
+    studyState({ section: s0.section, steps: s0.steps, step, skipped: p.skipped, stuck, mode: s0.state.mode, today: now.slice(0, 10), stocks: await followedStocks(core), nameSteps }) +
     (where.text ? '\n' + where.text : '') +
     (results.length ? '\n<action_results>\n' + results.join('\n') + '\n</action_results>' : '');
   const source = a.source ? { ...a.source, ...(where.cites.length ? { refs: where.cites } : {}) } : undefined;
@@ -527,16 +531,19 @@ export async function askStudy(core: AppCore, a: StudyAsk): Promise<boolean> {
   const loop = await runLoop(core, svc, key, threadId, s0, controller.signal, { snapshot: !!a.snapshot, question: a.question.trim(), config: cfg });
   const success = loop.ok;
   if (success) {
+    const titles = nameSteps ? stepNamesIn(answerText(await aiRepo.messages(core.db, threadId), userMsg), s0.steps.length) : null;
+    const names = titles ? { key: stepKey(s0.steps), titles } : undefined;
     const committed = await core.db.transaction(async db => {
       const latest = (await studyRepo.getState(db, s0.book.id)) ?? s0.state;
       const progress = studyRepo.progressOf(latest, s0.section.id);
-      const state = { ...latest, step: latest.main === s0.section.id ? step : latest.step, activeAt: now, sections: { ...latest.sections, [s0.section.id]: { ...progress, skipped: [...new Set([...progress.skipped, ...p.skipped])], taught: a.step == null ? progress.taught : Math.max(progress.taught, step) } } };
+      const state = { ...latest, step: latest.main === s0.section.id ? step : latest.step, activeAt: now, sections: { ...latest.sections, [s0.section.id]: { ...progress, skipped: [...new Set([...progress.skipped, ...p.skipped])], taught: a.step == null ? progress.taught : Math.max(progress.taught, step), ...(names ? { names } : {}) } } };
       await studyRepo.saveState(db, state);
       const reading = await loadReadingState(db, s0.book.id, s0.section.id);
       await saveReadingState(db, s0.book.id, s0.section.id, { pending: null, ...(reading.draft?.trim() === a.question.trim() ? { draft: '' } : {}) });
       return state;
     });
     patch(current => current.book.id === s0.book.id ? { state: committed } : {});
+    if (names) patchSession(s0, current => ({ steps: applyNames(current.steps, names) }));
   }
   if (success && a.pinSeq != null) {
     await studyRepo.addMark(core.db, s0.book.id, { blockSeq: a.pinSeq, kind: 'pin', text: a.label }, beijingIso());
@@ -832,8 +839,12 @@ export async function backToMain(core: AppCore): Promise<void> {
   await saveProgress(core, p => ({ ...p, detour: null, folds: [...(p.folds ?? []), { sectionId: d.sectionId, fromMsg: d.fromMsg, toMsg, title: q, step: s.state.step }] }));
 }
 
+/** 这一问之后模型写的全部文字（步骤名块在最后一条回答末尾）。 */
+const answerText = (msgs: StoredMessage[], after: number) =>
+  msgs.filter(m => m.id > after && m.role === 'assistant').map(m => m.parts.map(x => (x.t === 'text' ? x.text : '')).join('')).join('\n');
+
 const stripMarks = (t: string) =>
-  t.replace(/\[\[b:[^\]]*\]\]/g, '').replace(/\[\[\/?[a-z]+\]\]/g, '').replace(/\$\$?/g, '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+  withoutStepNames(t).replace(/\[\[b:[^\]]*\]\]/g, '').replace(/\[\[\/?[a-z]+\]\]/g, '').replace(/\$\$?/g, '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
 
 // ---------- 检查题、卡点、小结、模式 ----------
 

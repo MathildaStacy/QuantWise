@@ -20,7 +20,7 @@ import type { MarketClient } from '../../src/market/client';
 import { parseQuotes, type KBar } from '../../src/market/tencent';
 import { DEFAULT_REFRESH, type Refresher } from '../../src/sim/refresher';
 import { Simulator } from '../../src/sim/simulator';
-import { ensureSample } from '../../src/study/library';
+import { ensureSample, importMarkdownText } from '../../src/study/library';
 import {
   askStudy,
   backToMain,
@@ -639,5 +639,48 @@ test('没问成的提问（401）重试后不再发给模型，对话里折叠�
   const turns = turnsOf(s().messages);
   expect(turns.filter(failedTurn)).toHaveLength(2);
   expect(failedTurn(turns[turns.length - 1])).toBe(false);
+  await core.db.close();
+});
+
+test('英文书第一次讲解顺带请模型给中文步骤名：个数不对不用；存进进度、换掉路线图后不再要；中文书不要', async () => {
+  const core = await setup();
+  const { bookId } = await importMarkdownText(core.db, [
+    '# 3 Labeling',
+    '## 3.6 Meta-Labeling',
+    'Suppose that you have a model for setting the side of the bet (long or short). You just need to learn the size of that bet, which includes the possibility of no bet at all.',
+    'Rather than writing an entirely new getEvents function, we will make some adjustments to the previous code, in order to handle meta-labeling.',
+    'SNIPPET 3.6 EXPANDING getEvents TO INCORPORATE META-LABELING',
+    '```python\ndef getEvents(close, tEvents, ptSl, trgt, minRet, numThreads, t1=False, side=None):\n    return events\n```',
+    'Now the possible values for labels are 0 and 1, as opposed to the previous feasible values of -1, 0 and 1.',
+  ].join('\n\n'), 'meta.md', 'meta-labeling', '2026-11-05T10:00:00+08:00');
+  await openSection(core, bookId, '3.6');
+  expect(s().language).toBe('en');
+  expect(s().steps.map(x => x.title)).toEqual(['Suppose that you have a…', 'Rather than writing an…', 'Snippet 3.6 getEvents', 'The possible values for…']);
+  const names = ['已有方向，只学下多大', '改 getEvents 处理元标签', 'Snippet 3.6 扩展 getEvents', '标签变成 0 和 1'];
+
+  replies = [text('先讲第 1 步 [[b:3.6#1]]。\n[[steps]]已有方向|改 getEvents|标签[[/steps]]')];
+  await askStudy(core, quickAsk(s(), 'start'));
+  expect(lastUser(sent[sent.length - 1])).toContain('[[steps]]名1|名2|…[[/steps]]，按顺序给上面 4 步各起一个中文名');
+  expect(s().steps[0].title).toBe('Suppose that you have a…');
+  expect(progressNow(s()).names).toBeUndefined();
+
+  replies = [text('第 2 步……\n\n[[steps]]' + names.join('|') + '[[/steps]]')];
+  await askStudy(core, quickAsk(s(), 'next'));
+  expect(lastUser(sent[sent.length - 1])).toContain('按顺序给上面 4 步各起一个中文名');
+  expect(s().steps.map(x => x.title)).toEqual(names);
+  expect(progressNow(s()).names).toEqual({ key: '1-1,2-2,3-4,5-5', titles: names });
+
+  replies = [text('第 3 步……')];
+  await askStudy(core, quickAsk(s(), 'next'));
+  const third = lastUser(sent[sent.length - 1]);
+  expect(third).not.toContain('[[steps]]');
+  expect(third).toContain('3. Snippet 3.6 扩展 getEvents（¶3–4）');
+  await openSection(core, bookId, '3.6');
+  expect(s().steps[1].title).toBe('改 getEvents 处理元标签');
+
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  replies = [text('动量……')];
+  await askStudy(core, quickAsk(s(), 'start'));
+  expect(lastUser(sent[sent.length - 1])).not.toContain('[[steps]]');
   await core.db.close();
 });

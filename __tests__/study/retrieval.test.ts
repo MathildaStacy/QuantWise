@@ -3,7 +3,7 @@
  * 没问成的提问不再发给模型，「用真实行情举例」按段落内容选工具，步骤标题，复现结果存进研究手记。
  */
 import type { StoredMessage } from '../../src/ai/types';
-import { planSteps } from '../../src/book/steps';
+import { applyNames, planSteps, stepKey } from '../../src/book/steps';
 import type { BookBlock, BookSection } from '../../src/book/types';
 import { empirical, lead, quick } from '../../src/study/quick';
 import { expandTerm } from '../../src/study/glossary';
@@ -234,10 +234,39 @@ describe('步骤标题和分组', () => {
     ];
     const steps = planSteps(blocks);
     expect(steps.map(s => [s.from, s.to])).toEqual([[1, 1], [2, 3], [4, 4], [5, 7]]);
-    expect(steps[1].title).toBe('表3.21 动量和市值独立双重排序');
-    expect(steps[2].title).toBe('图3.22 双重排序构建的动量因子累');
+    expect(steps[1].title).toBe('表 3.21 动量 × 市值双重排序');
+    expect(steps[2].title).toBe('图 3.22 动量因子累计收益率');
     expect(planSteps([blk('y', 1, 'Low | High', 'table')])[0].title).toBe('表格');
-    expect(planSteps([blk('y', 1, '表3.1 收益率\nLow | High', 'table')])[0].title).toBe('表3.1 收益率');
+    expect(planSteps([blk('y', 1, '表3.1 收益率\nLow | High', 'table')])[0].title).toBe('表 3.1 收益率');
+  });
+
+  it('步骤名（PM 走查第 3 项）：跳过对读者说的半句和状语从句，取双重排序，合并分图编号，英文不截半个词', () => {
+    const one = (text: string, title = '动量因子实证') => planSteps([blk('z', 1, text)], sec('3.5.3', title))[0].title;
+    expect(one('熟悉A股市场的读者可能有这样的体会，无论使用哪个时间周期计算动量都无法出现显著的动量效应，而更多时候表现出的是反转效应，即前期涨幅高（低）的股票未来的收益率低（高）。')).toBe('更多时候表现出的是反转效应');
+    expect(one('接下来，关注动量和市值进行双重排序的检验结果。无论采用等权重还是市值加权，赢家组的收益率都低于输家组。')).toBe('动量 × 市值双重排序');
+    // 括号里的句号还算断句，两句不连成一句
+    expect(one('此外，他们指出一些神经元作用于图片的水平方向，而另一些神经元作用于其他方向（两个神经元可能有相同的接受野，但是作用于不同方向。）他们也注意到有些神经元有比较大的接受野。', '视觉皮层的架构')).toBe('另一些神经元作用于其他方向');
+    const figure = planSteps([
+      blk('f', 1, '', 'img'),
+      blk('f', 2, 'Panel B: 动量多空组合（等权重）\n图3.21 双重排序构建的动量因子累计收益率（等权重）', 'img'),
+      blk('f', 3, 'Panel A: 动量最强组和动量最弱组（市值加权）', 'img'),
+      blk('f', 4, 'Panel B: 动量多空组合（市值加权）\n图3.22 双重排序构建的动量因子累计收益率（市值加权）', 'img'),
+    ], sec('3.5.3', '动量因子实证'));
+    expect(figure.map(x => x.title)).toEqual(['图 3.21–3.22 累计收益率']);
+    expect(one('Suppose that you have a model for setting the side of the bet (long or short). You just need to learn the size of that bet.', 'META-LABELING')).toBe('Suppose that you have a…');
+    const code = planSteps([
+      blk('c', 1, 'SNIPPET 3.6 EXPANDING getEvents TO INCORPORATE META-LABELING'),
+      blk('c', 2, 'def getEvents(close, tEvents, ptSl, trgt, minRet, numThreads, t1=False, side=None):\n    return events', 'code'),
+    ], sec('3.6', 'META-LABELING'));
+    expect(code.map(x => x.title)).toEqual(['Snippet 3.6 getEvents']);
+  });
+
+  it('存下来的步骤名只在路线图切法没变时用', () => {
+    const st = planSteps([blk('k', 1, '第一段讲动量的定义，篇幅比较长。'.repeat(8)), blk('k', 2, '第二段讲结果，篇幅也比较长。'.repeat(8))]);
+    expect(stepKey(st)).toBe('1-1,2-2');
+    expect(applyNames(st, { key: '1-1,2-2', titles: ['动量的定义', '结果'] }).map(x => x.title)).toEqual(['动量的定义', '结果']);
+    expect(applyNames(st, { key: '1-2', titles: ['整节'] })).toBe(st);
+    expect(applyNames(st, null)).toBe(st);
   });
 });
 
