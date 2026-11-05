@@ -204,6 +204,10 @@ test('听讲：进来不请求模型；开讲后显示讲解、引用和真实�
   ];
   expect(r.text()).not.toContain('考考我');
   await r.press('更多讲解方式');
+  // 每个讲解方式下面一行小字写明这次会做什么；3.1 第 2 步讲的是公式和去掉最近 1 个月，画图标出那段
+  expect(r.text()).toContain('出一道选择题，答完给解析');
+  expect(r.text()).toContain('画一张真实行情图，标出讲到的那段，数字从日线现算');
+  expect(r.text()).toContain('按书里的口径用因子检验跑一次，股票池跟书里的样本走');
   await r.press('考考我');
   expect(r.text()).not.toContain('11 ÷ 10');
   await r.press('过去上涨 10%');

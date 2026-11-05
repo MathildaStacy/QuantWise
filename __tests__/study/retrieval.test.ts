@@ -173,6 +173,33 @@ describe('「用真实行情举例」按段落内容选工具', () => {
     expect(r.question).toContain('t 值');
   });
 
+  it('底栏的「用真实行情举例」按这一步的原文分流，和段落菜单一致；按钮下的小字写明这次会做什么', () => {
+    const a = quick('real', { steps, step: 0, stepText: cross });
+    expect(a.question).toContain('factor_test');
+    expect(a.question).toContain('control');
+    expect(a.question).not.toContain('用 plot_chart 画图');
+    expect(a.hint).toContain('用因子检验在 A 股跑一次');
+    // 动量组合的回撤是多空组合的事：先看横截面，走因子检验（多空净值能看到那次回撤）
+    expect(quick('real', { steps, step: 0, stepText: '动量组合在市场急转弯时会出现很深的回撤，比如熊市末期反弹。' }).question).toContain('factor_test');
+    const dd = '2015 年股灾时，指数从高点回撤近一半，随后出现剧烈反弹。';
+    expect(empirical(dd)).toBe(false);
+    const e = quick('real', { steps, step: 0, stepText: dd });
+    expect(e.question).toContain('find');
+    expect(e.question).toContain('不凭记忆挑月份');
+    expect(e.hint).toContain('让工具在真实数据里找出');
+    const p = quick('real', { steps, step: 0, stepText: price });
+    expect(p.question).toContain('用 plot_chart 画图，讲到哪段行情就用 focus 标出那段');
+    expect(p.hint).toContain('画一张真实行情图');
+    // 不给这一步的原文时照旧画图
+    expect(quick('real', { steps, step: 0 }).question).toContain('用 plot_chart 画图');
+    // 「这个因子在 A 股有效吗？」不写死示例池
+    const f = quick('factor', { steps, step: 0 });
+    expect(f.question).not.toContain('在示例池上检验');
+    expect(f.question).toContain('zz1000');
+    expect(f.hint).toBeTruthy();
+    expect(quick('next', { steps: [...steps, { index: 1, title: '反转', from: 4, to: 5 }], step: 0 }).hint).toBe('接着讲第 2 步「反转」');
+  });
+
   it('只问一句：标签写「解释这一句」，问题带这一句；原文开头在句末截断', () => {
     const q = quick('explainBlock', { steps, step: 0, block: { label: 'p.168', id: '3.5.3#1', text: cross, sentence: '赢家组合跑输了输家组合。' } });
     expect(q.label).toBe('解释这一句 · p.168');

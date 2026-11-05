@@ -564,9 +564,13 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
       </AiSheet> : null}
       {actionsOpen ? <AiSheet title="更多讲解方式" visible onClose={() => setActionsOpen(false)}>
         <ScrollView style={st.steps}>
-          {bar.slice(1).map(k => <Pressable key={k} style={st.step} disabled={!!busy} accessibilityRole="button" accessibilityState={{ disabled: !!busy }} onPress={() => { setActionsOpen(false); runQuick(k); }}>
-            <Text style={st.stepT}>{quickAsk(s, k).label}</Text>
-          </Pressable>)}
+          {bar.slice(1).map(k => {
+            const q = quickAsk(s, k);
+            return <Pressable key={k} style={st.step} disabled={!!busy} accessibilityRole="button" accessibilityState={{ disabled: !!busy }} accessibilityHint={q.hint} onPress={() => { setActionsOpen(false); runQuick(k); }}>
+              <Text style={st.stepT}>{q.label}</Text>
+              {q.hint ? <Text style={st.stepStatus}>{q.hint}</Text> : null}
+            </Pressable>;
+          })}
           {busy ? <Text style={st.notice}>讲解结束后可继续提问。</Text> : null}
         </ScrollView>
       </AiSheet> : null}

@@ -26,6 +26,8 @@ export interface Quick {
   question: string;
   /** 这次要讲第几步（从 0 开始）；不改步骤的动作没有。 */
   step?: number;
+  /** 按钮下面的一行小字：这次会做什么（「用因子检验在 A 股跑一次，和书里的数字对照」）。 */
+  hint?: string;
 }
 
 /** 这一节像不像在讲某个能用价量数据检验的因子：决定要不要出「这个因子在 A 股有效吗？」。 */
@@ -41,6 +43,10 @@ export const empirical = (text: string) =>
   (/分组|组合|多空|赢家|输家|截面|排序|t\s*-?\s*值|t-stat|信息系数|月均收益|显著|单调|decile|quintile|portfolio|long[-–\s/]short|cross[-\s]section|winners?|losers?|t-value|significan|sort/i.test(text) ||
     /(?<![A-Za-z])(?:Rank )?IC(?![A-Za-z])/.test(text));
 
+/** 这一段讲的是不是一段具体的行情（回撤、暴跌、急涨、波动聚集）：是的话让 plot_chart 用 find 在数据里找，不凭记忆挑月份。 */
+export const episodic = (text: string) =>
+  /回撤|暴跌|急跌|崩盘|股灾|急涨|暴涨|大涨|反弹|波动聚集|剧烈波动|drawdown|crash|rally|rebound|volatility cluster/i.test(text);
+
 /** 发给模型的原文开头：在句末截断，最多 n 字。 */
 export function lead(text: string, n = 300): string {
   if (text.length <= n) return text;
@@ -49,9 +55,13 @@ export function lead(text: string, n = 300): string {
   return (end > n * 0.4 ? cut.slice(0, end + 1) : cut) + '…';
 }
 
+/**
+ * stepText 是当前这一步的原文：底栏的「用真实行情举例」按它分流，和段落菜单同一套判断——
+ * 横截面结论走因子检验并和书里的数字对照，讲回撤、暴涨、波动的用 find 找那段行情，别的画图标出讲到的那段。
+ */
 export function quick(
   kind: QuickKind,
-  o: { steps: LessonStep[]; step: number; block?: { label: string; id?: string; text: string; sentence?: string } },
+  o: { steps: LessonStep[]; step: number; block?: { label: string; id?: string; text: string; sentence?: string }; stepText?: string },
 ): Quick {
   const st = (k: number) => o.steps[k];
   const name = (k: number) => '第 ' + (k + 1) + ' 步「' + (st(k)?.title ?? '') + '」';
@@ -60,25 +70,33 @@ export function quick(
   const at = b ? (b.id ? '[' + b.id + ']（' + b.label + '）' : '（' + b.label + '）') : '';
   const said = b ? (b.sentence ? '里的这一句：「' + b.sentence.trim() + '」' : '：' + lead(b.text)) : '';
   const cross = b && empirical(b.sentence ?? b.text);
+  const stepCross = !!o.stepText && empirical(o.stepText);
+  const stepEpisode = !!o.stepText && episodic(o.stepText);
   switch (kind) {
     case 'start':
       return { kind, label: '开始讲第 ' + (o.step + 1) + ' 步', question: '开始讲' + name(o.step) + '。', step: o.step };
     case 'next':
-      return { kind, label: '懂了，继续', question: '懂了，继续讲' + name(o.step + 1) + '。', step: o.step + 1 };
+      return { kind, label: '懂了，继续', question: '懂了，继续讲' + name(o.step + 1) + '。', step: o.step + 1, hint: '接着讲' + name(o.step + 1) };
     case 'skip':
-      return { kind, label: '下一步熟，跳过', question: name(o.step + 1) + '我熟，跳过，用一句话交代它讲什么，然后讲' + name(o.step + 2) + '。', step: o.step + 2 };
+      return { kind, label: '下一步熟，跳过', question: name(o.step + 1) + '我熟，跳过，用一句话交代它讲什么，然后讲' + name(o.step + 2) + '。', step: o.step + 2, hint: '一句话带过' + name(o.step + 1) + '，接着讲' + name(o.step + 2) };
     case 'again':
-      return { kind, label: '换个说法', question: '换个角度再讲一次' + name(o.step) + '，别重复原话。' };
+      return { kind, label: '换个说法', question: '换个角度再讲一次' + name(o.step) + '，别重复原话。', hint: '换个角度把这一步再讲一次' };
     case 'example':
-      return { kind, label: '举个例子', question: '给' + name(o.step) + '举个例子。' };
+      return { kind, label: '举个例子', question: '给' + name(o.step) + '举个例子。', hint: '编一个小例子，不用真实行情' };
     case 'real':
-      return { kind, label: '用真实行情举例', question: '用真实的 A 股行情给' + name(o.step) + '举个例子：用 plot_chart 画图，讲到哪段行情就用 focus 标出那段，数字以工具结果为准。' };
+      if (stepCross) {
+        return { kind, label: '用真实行情举例', hint: '这一步讲的是股票之间的规律：用因子检验在 A 股跑一次，和书里的数字对照', question: '用真实的 A 股数据给' + name(o.step) + '举个例子。这一步说的是股票之间的横截面规律：用 factor_test 按书里的口径（因子、分组、调仓周期、加权，控制了市值的用 control）在 A 股跑一次，把多空每期收益、t 值、IC 和书里的数字对照；单只股票的图证明不了这类结论，需要单只股票的例子时再用 plot_chart。数字以工具结果为准。' };
+      }
+      if (stepEpisode) {
+        return { kind, label: '用真实行情举例', hint: '让工具在真实数据里找出跌得最深、涨得最多或波动最大的一段，画图标出来', question: '用真实的 A 股行情给' + name(o.step) + '举个例子：这一步讲到一段具体行情（回撤、急涨或波动），用 plot_chart 的 find 让工具在数据里找出那段，图上标出来，不凭记忆挑月份；数字以工具结果为准。' };
+      }
+      return { kind, label: '用真实行情举例', hint: '画一张真实行情图，标出讲到的那段，数字从日线现算', question: '用真实的 A 股行情给' + name(o.step) + '举个例子：用 plot_chart 画图，讲到哪段行情就用 focus 标出那段，数字以工具结果为准。' };
     case 'factor':
-      return { kind, label: '这个因子在 A 股有效吗？', question: '这一节讲的因子在 A 股有效吗？用 factor_test 在示例池上检验一次，按结果说结论。' };
+      return { kind, label: '这个因子在 A 股有效吗？', hint: '按书里的口径用因子检验跑一次，股票池跟书里的样本走', question: '这一节讲的因子在 A 股有效吗？先写书里的定义和口径，用 factor_test 选最接近的参数检验一次：书里用全市场或中小盘样本时用 universe = zz1000 或 zz500，大盘股用 hs300；数据还没准备时先让用户点「准备数据」，示例池只当示意。按 t 值、IC 和期数说结论。' };
     case 'quiz':
-      return { kind, label: '考考我', question: '考考我' + name(o.step) + '：用 ask_quiz 出一道题。' };
+      return { kind, label: '考考我', question: '考考我' + name(o.step) + '：用 ask_quiz 出一道题。', hint: '出一道选择题，答完给解析' };
     case 'finish':
-      return { kind, label: '整理本节小结', question: '这一节我懂了，请起草本节小结（propose_section_wrapup）。' };
+      return { kind, label: '整理本节小结', question: '这一节我懂了，请起草本节小结（propose_section_wrapup）。', hint: '起草摘要、卡点和闪卡，你确认后才保存' };
     case 'explainBlock':
       return b!.sentence
         ? { kind, label: '解释这一句 · ' + b!.label, question: '用 150 字以内解释 ' + at + said + '。结合整段和前后文讲，别展开整段。' }

@@ -396,16 +396,20 @@ export interface StudyAsk {
   translation?: boolean;
 }
 
-export function quickAsk(s: StudySession, kind: QuickKind, block?: BookBlock, sentence?: string): StudyAsk {
+export function quickAsk(s: StudySession, kind: QuickKind, block?: BookBlock, sentence?: string): StudyAsk & { hint?: string } {
   const step = block ? s.steps.findIndex(x => x.from <= block.no && block.no <= x.to) : s.state.step;
+  const cur = s.steps[Math.max(0, step)];
   const q = quick(kind, {
     steps: s.steps,
     step: Math.max(0, step),
     block: block ? { label: citeLabel(s.section, block), id: s.section.id + '#' + block.no, text: block.text, sentence } : undefined,
+    // 底栏的动作按当前这一步的原文分流（和段落菜单同一套判断）
+    stepText: cur ? s.blocks.filter(b => b.no >= cur.from && b.no <= cur.to).map(b => b.text).join('\n') : undefined,
   });
   return {
     label: q.label,
     question: q.question,
+    ...(q.hint ? { hint: q.hint } : {}),
     step: q.step,
     skip: kind === 'skip' ? s.state.step + 1 : undefined,
     pinSeq: kind === 'explainBlock' ? block?.seq : undefined,
