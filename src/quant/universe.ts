@@ -138,7 +138,7 @@ export function lastClosedDay(
 
 /**
  * 这只要不要重取：没有日线；最后一根早于 want（最近收盘的交易日）；以前只取了 750 / 640 根；
- * 或者最后一根是在那天 15:30 以前取的（v1.10.1 以前盘中准备会存下当天还没收盘的那根，日期已经是最新的，
+ * 或者最后一根是在那天 15:30 以前取的（v1.10.2 以前盘中准备会存下当天还没收盘的那根，日期已经是最新的，
  * 收盘后照旧算不过期，要到下一个交易日收盘才重取）。fetchedAt 是北京时间的 ISO（带 +08:00），按字符串比。
  */
 function needsFetch(m: quantRepo.QfqMeta | undefined, want: DateStr): boolean {
