@@ -105,6 +105,14 @@ test('讲解里的宽表第一列固定：行名不跟着横滑，两边同一�
     expect(words(scroller)).not.toContain(name);
     expect(words(tree.root)).toContain(name);
   }
+  // 第一列是一组数（没有行名列）时不固定，整张表一起横滑
+  const numeric = '| Low | 2 | 3 | 4 | High | 多空 |\n|---|---|---|---|---|---|\n| 1.19(1.60) | 1.32 | 1.47 | 1.50 | 1.14 | -0.04 |\n| 0.87(1.21) | 0.82 | 0.88 | 0.61 | 0.95 | 0.08 |';
+  let plain!: ReturnType<typeof create>;
+  await act(async () => {
+    plain = create(<Markdown text={numeric} onLink={jest.fn()} />);
+  });
+  expect(plain.root.findAllByType(ScrollView).some(n => n.props.accessibilityLabel === '表格，第一列固定，其余列可横向滚动')).toBe(false);
+  await act(async () => plain.unmount());
   // 只取原生节点（组件节点和原生节点 props 一样，会重复）
   const natural = () =>
     tree.root.findAll(

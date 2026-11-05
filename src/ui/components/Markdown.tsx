@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { parseMarkdown, type MdInline } from '../../ai/markdown';
 import { splitMissing } from '../../ai/provenance';
+import { labelColumn } from '../../book/table';
 import { aiColor as c } from '../aiTheme';
 import { color, num } from '../theme';
 
@@ -127,8 +128,8 @@ function Table({
       </Text>
     </View>
   );
-  // 比屏幕宽时第一列（行名）固定在左边，只横滑后面的列（PM 走查第 1 项）
-  const freeze = count >= 3 && total > available + 2 && widths[0] <= available * 0.45;
+  // 比屏幕宽时第一列（行名）固定在左边，只横滑后面的列（PM 走查第 1 项）；第一列是一组数时不固定
+  const freeze = count >= 3 && total > available + 2 && widths[0] <= available * 0.45 && labelColumn(rows.map(row => (row[0] ?? []).map(x => x.text).join('')));
   if (!freeze) {
     return (
       <ScrollView

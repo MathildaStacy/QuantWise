@@ -44,6 +44,12 @@ test('宽表冻结行名列：第一列不跨到第二列，占满整行的小�
   // 第一列的格子跨到第二列（不是整行）：不冻结
   expect(freezableFirstColumn(parseBookTable('', '<table><tr><td colspan="2">A</td><td>B</td></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>')!)).toBe(false);
   expect(freezableFirstColumn(parseBookTable('| A | B |\n| 1 | 2 |')!)).toBe(false);
+  // 第一列是一组数（表 3.20 的 Low 组，没有行名列）：不冻结；表 3.21 的 Small、2、3 和表 3.19 的「动量」「总市值」是行名
+  const t320 = parseBookTable('', '<table><tr><td colspan="4">Panel A: 等权重</td></tr><tr><td>Low</td><td>2</td><td>High</td><td>High-Low</td></tr><tr><td>1.19(1.60)</td><td>1.32(1.78)</td><td>1.14(1.73)</td><td>-0.04(-0.14)</td></tr><tr><td colspan="4">Panel B: 市值加权</td></tr><tr><td>0.87(1.21)</td><td>0.82(1.13)</td><td>0.95(1.49)</td><td>0.08(0.20)</td></tr></table>')!;
+  expect(freezableFirstColumn(t320)).toBe(false);
+  const t321 = parseBookTable('', '<table><tr><td></td><td>Low</td><td>High</td><td>High-Low</td></tr><tr><td>Small</td><td>1.94(2.56)</td><td>1.70(2.17)</td><td>-0.23(-0.91)</td></tr><tr><td>2</td><td>1.48(1.92)</td><td>1.39(1.91)</td><td>-0.09(-0.39)</td></tr></table>')!;
+  expect(freezableFirstColumn(t321)).toBe(true);
+  expect(freezableFirstColumn(parseBookTable('', '<table><tr><td></td><td>Low</td><td>High</td></tr><tr><td>动量</td><td>-26%</td><td>92%</td></tr><tr><td>总市值(亿元)</td><td>107.23</td><td>169.11</td></tr></table>')!)).toBe(true);
   // 跨两行的表头：两行一起冻结
   const tall = parseBookTable('', '<table><tr><th rowspan="2">市值</th><th colspan="2">动量</th></tr><tr><th>低</th><th>高</th></tr><tr><td>小</td><td>1</td><td>2</td></tr><tr><td>大</td><td>3</td><td>4</td></tr><tr><td>多空</td><td>5</td><td>6</td></tr></table>')!;
   expect(headerRowCount(tall)).toBe(2);
