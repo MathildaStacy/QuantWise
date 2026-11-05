@@ -1,17 +1,19 @@
 /**
- * 行情与因子工具（QUANTWISE_DESIGN.md §8）：plot_chart、factor_test、get_factor_values。
+ * 行情与因子工具（QUANTWISE_DESIGN.md §8）：plot_chart、factor_test、get_factor_values、meta_label_test。
  * AI 助手和伴读共用。每个工具把算好的图存进 ToolUi.chart，给模型的是同一份数据的文字摘要。
  */
 import type { AppCore } from '../../app/boot';
-import * as quantRepo from '../../data/quantRepo';
 import { addDays, type DateStr } from '../../engine/calendar';
 import { beijingIso, beijingNow } from '../../market/clock';
 import { T } from '../../engine/session';
-import { runFactorTest, SampleError, testSummary } from '../../quant/backtest';
+import { monthly, runFactorTest, SampleError, testSummary, type TestResult } from '../../quant/backtest';
+import { TRADING_DAYS } from '../../quant/indicators';
 import {
   benchFocus,
   compareChart,
   factorCharts,
+  shapeRho,
+  type BookGroups,
   findEpisode,
   FIND_NAME,
   focusStats,
@@ -28,12 +30,20 @@ import {
 } from '../../quant/charts';
 import { FACTOR_IDS, FACTORS, type FactorId } from '../../quant/factors';
 import { SUB_NAME } from '../../quant/charts';
+import { LABEL_DEFAULTS, labelsChart, type LabelInput } from '../../quant/labels';
 import {
+  INDEX_POOLS,
   isAStock,
+  isIndexPool,
+  klineSince,
   loadPanel,
+  poolStatus,
   prepareBars,
+  QFQ_DAYS,
   universeCodes,
+  UNIVERSE_IDS,
   UNIVERSE_NAME,
+  type IndexPoolId,
   type UniverseEnv,
   type UniverseId,
 } from '../../quant/universe';
@@ -46,6 +56,35 @@ export interface QuantOutcome {
   output: string;
   label: string;
   charts?: ChartData[];
+  /** 指数池要准备或更新数据：讲解里这条结果下面出「准备数据」（pending = 还没算，只是提示）。 */
+  prepare?: { pool: IndexPoolId; pending: boolean };
+}
+
+/** 讲解里按块号取书里的分组表，合并到本次的组数（取不到时是原因）。 */
+export type BookTableResolver = (ref: { cite: string; panel?: string; row?: string }, groups: number) => Promise<BookGroups | string>;
+
+const pp = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+
+/** 和书里那一行分组收益对照（书里的数由 App 从表格单元格取，本次的数按书里的单位折算）。 */
+function bookLines(b: BookGroups, r: TestResult): string[] {
+  const hold = r.input.hold;
+  const ours = r.groupMeans.map(v => (b.unit === 'annual' ? (v * TRADING_DAYS) / hold : monthly(v, hold)) * 100);
+  const unit = b.unit === 'monthly' ? '月均' : b.unit === 'annual' ? '年化' : '（表注没写单位）';
+  const lines = [
+    '书中 ' + b.label + '（App 从书里的表格单元格读出，' + b.cite + '）' + unit + '，' + b.raw.length + ' 组从低到高：' + b.raw.map(pp).join('，') +
+      (b.spread ? '；多空 ' + pp(b.spread.mean) + (b.spread.t != null ? '（t ' + b.spread.t.toFixed(2) + '）' : '') : ''),
+  ];
+  // 本次的月均在摘要的「折成月度」一行；年化另写一行
+  const merged = b.merged ? '按本次 ' + r.input.groups + ' 组对照（' + b.merged + '）：书中 ' + b.values.map(pp).join('，') : '';
+  if (b.unit === 'annual') {
+    lines.push((merged ? merged + '；' : '') + '本次折成年化（每期 × 252 / ' + hold + '）：' + ours.map(pp).join('，'));
+  } else if (b.unit === 'monthly') {
+    if (merged) lines.push(merged + '（本次的月均见上面「折成月度」一行）');
+  } else {
+    lines.push('书里的表没写单位，只对照形状，不对照大小' + (merged ? '；' + merged : ''));
+  }
+  lines.push('分组收益的形状（组序和各组收益的秩相关，App 算）：书中 ' + b.rho.toFixed(3) + '（' + b.raw.length + ' 组）· 本次 ' + shapeRho(r.groupMeans).toFixed(3) + '（' + r.input.groups + ' 组）');
+  return lines;
 }
 
 export function universeEnv(core: AppCore): UniverseEnv {
@@ -99,7 +138,7 @@ function barsFetcher(core: AppCore, n: number | undefined, anchors: DateStr[]) {
   const start = addDays(sorted[0], -Math.ceil(((n ?? 250) + 140) * 1.5));
   const late = addDays(sorted[sorted.length - 1], 400);
   const end = late < beijingIso().slice(0, 10) ? late : '';
-  return (x: { code: string; type: string }) => retryOnce(() => core.client.klineRange(x.code, x.type, start, end, 'qfq'));
+  return (x: { code: string; type: string }) => retryOnce(() => klineSince(core.client, x.code, x.type, start, end));
 }
 
 async function needCode(core: AppCore, v: unknown) {
@@ -119,23 +158,40 @@ async function needCode(core: AppCore, v: unknown) {
   }
 }
 
-/** 股票池 → 代码；自动准备示例池和自选，沪深 300 没准备好时返回提示（不是错误）。 */
-async function poolOf(core: AppCore, args: Record<string, unknown>) {
+type Pool =
+  | { codes: string[]; name: string; id: string; stale?: IndexPoolId; note?: string }
+  | { pending: string; pool?: IndexPoolId };
+
+/**
+ * 股票池 → 代码；自动准备示例池和自选。指数池（沪深 300、中证 500 / 1000）要用户点「准备数据」：
+ * 没准备好时返回提示（不是错误），过期或只有 3 年数据时照常算、提示可以更新。
+ */
+async function poolOf(core: AppCore, args: Record<string, unknown>): Promise<Pool> {
   const env = universeEnv(core);
   if (Array.isArray(args.codes) && args.codes.length) {
     const codes = [...new Set(args.codes.map(c => normalizeCode(String(c))).filter((c): c is string => !!c && isAStock(c)))].slice(0, 300);
     await prepareBars(env, codes);
     return { codes, name: '自定义 ' + codes.length + ' 只', id: 'custom' };
   }
-  const id = (['sample', 'watch', 'hs300'].includes(String(args.universe)) ? args.universe : 'sample') as UniverseId;
-  const { codes, asOf } = await universeCodes(env, id);
-  if (id === 'hs300') {
-    const ready = await quantRepo.qfqMeta(core.db, codes);
-    if (codes.length < 250 || ready.size < codes.length * 0.9) {
-      return { pending: '沪深 300 的数据还没准备：请用户在「学习 → 读书 → 因子实验室」点「准备数据」（约 1 分钟、15 MB 流量）。现在可以先用 universe = sample（示例池 25 只）。' };
+  const id = (UNIVERSE_IDS.includes(args.universe as UniverseId) ? args.universe : 'sample') as UniverseId;
+  if (isIndexPool(id)) {
+    const p = INDEX_POOLS[id];
+    const st = await poolStatus(env, id);
+    if (!st.ready) {
+      return {
+        pool: id,
+        pending: p.short + ' 的数据还没准备（' + p.size + ' 只当前成分，每只约 5 年前复权日线，约 ' + p.minutes + ' 分钟、' + p.mb + ' MB 流量）。讲解里这条结果下面有「准备数据」按钮，用户点了会在准备好后接着重做这次检验；AI 助手里请用户去「学习 → 读书 → 因子实验室」准备。现在不要编结果；可以先用 universe = sample（示例池 25 只大盘股）做一次示意，并说明示例池说明不了书里的结论。',
+      };
     }
-    return { codes, name: UNIVERSE_NAME.hs300 + (asOf ? '，成分取于 ' + asOf : ''), id };
+    const stale = st.stale > st.codes.length * 0.1;
+    return {
+      codes: st.codes,
+      name: UNIVERSE_NAME[id] + (st.asOf ? '，成分取于 ' + st.asOf : ''),
+      id,
+      ...(stale ? { stale: id, note: '本地数据有 ' + st.stale + ' 只过期或只有约 3 年（最新到 ' + (st.lastDate ?? '—') + '），这次照常用已有数据；讲解里结果下面有「更新数据并重做」' } : {}),
+    };
   }
+  const { codes } = await universeCodes(env, id);
   if (!codes.length) {
     return { pending: '自选和持仓里没有 A 股个股，换 universe = sample。' };
   }
@@ -143,11 +199,46 @@ async function poolOf(core: AppCore, args: Record<string, unknown>) {
   return { codes: codes.slice(0, 60), name: UNIVERSE_NAME[id], id };
 }
 
+/** meta_label_test 的参数：超出范围的收回到范围里，slow 不比 fast 大时报错。 */
+function labelInputOf(args: Record<string, unknown>): LabelInput {
+  const d = LABEL_DEFAULTS;
+  const fast = int(args.fast, d.fast, 2, 60);
+  const slow = int(args.slow, d.slow, 5, 250);
+  if (slow <= fast) {
+    throw new Error('slow（' + slow + '）要比 fast（' + fast + '）大');
+  }
+  const mult = (v: unknown, def: number) => (v == null || !Number.isFinite(Number(v)) ? def : Math.max(0, Math.min(5, Math.round(Number(v) * 10) / 10)));
+  return { fast, slow, side: args.side === 'both' ? 'both' : 'long', pt: mult(args.pt, d.pt), sl: mult(args.sl, d.sl), hold: int(args.hold, d.hold, 5, 120) };
+}
+
+/** factor_test 的双重排序参数：control = size 时按市值分 2 / 3 / 5 组，默认 5 组、条件排序。 */
+function controlOf(args: Record<string, unknown>) {
+  if (args.control !== 'size') return undefined;
+  const groups = [2, 3, 5].includes(Number(args.control_groups)) ? Number(args.control_groups) : 5;
+  return { by: 'size' as const, groups, sort: args.control_sort === 'independent' ? ('independent' as const) : ('conditional' as const) };
+}
+
 export async function runQuantTool(
   core: AppCore,
   name: string,
   args: Record<string, unknown>,
+  bookTable?: BookTableResolver,
 ): Promise<QuantOutcome> {
+  if (name === 'meta_label_test') {
+    const r = await needCode(core, args.code);
+    const input = labelInputOf(args);
+    const bars = await retryOnce(() => klineSince(core.client, r.code, r.type, addDays(beijingIso().slice(0, 10), -QFQ_DAYS)));
+    const what = '元标签：' + r.name + ' · MA' + input.fast + '/' + input.slow + (input.side === 'both' ? ' 交叉' : ' 金叉');
+    try {
+      const c = labelsChart({ code: r.code, name: r.name, bars, input, n: args.bars == null ? undefined : int(args.bars, 250, 60, 750), today: openToday() });
+      return { output: c.text, label: what + ' · ' + c.chart.stats.signals + ' 次信号', charts: [c.chart] };
+    } catch (e) {
+      if (e instanceof SampleError) {
+        return { output: e.message, label: what + '：日线不够' };
+      }
+      throw e;
+    }
+  }
   if (name === 'plot_chart') {
     const r = await needCode(core, args.code);
     const n = args.bars == null ? undefined : int(args.bars, 250, 20, 750);
@@ -160,10 +251,12 @@ export async function runQuantTool(
       (c.kind === 'price' || c.kind === 'compare') && c.focus ? ' · 标出' + c.focus.map(f => '「' + f.label + '」').join('') : '';
     const compare = Array.isArray(args.compare) ? args.compare.slice(0, 4) : [];
     const today = openToday();
+    // 画图时刻：盘中画的图记下来，图脚写「11/4 10:32 盘中画」
+    const at = beijingIso();
     if (compare.length) {
       const all = [r, ...(await Promise.all(compare.map(c => needCode(core, c))))];
       const bars = await Promise.all(all.map(fetch));
-      const c = compareChart(all.map((x, i) => ({ code: x.code, name: x.name, bars: bars[i] })), { n, end, focus, takeaway, today });
+      const c = compareChart(all.map((x, i) => ({ code: x.code, name: x.name, bars: bars[i] })), { n, end, focus, takeaway, today, at });
       return { output: c.text, label: '画图：' + all.map(x => x.name).join(' / ') + ' 对比' + what(c.chart), charts: [c.chart] };
     }
     const sub = Object.keys(SUB_NAME).includes(String(args.sub)) ? (args.sub as SubKind) : undefined;
@@ -186,7 +279,7 @@ export async function runQuantTool(
         found.push(ep ? 'find：已经有 2 段重点区间，没有再找' : 'find：这段数据太短，没找到');
       }
     }
-    const c = priceChart({ code: r.code, name: r.name, bars, n, end, ma, band: args.band === true, sub, marks: args.marks === true, focus, points, takeaway, today });
+    const c = priceChart({ code: r.code, name: r.name, bars, n, end, ma, band: args.band === true, sub, marks: args.marks === true, focus, points, takeaway, today, at });
     const chart = c.chart as PriceChart;
     // 同期沪深 300：分清「跟着大盘」还是「自己的」涨跌（取不到就不写，不影响画图）
     const benchLines: string[] = [];
@@ -212,19 +305,46 @@ export async function runQuantTool(
   if (!FACTORS[factor]) {
     throw new Error('factor 只能是 ' + FACTOR_IDS.join(' / '));
   }
+  const control = name === 'factor_test' ? controlOf(args) : undefined;
+  if (control && factor === 'size') {
+    throw new Error('小市值因子本身就是按市值排序，不能再控制市值；去掉 control，或者换一个因子');
+  }
   const pool = await poolOf(core, args);
   if ('pending' in pool) {
-    return { output: pool.pending!, label: FACTORS[factor].name + '：数据还没准备' };
+    return { output: pool.pending, label: FACTORS[factor].name + '：数据还没准备', ...(pool.pool ? { prepare: { pool: pool.pool, pending: true } } : {}) };
   }
   const panel = await loadPanel(core.db, pool.codes);
   if (name === 'factor_test') {
-    const input = { factor, hold: [5, 10, 20, 60].includes(Number(args.hold)) ? Number(args.hold) : 20, groups: [3, 5, 10].includes(Number(args.groups)) ? Number(args.groups) : 5, costBp: int(args.cost_bp, 0, 0, 50), ...(args.weight === 'cap' ? { weight: 'cap' as const } : {}) };
+    const input = {
+      factor,
+      hold: [5, 10, 20, 60].includes(Number(args.hold)) ? Number(args.hold) : 20,
+      groups: [3, 5, 10].includes(Number(args.groups)) ? Number(args.groups) : 5,
+      costBp: int(args.cost_bp, 0, 0, 50),
+      ...(args.weight === 'cap' ? { weight: 'cap' as const } : {}),
+      ...(control ? { control } : {}),
+    };
+    const bookPeriods = args.book_periods == null ? undefined : int(args.book_periods, 0, 0, 2000) || undefined;
+    const stale = pool.stale ? { prepare: { pool: pool.stale, pending: false } } : {};
     try {
       const res = runFactorTest(panel, input);
-      return { output: testSummary(res, pool.name), label: '因子检验：' + FACTORS[factor].name + ' · ' + pool.name + ' · ' + input.groups + ' 组' + (input.weight === 'cap' ? '市值加权' : '') + ' · 每 ' + input.hold + ' 日 · ' + res.periods + ' 期', charts: factorCharts(res, pool.id, pool.name) };
+      const how = control ? '先按市值分 ' + control.groups + ' 组 × ' : '';
+      // 书里同口径的分组表：App 从表格单元格取数，画在各组收益图上；取不到时照常出结果，原因写给模型
+      const cite = typeof args.book_table === 'string' ? args.book_table.trim() : '';
+      const opt = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+      const found = cite && bookTable
+        ? await bookTable({ cite, panel: opt(args.book_panel), row: opt(args.book_row) }, input.groups).catch((e: unknown) => (e instanceof Error ? e.message : String(e)))
+        : null;
+      const book = found && typeof found !== 'string' ? found : undefined;
+      const bookNote = typeof found === 'string' ? ['书中的表（' + cite + '）没读出来：' + found + '。这次没有叠画书里的数'] : book ? bookLines(book, res) : [];
+      return {
+        output: [testSummary(res, pool.name, bookPeriods), ...bookNote, ...(pool.note ? [pool.note] : [])].join('\n'),
+        label: '因子检验：' + FACTORS[factor].name + ' · ' + pool.name + ' · ' + how + input.groups + ' 组' + (input.weight === 'cap' ? '市值加权' : '') + ' · 每 ' + input.hold + ' 日 · ' + res.periods + ' 期' + (book ? ' · 对照' + book.label : ''),
+        charts: factorCharts(res, pool.id, pool.name, book),
+        ...stale,
+      };
     } catch (e) {
       if (e instanceof SampleError) {
-        return { output: e.message, label: '因子检验：样本不够' };
+        return { output: e.message, label: '因子检验：样本不够', ...stale };
       }
       throw e;
     }

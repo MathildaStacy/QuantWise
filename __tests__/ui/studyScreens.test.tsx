@@ -204,6 +204,10 @@ test('听讲：进来不请求模型；开讲后显示讲解、引用和真实�
   ];
   expect(r.text()).not.toContain('考考我');
   await r.press('更多讲解方式');
+  // 每个讲解方式下面一行小字写明这次会做什么；3.1 第 2 步讲的是公式和去掉最近 1 个月，画图标出那段
+  expect(r.text()).toContain('出一道选择题，答完给解析');
+  expect(r.text()).toContain('画一张真实行情图，标出讲到的那段，数字从日线现算');
+  expect(r.text()).toContain('按书里的口径用因子检验跑一次，股票池跟书里的样本走');
   await r.press('考考我');
   expect(r.text()).not.toContain('11 ÷ 10');
   await r.press('过去上涨 10%');
@@ -324,19 +328,21 @@ test('从原文发起讲解：对话保留引用片段，点开回到原文', as
   const block = r.tree.root.findAll(n => typeof n.props.onPress === 'function' && String(n.props.accessibilityLabel).startsWith('3.1 ¶2：'))[0];
   await act(async () => { block.props.onPress(); });
   replies = [{ model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '这一段讲动量怎么算。' }], usage }];
-  await r.press('解释这一段');
+  // 3.1 ¶2 是公式：菜单按块类型写「解释这个公式」（PM 走查第 2 项）
+  await r.press('解释这个公式');
   expect(r.text()).toContain('这一段讲动量怎么算。');
   expect(r.text()).toContain('提问原文 · 3.1 ¶2');
   await r.press('查看提问原文 3.1 ¶2');
   expect(r.text()).toContain('原文 · 3.1 动量因子 ¶2');
 });
 
-test('段落菜单：只问其中一句；讲横截面结论的段落多一个「在 A 股复现这个结论」', async () => {
+test('段落菜单：只问其中一句；讲横截面结论的段落只有一项「在 A 股复现」（PM 走查第 2 项）', async () => {
   const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '2.1', mode: 'read' });
   const open = (label: string) => r.tree.root.findAll(n => typeof n.props.onPress === 'function' && String(n.props.accessibilityLabel).startsWith(label))[0];
   await act(async () => { open('2.1 ¶2：').props.onPress(); });
   expect(r.text()).toContain('只问其中一句（共 2 句）');
-  expect(r.text()).toContain('在 A 股复现这个结论');
+  expect(r.text()).toContain('"在 A 股复现"');
+  expect(r.text()).not.toContain('用真实行情举例');
   await r.press('只问其中一句（共 2 句）');
   const sentence = r.tree.root.findAll(n => n.props.accessibilityRole === 'radio' && typeof n.props.onPress === 'function')[1];
   await act(async () => { sentence.props.onPress(); });
@@ -596,7 +602,7 @@ test('关闭对照即停止：迟到响应不显示、不缓存，保留继续�
   } finally { setAiDeps({ fetch: fetchMock }); }
 });
 
-test('讲到某一段行情：图紧跟在调用的地方、讲解之前；黄色区间、前收、横轴日期、区间读数和看点；全屏有区间最高最低', async () => {
+test('讲到某一段行情：图紧跟在调用的地方、讲解之前；黄色区间、前收、横轴日期、区间读数和看点；卡片和全屏都有区间最高最低', async () => {
   const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '1.3' });
   replies = [
     { model: 'm', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tf', name: 'plot_chart', input: { code: 'sz300750', sub: 'dd', focus: [{ from: '2026-09', to: '2026-09' }], points: [{ date: '2026-09-15', label: '放量急跌' }], takeaway: '9 月一路走低，回撤加深' } }], usage },
@@ -608,6 +614,7 @@ test('讲到某一段行情：图紧跟在调用的地方、讲解之前；黄�
   expect(page).toContain('9 月 · 9/1–9/30 · 21 个交易日');
   expect(page).toContain('-19.93%');
   expect(page).toContain('收盘 363.55（8/31）→ 291.11（9/30）');
+  expect(page).toContain('区间最高收盘 358.10（9/1）· 最低 286.80（9/29）');
   expect(page).toContain('2026-07-27 至 10-26');
   // 图在讲这张图的文字之前
   expect(page.indexOf('宁德时代 · 回撤')).toBeGreaterThan(0);

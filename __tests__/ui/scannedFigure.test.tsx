@@ -4,7 +4,7 @@ import { Circle, Path } from 'react-native-svg';
 import type { Book, BookBlock } from '../../src/book/types';
 import type { FigureChart } from '../../src/book/figure';
 import { loadFigure, type SavedFigure } from '../../src/study/figures';
-import { ReaderFigures, ScannedFigure } from '../../src/ui/components/ScannedFigure';
+import { ReaderFigures, ScannedFigure, type FigureControl } from '../../src/ui/components/ScannedFigure';
 import { BookImage } from '../../src/ui/components/BookImage';
 import { BookFigureView } from '../../src/ui/components/BookFigureView';
 
@@ -47,16 +47,23 @@ test('缓存默认显示矢量图，可核对原图、放大和查看数据，�
   } finally { await act(async () => { tree.unmount(); }); }
 });
 
-test('通过图片下按钮生成；失焦停止请求，迟到结果不替换原图', async () => {
+test('从「图表操作」里的「AI 清晰重绘」生成，图下面不再堆操作；失焦停止请求，迟到结果不替换原图（PM 走查第 2 项）', async () => {
   jest.mocked(loadFigure).mockResolvedValue(null);
   let resolve!: (value: SavedFigure) => void;
   redraw.mockImplementation(() => new Promise(done => { resolve = done; }));
   let tree!: ReactTestRenderer;
-  const render = (active: boolean) => <ReaderFigures.Provider value={{ ...reader, active }}><ScannedFigure b={b} uri="file:///book/figure.jpg" compact={false} /></ReaderFigures.Provider>;
+  const controls = new Map<number, () => FigureControl>();
+  const render = (active: boolean) => <ReaderFigures.Provider value={{ ...reader, active, controls }}><ScannedFigure b={b} uri="file:///book/figure.jpg" compact={false} caption={<Text>{b.text}</Text>} /></ReaderFigures.Provider>;
   try {
     await act(async () => { tree = create(render(true)); });
-    await press(tree, 'AI 清晰重绘');
+    // 图下面只有图注
+    expect(texts(tree)).toEqual(['指数走势']);
+    expect(controls.get(b.seq)!()).toMatchObject({ busy: false, redone: false });
+    await act(async () => { controls.get(b.seq)!().run(); });
     expect(texts(tree)).toContain('停止识别');
+    expect(controls.get(b.seq)!().busy).toBe(true);
+    // 图注在图和识别状态之间
+    expect(texts(tree).indexOf('指数走势')).toBeLessThan(texts(tree).indexOf('停止识别'));
     const signal = redraw.mock.calls.at(-1)![1];
     await act(async () => { tree.update(render(false)); });
     expect(signal.aborted).toBe(true);

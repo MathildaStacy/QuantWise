@@ -6,8 +6,10 @@ import { beijingNow } from './clock';
 import {
   bonusUrl,
   financeUrl,
+  indexMembersUrl,
   parseBonus,
   parseFinance,
+  parseIndexMembers,
   parseProfile,
   profileUrl,
   type CompanyProfile,
@@ -259,6 +261,19 @@ export class MarketClient {
       const rows = parseSinaNode(JSON.parse(await this.get(sinaIndexNodeUrl('hs300', page))));
       out.push(...rows);
       if (rows.length < 100) {
+        break;
+      }
+    }
+    return [...new Map(out.map(x => [x.code, x])).values()];
+  }
+
+  /** 中证指数当前成分（东方财富数据中心，见 eastmoney.ts），type 是 INDEX_MEMBER_TYPE 里的值。 */
+  async indexMembers(type: string): Promise<{ code: string; name: string }[]> {
+    const out: { code: string; name: string }[] = [];
+    for (let page = 1; page <= 6; page++) {
+      const r = parseIndexMembers(JSON.parse(await this.get(indexMembersUrl(type, page))));
+      out.push(...r.rows);
+      if (page >= r.pages || !r.rows.length) {
         break;
       }
     }

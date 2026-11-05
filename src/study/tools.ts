@@ -14,6 +14,8 @@ import * as bookRepo from '../data/bookRepo';
 import * as studyRepo from '../data/studyRepo';
 import { beijingIso } from '../market/clock';
 import { estimateTokens } from '../ai/prompt';
+import type { BookGroups } from '../quant/charts';
+import { bookRowOf, fitGroups } from './bookTable';
 import { blockText, sectionText } from './prompt';
 import { searchBook, variantPattern } from './search';
 
@@ -96,9 +98,21 @@ const BOOK_TOOLS: ToolDef[] = [
 /** 伴读里能用的只读行情工具（复用 AI 助手的定义和实现）。 */
 export const MARKET_READ_TOOLS = ['get_benchmark', 'get_company_profile', 'get_financials', 'get_kline', 'get_quote', 'query_local_db', 'screen'];
 
+/** 讲解里的 factor_test 多三个参数：要对照的书中分组表（块号、Panel、行），App 从表格单元格取数画在各组收益图上。 */
+const BOOK_TABLE_PARAMS = {
+  book_table: { type: 'string', description: '要对照的书中分组收益表的块号，例如 "3.5.3#14"（对话里出现过的 (表) 块）。App 从表格单元格读出每组的数，画在各组收益图上，结果里写明两边分组收益的形状；不要自己抄书里的数' },
+  book_panel: { type: 'string', description: '表里有几个 Panel 时写哪一个，例如 "A" 或 "B"（和 weight 对应：书里等权的 Panel 配 weight = equal）' },
+  book_row: { type: 'string', description: 'Panel 里有几行时写哪一行的行名，例如 "Small"' },
+};
+
+const withBookTable = (t: ToolDef): ToolDef =>
+  t.name === 'factor_test'
+    ? { ...t, schema: { ...t.schema, properties: { ...(t.schema.properties as Record<string, unknown>), ...BOOK_TABLE_PARAMS } } }
+    : t;
+
 export const STUDY_TOOL_DEFS: ToolDef[] = [
   ...BOOK_TOOLS,
-  ...QUANT_TOOL_DEFS,
+  ...QUANT_TOOL_DEFS.map(withBookTable),
   ...TOOL_DEFS.filter(t => MARKET_READ_TOOLS.includes(t.name)),
 ].sort((a, b) => (a.name < b.name ? -1 : 1));
 
@@ -134,8 +148,8 @@ export async function runStudyTool(
     return { output: '这次只解释已经给出的实验结果，不调用工具、不重新计算。请直接根据给出的结果回答。', ui: { id, name, label: name + '（只解读已有结果，没有执行）', error: true } };
   }
   if (!BOOK_TOOLS.some(t => t.name === name)) {
-    // 行情、因子：和 AI 助手同一套实现；伴读不写记忆、不出操作卡
-    return runTool({ core: env.core, threadId: env.threadId, memoryMode: 'off', nextCardNo: () => 0, signal: env.signal }, id, name, argsJson);
+    // 行情、因子：和 AI 助手同一套实现；伴读不写记忆、不出操作卡；factor_test 能按块号取书里的分组表
+    return runTool({ core: env.core, threadId: env.threadId, memoryMode: 'off', nextCardNo: () => 0, signal: env.signal, bookTable: (ref, groups) => bookTableOf(env, ref, groups) }, id, name, argsJson);
   }
   let args: Record<string, unknown>;
   try {
@@ -247,6 +261,27 @@ async function bookTool(
     }
   }
   throw new Error('没有这个工具：' + name);
+}
+
+/** factor_test 的 book_table：「3.5.3#14」→ 这一块表格里的那一行分组收益，合并到本次的组数。表名在上一块时一起看。 */
+async function bookTableOf(env: StudyToolEnv, ref: { cite: string; panel?: string; row?: string }, groups: number): Promise<BookGroups | string> {
+  const m = /^\[?(?:b:)?([^#\]\s]+)#(\d+)/.exec(ref.cite.trim());
+  if (!m) {
+    return '块号要写成「小节号#块号」，例如 3.5.3#14';
+  }
+  const [, sid, no] = m;
+  if (!env.sections.some(x => x.id === sid)) {
+    return '没有小节「' + sid + '」';
+  }
+  const blocks = await bookRepo.sectionBlocks(env.core.db, env.bookId, sid);
+  const k = blocks.findIndex(b => b.no === Number(no));
+  if (k < 0 || blocks[k].type !== 'table') {
+    return sid + '#' + no + ' 不是表格';
+  }
+  const prev = blocks[k - 1];
+  const caption = prev && prev.type === 'p' && /^(?:表|Table)\s*\d/i.test(prev.text.trim()) ? prev.text : undefined;
+  const row = bookRowOf(blocks[k], { cite: sid + '#' + no, panel: ref.panel, row: ref.row, caption });
+  return typeof row === 'string' ? row : fitGroups(row, groups);
 }
 
 /** 从头取块，直到 LOAD_SECTION_TOKENS；至少一块。 */

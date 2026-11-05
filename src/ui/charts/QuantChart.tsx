@@ -17,15 +17,21 @@ import {
   fmtSub,
   focusSpan,
   focusStats,
+  groupScale,
   md,
   pct,
+  signed,
   SUB_NAME,
   type ChartData,
   type CompareChart,
   type Focus,
+  type GroupsChart,
+  type IcChart,
+  type LabelsChart,
   type PriceChart,
   type SubKind,
 } from '../../quant/charts';
+import { BARRIER_NAME, signalName, type LabelMark } from '../../quant/labels';
 import { groupColor, rc, SERIES_COLORS } from '../readTheme';
 import { color } from '../theme';
 import {
@@ -35,6 +41,7 @@ import {
   indexAt,
   labelWidth,
   linePath,
+  nearestEvent,
   niceTicks,
   pointCount,
   tickDecimals,
@@ -64,6 +71,8 @@ export const chartHeight = (c: ChartData, full = false) =>
       : 212
     : c.kind === 'compare'
     ? 206
+    : c.kind === 'labels'
+    ? 236
     : c.kind === 'groups'
     ? 140
     : 176;
@@ -126,7 +135,7 @@ export function QuantChart({
       onLayout={(e: LayoutChangeEvent) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
       accessible={!mini}
       accessibilityRole="image"
-      accessibilityLabel={mini ? undefined : chartTitle(data) + focusSpeech(data) + (full ? '，按住或拖动看每一天的数' : '，点一下或按住拖动看每一天的数，全屏有数据表')}
+      accessibilityLabel={mini ? undefined : chartTitle(data) + focusSpeech(data) + touchSpeech(data, full)}
       collapsable={false}
       {...(touch ? scrub.outer : null)}
     >
@@ -134,12 +143,27 @@ export function QuantChart({
         {base ? (
           <Svg width={w} height={h}>
             {base}
-            {!mini && pick != null && pick < n && data.kind !== 'groups' ? cursor(data, pick, n, box, w, fontScale, full, scrub.live) : null}
+            {mini
+              ? null
+              : data.kind === 'labels'
+              ? labelOverlay(data, pick != null && pick < n ? pick : null, w, h, fontScale, full, scrub.live)
+              : pick != null && pick < n && data.kind !== 'groups'
+              ? cursor(data, pick, n, box, w, fontScale, full, scrub.live)
+              : null}
           </Svg>
         ) : null}
       </View>
     </View>
   );
+}
+
+/** 读屏：图上能怎么点。各组收益图在卡片里不能点，全屏里按住看每一组；IC 图是每一期。 */
+function touchSpeech(c: ChartData, full: boolean): string {
+  if (c.kind === 'groups') {
+    return full ? '，按住或拖动看每一组的数' : '，各组的数写在图下，全屏有数据表';
+  }
+  const unit = c.kind === 'ic' ? '每一期' : c.kind === 'labels' ? '每一次信号' : '每一天';
+  return full ? '，按住或拖动看' + unit + '的数' : '，点一下或按住拖动看' + unit + '的数，全屏有数据表';
 }
 
 /** 读屏：「，重点区间 9 月 -19.93%」。 */
@@ -275,6 +299,19 @@ function plotBox(c: ChartData, w: number, h: number, fontScale: number, full: bo
   if (c.kind === 'compare') {
     const f = compareFrame(c, w, h, fontScale, full);
     return { L, R: f.R, top: f.top, bottom: f.axisY, y: f.main.y };
+  }
+  if (c.kind === 'labels') {
+    const f = labelsFrame(c, w, h, fontScale, full);
+    return { L, R: f.R, top: f.top, bottom: f.axisY, y: f.main.y };
+  }
+  // 柱状图：十字线的第 i 个点是第 i 根柱子的中心
+  if (c.kind === 'ic') {
+    const f = icFrame(c, w, h, fontScale);
+    return { L: f.X(0), R: f.X(f.n - 1), top: 0, bottom: f.axisY };
+  }
+  if (c.kind === 'groups') {
+    const f = groupsFrame(c, w, h);
+    return { L: f.X(0), R: f.X(f.n - 1), top: 0, bottom: h - 16 };
   }
   return { L, R: w - 4, top: 0, bottom: h - 16 };
 }
@@ -542,57 +579,253 @@ function draw(c: ChartData, w: number, h: number, extremes: boolean, fontScale: 
       const X = (i: number) => xAt(i, c.dates.length, L, R);
       const xs = c.dates.map((_, i) => X(i));
       const G = c.groups.length;
+      // 净值 1.00 那条线写上数（写在右端：所有线都从左端的 1.00 出发）；离最高、最低的数太近时不写
+      const one = Y(1);
+      const roomy = one - 9 > tick * 1.4 && h - 24 - one > tick * 1.4;
       return [
-        <Line key="one" x1={0} x2={w} y1={Y(1)} y2={Y(1)} stroke={rc.grid} />,
+        <Line key="one" x1={0} x2={w} y1={one} y2={one} stroke={rc.line} />,
         ...c.groups.map((g, k) => (!extremes || k === 0 || k === G - 1) ? <Path key={'g' + k} d={linePath(xs, g.map(Y))} stroke={groupColor(k, G)} strokeWidth={k === 0 || k === G - 1 ? 2 : 1.3} strokeDasharray={k === 0 ? '6,3' : undefined} fill="none" /> : null),
         <Path key="bench" d={linePath(xs, c.bench.map(Y))} stroke={rc.bench} strokeWidth={1} strokeDasharray="3,3" fill="none" />,
         <Path key="ls" d={linePath(xs, c.longShort.map(Y))} stroke={rc.accent} strokeWidth={1.2} strokeDasharray="5,2" fill="none" />,
         label(L, 9, hi.toFixed(2)),
         label(L, h - 24, lo.toFixed(2)),
+        ...(roomy ? [label(R, one - 3, '1.00', 'end')] : []),
         ...timeAxis(c.dates, X, R, h - (tick + 9), w, tick),
       ];
     }
-    case 'ic': {
-      const lim = Math.max(0.2, ...c.ic.map(Math.abs));
-      const Y = (v: number) => 8 + ((h - 30) * (lim - v)) / (2 * lim);
-      const bw = (w - 8) / Math.max(1, c.ic.length);
-      const X = (i: number) => L + i * bw + bw / 2;
-      const cum: number[] = [];
-      c.ic.reduce((a, b, i) => (cum[i] = a + b), 0);
-      const [clo, chi] = bounds([cum]);
-      const CY = (v: number) => 8 + ((h - 30) * (chi - v)) / (chi - clo);
-      return [
-        <Line key="zero" x1={0} x2={w} y1={Y(0)} y2={Y(0)} stroke={rc.grid} />,
-        ...c.ic.map((v, i) => <Rect key={'b' + i} x={L + i * bw + 1} y={Math.min(Y(0), Y(v))} width={Math.max(1, bw - 2)} height={Math.abs(Y(v) - Y(0))} fill={v >= 0 ? '#C7533A' : '#3E7C5A'} />),
-        <Path key="cum" d={linePath(cum.map((_, i) => X(i)), cum.map(CY))} stroke={rc.ink} strokeWidth={1.2} strokeDasharray="4,2" fill="none" />,
-        label(L, 9, '+' + lim.toFixed(2)),
-        label(L, h - 24, '−' + lim.toFixed(2)),
-        label(w - 4, 9, '虚线：累计 IC', 'end'),
-        ...timeAxis(c.dates, X, R, h - (tick + 9), w, tick),
-      ];
-    }
-    case 'groups': {
-      const v = c.means.map(x => x * 100);
-      const lim = Math.max(...v.map(Math.abs)) * 1.2 || 1;
-      const Y = (x: number) => 14 + ((h - 36) * (lim - x)) / (2 * lim);
-      const bw = (w - 8) / v.length;
-      return [
-        <Line key="zero" x1={0} x2={w} y1={Y(0)} y2={Y(0)} stroke={rc.grid} />,
-        ...v.flatMap((x, i) => [
-          <Rect key={'r' + i} x={L + i * bw + bw * 0.2} y={Math.min(Y(0), Y(x))} width={bw * 0.6} height={Math.abs(Y(x) - Y(0))} fill={groupColor(i, v.length)} />,
-          bw >= 48 * fontScale ? label(L + i * bw + bw / 2, x >= 0 ? Y(x) - 3 : Y(x) + 11, (x > 0 ? '+' : '') + x.toFixed(2) + '%', 'middle', rc.ink) : null,
-          label(L + i * bw + bw / 2, h - 4, 'Q' + (i + 1), 'middle'),
-        ]),
-      ];
+    case 'ic':
+      return drawIc(c, w, h, fontScale);
+    case 'groups':
+      return drawGroups(c, w, h, fontScale);
+    case 'labels':
+      return drawLabels(c, w, h, fontScale, full);
+  }
+}
+
+// ---------- 元标签图 ----------
+
+/** 元标签图的布局：价格刻度把图里每次信号的止盈止损都框进去，刻度写在右侧。 */
+function labelsFrame(c: LabelsChart, w: number, h: number, fontScale: number, full: boolean) {
+  const tick = TICK * fontScale;
+  const top = 10;
+  const axisY = h - (tick + 9);
+  const levels = c.events.flatMap(m => [m.upper, m.lower].filter((v): v is number => v != null));
+  const [lo, hi] = bounds([c.close, c.fast, c.slow], levels);
+  const main = scaleOf(lo, hi, top, axisY - 4, full ? 6 : 5, 0.06, 0.08);
+  const gutter = Math.ceil(Math.max(labelWidth('0.00', tick), ...main.ticks.map(t => labelWidth(t.toFixed(main.dp), tick)))) + 8;
+  const R = w - gutter;
+  return { tick, top, axisY, main, R, X: (i: number) => xAt(i, c.dates.length, L, R) };
+}
+
+type LabelsFrame = ReturnType<typeof labelsFrame>;
+
+/** 三角的颜色是这次跟主信号的结果：红赚、绿亏、灰色还没结果。 */
+const outcome = (m: LabelMark) => (m.label === 1 ? color.up : m.label === 0 ? color.down : rc.muted);
+
+/** 一次信号的三角：做多朝上、画在收盘线下方，做空朝下、画在上方；实心放行、空心没放行，预热的淡一些。 */
+function eventMark(m: LabelMark, f: LabelsFrame, r: number, key = 'e'): ReactElement {
+  const x = f.X(m.i);
+  const y = f.main.y(m.entry);
+  const cy = m.side > 0 ? y + r + 4 : y - r - 4;
+  const tip = m.side > 0 ? cy - r : cy + r;
+  const base = m.side > 0 ? cy + r * 0.8 : cy - r * 0.8;
+  const d = 'M' + x.toFixed(1) + ',' + tip.toFixed(1) + 'L' + (x + r).toFixed(1) + ',' + base.toFixed(1) + 'L' + (x - r).toFixed(1) + ',' + base.toFixed(1) + 'Z';
+  const col = outcome(m);
+  const solid = m.prob != null && m.prob >= 0.5;
+  return <Path key={key + m.i} d={d} fill={solid ? col : rc.paper} stroke={col} strokeWidth={1.4} opacity={m.prob == null ? 0.45 : 1} />;
+}
+
+function drawLabels(c: LabelsChart, w: number, h: number, fontScale: number, full: boolean): ReactElement[] {
+  const f = labelsFrame(c, w, h, fontScale, full);
+  const xs = c.dates.map((_, i) => f.X(i));
+  const Y = f.main.y;
+  const ys = (s: (number | null)[]) => s.map(v => (v == null ? null : Y(v)));
+  return [
+    ...f.main.ticks.map(t => <Line key={'gy' + t} x1={L} x2={f.R} y1={Y(t)} y2={Y(t)} stroke={rc.grid} strokeWidth={GRID} />),
+    ...timeGrid(c.dates, f.X, f.top, f.axisY, f.tick),
+    <Path key="slow" d={linePath(xs, ys(c.slow))} stroke={rc.slowLine} strokeWidth={1.2} strokeDasharray="5,3" fill="none" />,
+    <Path key="fast" d={linePath(xs, ys(c.fast))} stroke={rc.maLine} strokeWidth={1.1} fill="none" />,
+    <Path key="close" d={linePath(xs, c.close.map(Y))} stroke={rc.main} strokeWidth={1.6} strokeLinejoin="round" fill="none" />,
+    ...c.events.map(m => eventMark(m, f, 5)),
+    ...f.main.ticks.map(t => yLabel('y' + t, w, Y(t), t.toFixed(f.main.dp), f.tick)),
+    ...timeAxis(c.dates, f.X, f.R, f.axisY, w, f.tick),
+  ];
+}
+
+/**
+ * 框出一次信号的三道屏障（三重屏障法的那张示意图，画在真实行情上）：没点图时是最近一次，点图时是离手指最近的一次。
+ * 浅灰底从进场画到到期那天，上下两条虚线是止盈止损（碰到的那条加粗），右边竖虚线是到期；进场到出场的收盘线用结果的颜色加粗，出场那天一个点。
+ */
+function labelOverlay(c: LabelsChart, pick: number | null, w: number, h: number, fontScale: number, full: boolean, live: boolean): ReactElement | null {
+  const m = pick != null ? nearestEvent(c, pick) : c.events[c.events.length - 1] ?? null;
+  if (!m) {
+    return null;
+  }
+  const f = labelsFrame(c, w, h, fontScale, full);
+  const n = c.dates.length;
+  const Y = f.main.y;
+  const x1 = f.X(m.i);
+  const dueIn = m.due <= n - 1;
+  const x2 = f.X(Math.min(m.due, n - 1));
+  const yTop = Y(m.upper ?? m.entry);
+  const yBottom = Y(m.lower ?? m.entry);
+  // 做多时上面一道是止盈；做空时上面一道是止损
+  const upperIsPt = m.side > 0;
+  const hitUpper = m.barrier != null && m.barrier !== 'time' && (m.barrier === 'pt') === upperIsPt;
+  const hitLower = m.barrier != null && m.barrier !== 'time' && !hitUpper;
+  const size = FONT * fontScale;
+  const line = (key: string, y: number, pt: boolean, hit: boolean) => (
+    <Line key={key} x1={x1} x2={x2} y1={y} y2={y} stroke={pt ? color.upText : color.downText} strokeWidth={hit ? 2 : 1.2} strokeDasharray="4,3" />
+  );
+  const tag = (y: number, price: number, pt: boolean, below: boolean) => {
+    const text = (pt ? '止盈 ' : '止损 ') + pct(price / m.entry - 1, 1);
+    const roomy = x1 + 4 + labelWidth(text, size) <= f.R;
+    return label(roomy ? x1 + 4 : f.R, below ? y + size + 2 : y - 4, text, roomy ? 'start' : 'end', pt ? color.upText : color.downText);
+  };
+  const path = m.exit != null ? linePath(c.dates.slice(m.i, m.exit + 1).map((_, k) => f.X(m.i + k)), c.close.slice(m.i, m.exit + 1).map(Y)) : null;
+  const out: ReactElement[] = [
+    <Rect key="lbox" x={x1} y={yTop} width={Math.max(1, x2 - x1)} height={Math.max(1, yBottom - yTop)} fill={rc.ink} fillOpacity={0.05} />,
+    ...(m.upper != null ? [line('lup', yTop, upperIsPt, hitUpper), tag(yTop, m.upper, upperIsPt, false)] : []),
+    ...(m.lower != null ? [line('llo', yBottom, !upperIsPt, hitLower), tag(yBottom, m.lower, !upperIsPt, true)] : []),
+    ...(dueIn ? [<Line key="ldue" x1={x2} x2={x2} y1={yTop} y2={yBottom} stroke={rc.ink} strokeOpacity={0.6} strokeWidth={1.2} strokeDasharray="3,3" />] : []),
+    ...(path ? [<Path key="lpath" d={path} stroke={outcome(m)} strokeWidth={2.6} strokeLinejoin="round" fill="none" />] : []),
+    ...(m.exit != null ? [<Circle key="lexit" cx={f.X(m.exit)} cy={Y(c.close[m.exit])} r={3.6} fill={outcome(m)} stroke={rc.paper} strokeWidth={1.4} />] : []),
+    eventMark(m, f, 7, 'sel'),
+  ];
+  if (pick != null) {
+    out.push(<Line key="lvx" x1={x1} x2={x1} y1={f.top} y2={f.axisY} stroke={rc.ink} strokeOpacity={0.4} strokeDasharray="3,3" />, badge('lx', x1, f.axisY + 2, full ? c.dates[m.i] : md(c.dates[m.i]), f.tick, 'middle', w));
+    if (live) {
+      out.push(floatTip([{ text: full ? c.dates[m.i] : md(c.dates[m.i]) }, { text: signalName(m.side), gap: true }, ...(m.barrier && m.ret != null ? [{ text: BARRIER_NAME[m.barrier] + ' ' + pct(m.ret, 1), gap: true, fill: outcome(m) }] : [])], x1, f.tick, w));
     }
   }
+  return <SvgG>{out}</SvgG>;
+}
+
+const IC_UP = '#C7533A';
+const IC_DOWN = '#3E7C5A';
+
+/**
+ * IC 图的布局：柱子和累计 IC 共用 0 线；柱子的刻度（±lim）写在左上、左下，累计 IC 的刻度单独写在右侧刻度栏。
+ * 柱子 i 的中心就是十字线的第 i 个点（xAt 的 L、R 取第一根和最后一根柱子的中心）。
+ */
+function icFrame(c: IcChart, w: number, h: number, fontScale: number) {
+  const tick = TICK * fontScale;
+  const n = Math.max(1, c.ic.length);
+  const cum: number[] = [];
+  c.ic.reduce((a, b, i) => (cum[i] = a + b), 0);
+  const cl0 = Math.max(0.1, ...cum.map(Math.abs));
+  const { ticks, step } = niceTicks(-cl0, cl0, 4);
+  const dp = tickDecimals(step);
+  const right = ticks.filter(t => t !== 0 && Math.abs(t) <= cl0 * 1.08);
+  const fmt = (t: number) => (t > 0 ? '+' : '') + t.toFixed(dp);
+  const gutter = Math.ceil(Math.max(labelWidth('+0.0', tick), ...right.map(t => labelWidth(fmt(t), tick)))) + 8;
+  const top = 8;
+  const axisY = h - (tick + 9);
+  const bottom = axisY - 4;
+  const lim = Math.max(0.2, ...c.ic.map(Math.abs), (c.noise ?? 0) * 1.15);
+  const cl = cl0 * 1.08;
+  const Y = (v: number) => top + ((bottom - top) * (lim - v)) / (2 * lim);
+  const CY = (v: number) => top + ((bottom - top) * (cl - v)) / (2 * cl);
+  const bw = (w - gutter - L) / n;
+  const X = (i: number) => L + i * bw + bw / 2;
+  return { tick, n, cum, right, fmt, gutter, top, axisY, bottom, lim, Y, CY, bw, X, R: w - gutter };
+}
+
+/** 噪声带（没有预测力时约 95% 的单期 IC 在里面）在柱子后面；累计 IC 是虚线，线尾一个点写「累计 +4.08」。 */
+function drawIc(c: IcChart, w: number, h: number, fontScale: number): ReactElement[] {
+  const f = icFrame(c, w, h, fontScale);
+  const last = f.cum[f.cum.length - 1];
+  const size = FONT * fontScale;
+  const endY = last == null ? 0 : f.CY(last);
+  return [
+    ...(c.noise
+      ? [
+          <Rect key="noise" x={0} y={f.Y(c.noise)} width={f.R} height={f.Y(-c.noise) - f.Y(c.noise)} fill={rc.ink} fillOpacity={0.07} />,
+          <Line key="nz+" x1={0} x2={f.R} y1={f.Y(c.noise)} y2={f.Y(c.noise)} stroke={rc.ink} strokeOpacity={0.18} strokeWidth={GRID} />,
+          <Line key="nz-" x1={0} x2={f.R} y1={f.Y(-c.noise)} y2={f.Y(-c.noise)} stroke={rc.ink} strokeOpacity={0.18} strokeWidth={GRID} />,
+        ]
+      : []),
+    <Line key="zero" x1={0} x2={f.R} y1={f.Y(0)} y2={f.Y(0)} stroke={rc.line} />,
+    ...c.ic.map((v, i) => <Rect key={'b' + i} x={L + i * f.bw + 1} y={Math.min(f.Y(0), f.Y(v))} width={Math.max(1, f.bw - 2)} height={Math.abs(f.Y(v) - f.Y(0))} fill={v >= 0 ? IC_UP : IC_DOWN} />),
+    <Path key="cum" d={linePath(f.cum.map((_, i) => f.X(i)), f.cum.map(f.CY))} stroke={rc.ink} strokeWidth={1.4} strokeDasharray="4,2" fill="none" />,
+    ...f.right.map(t => yLabel('cr' + t, w, f.CY(t), f.fmt(t), f.tick, rc.ink)),
+    yLabel('c0', w, f.CY(0), '0', f.tick, rc.ink),
+    label(L, f.top + size * 0.9, '+' + f.lim.toFixed(2)),
+    label(L, f.bottom - 2, '−' + f.lim.toFixed(2)),
+    ...(last == null
+      ? []
+      : [
+          <Circle key="ce" cx={f.X(f.cum.length - 1)} cy={endY} r={3} fill={rc.ink} stroke={rc.paper} strokeWidth={1.2} />,
+          label(f.R - 6, Math.max(f.top + size, Math.min(f.bottom - 2, last >= 0 ? endY - 6 : endY + size + 2)), '累计 ' + signed(last, 2), 'end', rc.ink, true),
+        ]),
+    ...timeAxis(c.dates, f.X, f.R, f.axisY, w, f.tick),
+  ];
+}
+
+/** 各组收益图的布局：组 i 的柱子中心就是第 i 个点。 */
+function groupsFrame(c: GroupsChart, w: number, h: number) {
+  const g = groupScale(c);
+  const n = Math.max(1, g.ours.length);
+  const lim = Math.max(...g.ours.map(Math.abs), ...(g.book ?? []).map(Math.abs)) * 1.2 || 1;
+  const top = 14;
+  const bottom = h - 22;
+  const Y = (x: number) => top + ((bottom - top) * (lim - x)) / (2 * lim);
+  const bw = (w - 8) / n;
+  const X = (i: number) => L + i * bw + bw / 2;
+  return { g, n, Y, bw, X };
+}
+
+/** 组宽够写数时柱子上写这次的收益；叠了书里的数（空心点连虚线）时不写，数在图下的小表里。 */
+export const barLabelsFit = (width: number, groups: number, fontScale: number) => (width - 8) / Math.max(1, groups) >= 48 * fontScale;
+
+function drawGroups(c: GroupsChart, w: number, h: number, fontScale: number): (ReactElement | null)[] {
+  const f = groupsFrame(c, w, h);
+  const v = f.g.ours;
+  const book = f.g.book;
+  const write = !book && barLabelsFit(w, v.length, fontScale);
+  return [
+    <Line key="zero" x1={0} x2={w} y1={f.Y(0)} y2={f.Y(0)} stroke={rc.line} />,
+    ...v.flatMap((x, i) => [
+      <Rect key={'r' + i} x={L + i * f.bw + f.bw * 0.2} y={Math.min(f.Y(0), f.Y(x))} width={f.bw * 0.6} height={Math.abs(f.Y(x) - f.Y(0))} fill={groupColor(i, v.length)} />,
+      write ? label(f.X(i), x >= 0 ? f.Y(x) - 3 : f.Y(x) + 11, (x > 0 ? '+' : '') + x.toFixed(2) + '%', 'middle', rc.ink) : null,
+      label(f.X(i), h - 4, 'Q' + (i + 1), 'middle'),
+    ]),
+    ...(book
+      ? [
+          <Path key="bk" d={linePath(book.map((_, i) => f.X(i)), book.map(f.Y))} stroke={rc.book} strokeWidth={1.2} strokeDasharray="3,3" fill="none" />,
+          ...book.map((x, i) => <Circle key={'bp' + i} cx={f.X(i)} cy={f.Y(x)} r={4} fill={rc.paper} stroke={rc.book} strokeWidth={2} />),
+        ]
+      : []),
+  ];
 }
 
 /**
  * 区间的量程：前收那一点（空心）和「前收 363.55」、从前收高度沿区间画一条虚线、在区间右缘画箭头指到区间最后一天收盘，
  * 箭头尖写最后一天收盘价。涨红跌绿。两段区间首尾相接时（ends 里有基数那天），那一点和价格前一段已经画了，不再写「前收」。
  */
-function measure(c: PriceChart, b: Band, k: number, X: (i: number) => number, Y: (v: number) => number, top: number, bottom: number, R: number, tag: number, ends: Set<string>): ReactElement[] {
+/** 图上一个文字标签占的地方（基线在 y1 + 字号处附近），给后面的标签让位。 */
+interface LabelBox {
+  x1: number;
+  x2: number;
+  y1: number;
+  y2: number;
+}
+
+/** 按锚点和基线算出标签占的框（字的上沿约在基线上方一个字号，下沿留两像素给降部）。 */
+function boxOf(x: number, baseline: number, text: string, anchor: 'start' | 'end', size: number, bold = false): LabelBox {
+  const w = labelWidth(text, size) * (bold ? 1.06 : 1);
+  const x1 = anchor === 'end' ? x - w : x;
+  return { x1, x2: x1 + w, y1: baseline - size, y2: baseline + 2 };
+}
+
+const hits = (a: LabelBox, taken: LabelBox[]) => taken.some(b => a.x1 < b.x2 + 2 && b.x1 < a.x2 + 2 && a.y1 < b.y2 && b.y1 < a.y2);
+
+/**
+ * 区间两端：前收（基数那天）和区间最后一天各一个空心点，前收写数，终点写区间末价、按涨跌着色。
+ * merged：区间最后一天就是图的最后一根时，终点价和刻度栏里的最新价是同一个数，只在刻度栏里写一次（标签按涨跌着色）。
+ * 写下的标签记进 taken，后面的区间最高最低绕开它们。
+ */
+function measure(c: PriceChart, b: Band, k: number, X: (i: number) => number, Y: (v: number) => number, top: number, bottom: number, R: number, tag: number, ends: Set<string>, taken: LabelBox[], merged: boolean): ReactElement[] {
   const st = focusStats(c, b.f);
   if (!st) {
     return [];
@@ -625,17 +858,77 @@ function measure(c: PriceChart, b: Band, k: number, X: (i: number) => number, Y:
   if (!shared) {
     const baseText = (hasBase ? '前收 ' : '起点 ') + st.base.toFixed(2);
     const bw = labelWidth(baseText, tag);
-    out.push(
-      xb - 7 - bw >= L
-        ? label(xb - 7, y0 + tag * 0.36, baseText, 'end', rc.secondary)
-        : label(xb + 6, Math.max(top + tag, y0 - 8), baseText, 'start', rc.secondary),
-    );
+    const left = xb - 7 - bw >= L;
+    const bx = left ? xb - 7 : xb + 6;
+    const by = left ? y0 + tag * 0.36 : Math.max(top + tag, y0 - 8);
+    taken.push(boxOf(bx, by, baseText, left ? 'end' : 'start', tag));
+    out.push(label(bx, by, baseText, left ? 'end' : 'start', rc.secondary));
+  }
+  if (merged) {
+    return out;
   }
   // 终点价格放在箭头尖的外侧（跌了放下面、涨了放上面），不压住进来的线
   const endText = st.last.toFixed(2);
   const ey = y1 > y0 ? Math.min(bottom - 2, y1 + tag + 4) : Math.max(top + tag, y1 - 8);
   const ew = labelWidth(endText, tag);
-  out.push(label(Math.max(L + ew, Math.min(R - 2, ax)), ey, endText, 'end', tone, true));
+  const ex = Math.max(L + ew, Math.min(R - 2, ax));
+  taken.push(boxOf(ex, ey, endText, 'end', tag, true));
+  out.push(label(ex, ey, endText, 'end', tone, true));
+  return out;
+}
+
+/**
+ * 区间里的最高、最低收盘：小空心点，旁边写「8/5 403.80」（和区间两端同一套画法），讲解说「区间最高 8/5 的 403.80」时图上找得到。
+ * 和前收、终点、标注点是同一天的不再画；最高放在点上方、最低放在点下方，放不下就放点的右边、左边，
+ * 和已经写下的标签挤在一起时这个点不画（数在图下的区间读数里）。
+ */
+function focusExtremes(c: PriceChart, bands: Band[], X: (i: number) => number, Y: (v: number) => number, top: number, bottom: number, R: number, tag: number, taken: LabelBox[]): ReactElement[] {
+  const busy = new Set<number>();
+  for (const b of bands) {
+    const st = focusStats(c, b.f);
+    if (st) {
+      busy.add(st.k).add(st.b);
+    }
+  }
+  for (const m of c.marks ?? []) {
+    busy.add(c.dates.indexOf(m.date));
+  }
+  const out: ReactElement[] = [];
+  for (const b of bands) {
+    const st = focusStats(c, b.f);
+    if (!st) {
+      continue;
+    }
+    const pts = [
+      { i: c.dates.indexOf(st.hiDate), v: st.hi, up: true },
+      { i: c.dates.indexOf(st.loDate), v: st.lo, up: false },
+    ];
+    for (const p of pts) {
+      if (p.i < 0 || busy.has(p.i)) {
+        continue;
+      }
+      busy.add(p.i);
+      const x = X(p.i);
+      const y = Y(p.v);
+      const text = md(c.dates[p.i]) + ' ' + p.v.toFixed(2);
+      const w = labelWidth(text, tag);
+      const mid = Math.max(L, Math.min(R - 2 - w, x - w / 2));
+      const over = { x: mid, y: p.up ? y - 7 : y + tag + 5 };
+      const right = { x: x + 7, y: y + tag * 0.36 };
+      const left = { x: x - 7 - w, y: y + tag * 0.36 };
+      const spot = [over, right, left]
+        .map(q => ({ ...q, box: boxOf(q.x, q.y, text, 'start', tag) }))
+        .find(q => q.box.x1 >= L && q.box.x2 <= R - 1 && q.box.y1 >= top && q.box.y2 <= bottom && !hits(q.box, taken));
+      if (!spot) {
+        continue;
+      }
+      taken.push(spot.box);
+      out.push(
+        <Circle key={'fx' + p.i} cx={x} cy={y} r={3} fill={rc.paper} stroke={rc.main} strokeWidth={1.6} />,
+        label(spot.x, spot.y, text, 'start', rc.secondary),
+      );
+    }
+  }
   return out;
 }
 
@@ -757,7 +1050,11 @@ function drawPrice(c: PriceChart, w: number, h: number, fontScale: number, clipI
       ...bands.flatMap((b, k) => subMeasure(c, b, k, X, S, subTop, axisY, R, tag, ends)),
     );
   }
-  out.push(...bands.flatMap((b, k) => measure(c, b, k, X, Y, top, mainB, R, tag, ends)));
+  // 区间最后一天就是最后一根：终点价只写在刻度栏的最新价标签里，标签按这段的涨跌着色
+  const endBand = bands.find(b => b.f.to === c.dates[n - 1]);
+  const endChange = endBand ? focusStats(c, endBand.f)?.change ?? null : null;
+  const taken: LabelBox[] = [];
+  out.push(...bands.flatMap((b, k) => measure(c, b, k, X, Y, top, mainB, R, tag, ends, taken, b === endBand)));
   // 标注点：标注日只写事件（日期在横轴上），极值写数值；挨得近的上下错开
   const placed: { x1: number; x2: number; y: number }[] = [];
   for (const m of c.marks ?? []) {
@@ -777,16 +1074,21 @@ function drawPrice(c: PriceChart, w: number, h: number, fontScale: number, clipI
       below = !below;
     }
     placed.push({ x1: lx1, x2: lx1 + lw, y: at(below) });
+    if (text) {
+      taken.push(boxOf(lx1, at(below), text, 'start', tag, m.kind === 'point'));
+    }
     out.push(
       <Circle key={'m' + m.date + m.label} cx={x} cy={y} r={3.6} fill={rc.accent} stroke={rc.paper} strokeWidth={1.4} />,
       ...(text ? [label(right ? x - 7 : x + 7, at(below), text, right ? 'end' : 'start', rc.accent, m.kind === 'point')] : []),
     );
   }
-  // 刻度栏：价格刻度（和最新价标签挤的不写）、最新价
+  out.push(...focusExtremes(c, bands, X, Y, top, mainB, R, tag, taken));
+  // 刻度栏：价格刻度（和最新价标签挤的不写）、最新价（区间终点就是最后一根时按区间涨跌着色）
+  const lastFill = endChange == null ? rc.main : endChange >= 0 ? color.upText : color.downText;
   out.push(
     ...main.ticks.filter(t => Math.abs(Y(t) - (tagY + th / 2)) >= th * 0.9).map(t => yLabel('y' + t, w, Y(t), t.toFixed(main.dp), tick)),
     <Circle key="lastDot" cx={X(n - 1)} cy={lastY} r={2.6} fill={rc.main} />,
-    <Rect key="lastBg" x={R + 3} y={tagY} width={w - R - 4} height={th} rx={3} fill={rc.main} />,
+    <Rect key="lastBg" x={R + 3} y={tagY} width={w - R - 4} height={th} rx={3} fill={lastFill} />,
     yLabel('lastT', w, tagY + th / 2, last.toFixed(2), tick, '#FFFFFF'),
     ...timeAxis(c.dates, X, R, axisY, w, tick, bands, pinnedOf(c.dates, c.focus, c.marks, X)),
     ...pills(bands, w, top, tag, f => focusStats(c, f)?.change ?? null),

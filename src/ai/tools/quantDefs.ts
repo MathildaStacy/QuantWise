@@ -23,8 +23,9 @@ const FACTOR = {
 };
 const UNIVERSE = {
   type: 'string',
-  enum: ['sample', 'watch', 'hs300'],
-  description: 'sample 示例池 25 只大盘股（随时可用）/ watch 自选 + 持仓 / hs300 沪深 300 当前成分（要用户先在因子实验室准备数据）',
+  enum: ['sample', 'watch', 'hs300', 'zz500', 'zz1000'],
+  description:
+    'sample 示例池 25 只大盘股（随时可用）/ watch 自选 + 持仓 / hs300 沪深 300 / zz500 中证 500 / zz1000 中证 1000（都是当前成分；指数池第一次用要准备数据，没准备好时工具返回提示，界面上给用户「准备数据」按钮）。书里用全市场或中小盘样本时优先 zz1000、zz500，大盘股用 hs300',
 };
 
 /** 按名字排序；AI 助手和伴读都用这一份。 */
@@ -32,7 +33,7 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
   {
     name: 'factor_test',
     description:
-      '因子分组回测和 Rank IC（本地前复权日线，约 3 年，口径见结果）：每 hold 个交易日按因子从低到高分组、等权或市值加权持有，算 IC 均值、ICIR、t 值、各组收益、多空每期平均收益和它的 t 值、多空年化、换手，界面画分组净值和 IC 图。用户问某个因子在 A 股有没有效、或要复现书里的分组检验时用：按书里的定义选因子和参数，结果和书里的数字逐项对照，结论按 t 值和期数说，样本不够就说不够。',
+      '因子分组回测和 Rank IC（本地前复权日线，约 5 年，口径见结果）：每 hold 个交易日按因子从低到高分组、等权或市值加权持有，算 IC 均值、ICIR、t 值、各组收益、多空每期平均收益和它的 t 值、多空年化、换手，界面画分组净值和 IC 图。control = size 时做控制市值的双重排序（书里「控制市值后」的表），另给每个市值组的多空和 t 值。用户问某个因子在 A 股有没有效、或要复现书里的分组检验时用：按书里的定义选因子和参数，结果和书里的数字逐项对照，结论按 t 值和期数说，样本不够就说不够。',
     schema: obj(
       {
         factor: FACTOR,
@@ -42,6 +43,10 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
         groups: { type: 'integer', enum: [3, 5, 10], description: '分几组，默认 5' },
         cost_bp: { type: 'integer', description: '单边成本（万分之），0–50，默认 0' },
         weight: { type: 'string', enum: ['equal', 'cap'], description: '组内加权：equal 等权（默认）/ cap 按调仓日总市值加权（对应书里的「市值加权」）' },
+        control: { type: 'string', enum: ['size'], description: '双重排序的控制变量：size 先按调仓日总市值分组，再看因子（复现书里「控制市值」的表时用；小市值因子本身不能用）' },
+        control_groups: { type: 'integer', enum: [2, 3, 5], description: '市值分几组，默认 5；示例池只有 25 只，用 2 组' },
+        control_sort: { type: 'string', enum: ['conditional', 'independent'], description: 'conditional 条件排序：在每个市值组里再按因子分组（默认）/ independent 独立排序：市值和因子各自分组再取交集。按书里写的选' },
+        book_periods: { type: 'integer', description: '书里那张表的期数（例如 2000—2019 年月频约 240 期），给了结果会写明本次期数少多少、t 值为什么小' },
       },
       ['factor'],
     ),
@@ -58,6 +63,24 @@ export const QUANT_TOOL_DEFS: ToolDef[] = [
         n: { type: 'integer', description: '前后各几只，默认 5，最多 20' },
       },
       ['factor'],
+    ),
+  },
+  {
+    name: 'meta_label_test',
+    description:
+      '在一只股票或指数约 5 年的真实前复权日线上跑一遍三重屏障和元标签（AFML 第 3 章）：主信号是快均线上穿慢均线（金叉）做多（side = both 时死叉也做空），信号当天收盘进场；止盈、止损按目标波动（信号前 60 日日收益标准差 × √hold）的 pt、sl 倍设，最长持有 hold 个交易日，按收盘价看先碰到哪一道；元标签 = 跟这次信号赚没赚。次级模型是逻辑回归（信号当天的波动、动量、离高点、量比），按时间顺序只用之前已出结果的信号训练，概率 ≥ 0.5 放行。结果对比「全部跟主信号」和「只做放行的」的次数、命中率、平均收益，并写明差距有几个标准误；图上画每次信号和最近一次的三道屏障。讲事件采样、三重屏障、元标签、次级模型时用，不要假设一个信号；结论按样本说，样本少或差距不到 2 个标准误就说说明不了。',
+    schema: obj(
+      {
+        code: CODE,
+        fast: { type: 'integer', description: '快均线天数，2–60，默认 5' },
+        slow: { type: 'integer', description: '慢均线天数，要比 fast 大，5–250，默认 20' },
+        side: { type: 'string', enum: ['long', 'both'], description: 'long 只做金叉（默认；A 股个股做空受限）/ both 死叉也做空' },
+        pt: { type: 'number', description: '止盈是目标波动的几倍，0–5，默认 1；0 = 不设止盈' },
+        sl: { type: 'number', description: '止损是目标波动的几倍，0–5，默认 1；0 = 不设止损' },
+        hold: { type: 'integer', description: '最长持有几个交易日（第三道屏障），5–120，默认 20' },
+        bars: { type: 'integer', description: '图上画最近多少根，60–750，默认 250（统计用全部约 5 年）' },
+      },
+      ['code'],
     ),
   },
   {

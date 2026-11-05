@@ -36,7 +36,10 @@ import {
   type StudySession,
 } from '../../study/session';
 import { notesOf, stuckOf } from '../../data/studyRepo';
-import { ChartPin, pinnable, pinOf, type PinSpot } from '../charts/ChartPin';
+import { chartTitle, redrawAsk } from '../../quant/charts';
+import { INDEX_POOLS } from '../../quant/universe';
+import { ChartPin, FactorPin, factorRows, pinnable, pinOf, type PinSpot } from '../charts/ChartPin';
+import { usePoolPrepare } from '../charts/PoolPrepare';
 import { LockScroll } from '../charts/scrub';
 import { AiSheet, EffortPicker, ModelPicker, SearchUnavailable } from '../components/AiOptions';
 import { Button, NavBar } from '../components/ui';
@@ -211,6 +214,11 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
     }
   };
   sendRef.current = send;
+  // 讲解里 factor_test 说指数池数据没准备：准备好后接着让 AI 用这个池子重做刚才那次检验
+  const pool = usePoolPrepare(core, (id, n) => {
+    const name = INDEX_POOLS[id].short;
+    sendRef.current({ label: '数据准备好了：用' + name + '重做这次检验', question: name + '的数据准备好了（' + n + ' 只当前成分）。请用 universe = ' + id + ' 重做刚才那次因子检验，口径（因子、分组、调仓、加权、控制变量）不变，再和书里的数字逐项对照。' });
+  });
   /** 发出去就清空输入框；没问完的问题留在重试区（pending），不会丢。 */
   const sendDraft = () => {
     const q = text.trim();
@@ -376,7 +384,17 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
   const bar = quickBar({ steps: s.steps, step: s.state.step, taught: p.taught, detour: !!p.detour, factor: factorish(s.section.title + s.blocks.map(b => b.text).join('')) });
   // 步骤面板打开时先露出步骤入口。
   const pinSpot = pin && !stepsOpen ? chartSpots.current.get(pin.key) : undefined;
-  const pinned = pin && pinSpot && pinnable(pinSpot.data) ? { reading: pin.reading, data: pinSpot.data } : null;
+  const pinned = pin && pinSpot && !pinSpot.runs && pinnable(pinSpot.data) ? { reading: pin.reading, data: pinSpot.data } : null;
+  // 因子检验的结果卡滚过去之后钉一条结果条：每次检验一行，点一行跳回那张卡
+  const results = pin && pinSpot?.runs ? { reading: pin.reading, rows: factorRows(chartSpots.current, pin.key) } : null;
+  const covered = !!pinned || !!results?.rows.length;
+  const jumpTo = (key: string) => {
+    const spot = chartSpots.current.get(key);
+    const turn = spot && turnLayouts.current.get(spot.turn);
+    if (!spot || !turn || threadTop.current == null) return;
+    holdThread();
+    scroll.current?.scrollTo({ y: Math.max(0, threadTop.current + turn.y + spot.y - 8), animated: true });
+  };
   /** 收起钉图：正在读的这一问不再钉，读到下一问照常钉。 */
   const closePin = (turn: number) => {
     const next = new Set(unpinned).add(turn);
@@ -416,8 +434,8 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
           onConfigure={() => nav.navigate('AiServices', { returnToStudy: { bookId, sectionId: s.section.id } })} />
       ) : (
         <>
-          <View style={pinned && st.pinHost}>
-          <View style={[st.head, pinned && st.coveredHead]} pointerEvents={pinned ? 'none' : 'auto'} importantForAccessibility={pinned ? 'no-hide-descendants' : 'auto'}>
+          <View style={covered && st.pinHost}>
+          <View style={[st.head, covered && st.coveredHead]} pointerEvents={covered ? 'none' : 'auto'} importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}>
             <View style={st.headRow} onLayout={e => setCover(e.nativeEvent.layout.y + e.nativeEvent.layout.height)}>
             <Pressable style={st.stepToggle} onPress={() => setStepsOpen(v => !v)} accessibilityRole="button" accessibilityLabel="本节讲解步骤" accessibilityValue={{ text: '第 ' + (s.state.step + 1) + ' / ' + s.steps.length + ' 步，' + s.steps[s.state.step]?.title }} accessibilityState={{ expanded: stepsOpen }}>
               <Text style={st.stepTitle}>第 {s.state.step + 1} / {s.steps.length} 步 · {s.steps[s.state.step]?.title}</Text><ChevronDown size={18} color={rc.secondary} />
@@ -429,6 +447,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
           </View>
           {/* 小图按自身高度占位；紧凑的步骤栏保留测量，但不遮住对话。 */}
           {pinned ? <ChartPin data={pinned.data} style={{ minHeight: cover }} onClose={() => closePin(pinned.reading)} /> : null}
+          {results?.rows.length ? <FactorPin rows={results.rows} style={{ minHeight: cover }} onJump={jumpTo} onClose={() => closePin(results.reading)} /> : null}
             {p.detour ? (
               <View style={st.detour}>
                 <Text style={st.detourT} numberOfLines={1}>岔路 · {secLabel(s.sections.find(x => x.id === p.detour!.sectionId) ?? { no: '', title: p.detour.sectionId })}</Text>
@@ -462,7 +481,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             <StudyThread
               onTurnLayout={(id, box) => { if (box) turnLayouts.current.set(id, box); else turnLayouts.current.delete(id); restoreThread(); updatePin(); }}
               onChartBox={(key, spot) => { if (spot) chartSpots.current.set(key, spot); else chartSpots.current.delete(key); updatePin(); }}
-              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread, onAskChart: askChart, onSaveResearch: (chart, claim, answer) => nav.navigate('ResearchEdit', { draft: researchFromFactor({ chart, book: s.book, section: s.section, claim, answer }) }) }} />
+              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread, onAskChart: askChart, onRedrawChart: chart => send({ label: '用最新行情重画：' + chartTitle(chart), question: redrawAsk(chart) }), onSaveResearch: (chart, claim, answer) => nav.navigate('ResearchEdit', { draft: researchFromFactor({ chart, book: s.book, section: s.section, claim, answer }) }), onPrepare: id => { pool.start(id).catch(fail); }, onStopPrepare: pool.stop, prep: pool.prep }} />
             </View>
             {ask && reading.pending && !busy ? <Button title={askLabel ?? '发送刚才的问题'} onPress={() => { nav.setParams({ ask: undefined, askLabel: undefined, askSnapshot: undefined }); send({ label: askLabel ?? ask, question: ask, snapshot: askSnapshot }); }} /> : null}
             {reading.pending && !busy ? <View style={st.retry}>
@@ -557,9 +576,13 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
       </AiSheet> : null}
       {actionsOpen ? <AiSheet title="更多讲解方式" visible onClose={() => setActionsOpen(false)}>
         <ScrollView style={st.steps}>
-          {bar.slice(1).map(k => <Pressable key={k} style={st.step} disabled={!!busy} accessibilityRole="button" accessibilityState={{ disabled: !!busy }} onPress={() => { setActionsOpen(false); runQuick(k); }}>
-            <Text style={st.stepT}>{quickAsk(s, k).label}</Text>
-          </Pressable>)}
+          {bar.slice(1).map(k => {
+            const q = quickAsk(s, k);
+            return <Pressable key={k} style={st.step} disabled={!!busy} accessibilityRole="button" accessibilityState={{ disabled: !!busy }} accessibilityHint={q.hint} onPress={() => { setActionsOpen(false); runQuick(k); }}>
+              <Text style={st.stepT}>{q.label}</Text>
+              {q.hint ? <Text style={st.stepStatus}>{q.hint}</Text> : null}
+            </Pressable>;
+          })}
           {busy ? <Text style={st.notice}>讲解结束后可继续提问。</Text> : null}
         </ScrollView>
       </AiSheet> : null}

@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { readFileSync } from 'node:fs';
-import { bookTableNotes, parseBookTable, tableRowHeights } from '../../src/book/table';
+import { bookTableNotes, firstRows, freezableFirstColumn, headerRowCount, parseBookTable, spansRow, tableRowHeights } from '../../src/book/table';
 import { bookListItem, unescapeBookText } from '../../src/book/presentation';
 
 test('合并表头和跨行标签保留在原列，实体和上下标不丢失', () => {
@@ -34,6 +34,37 @@ test('旧书段落中的转义列表和变量恢复书籍排版，负数和代�
   expect(bookListItem({ type: 'code', mark: null, text: '- value' })).toBeNull();
   expect(bookListItem({ type: 'p', mark: null, text: '1. Compute the return.' })).toEqual({ marker: '1.', text: 'Compute the return.' });
   expect(unescapeBookText('x\\_reshape[0,0]')).toBe('x_reshape[0,0]');
+});
+
+test('宽表冻结行名列：第一列不跨到第二列，占满整行的小标题单独铺开；表头行数不切断跨行格（PM 走查第 1 项）', () => {
+  const panel = parseBookTable('', '<table><tr><th>组</th><th>1</th><th>2</th><th>多空</th></tr><tr><td colspan="4">Panel A：等权</td></tr><tr><td>动量</td><td>0.1</td><td>0.2</td><td>0.1</td></tr></table>')!;
+  expect(freezableFirstColumn(panel)).toBe(true);
+  expect(panel.cells.filter(c => spansRow(panel, c)).map(c => c.text)).toEqual(['Panel A：等权']);
+  expect(headerRowCount(panel)).toBe(1);
+  // 第一列的格子跨到第二列（不是整行）：不冻结
+  expect(freezableFirstColumn(parseBookTable('', '<table><tr><td colspan="2">A</td><td>B</td></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>')!)).toBe(false);
+  expect(freezableFirstColumn(parseBookTable('| A | B |\n| 1 | 2 |')!)).toBe(false);
+  // 第一列是一组数（表 3.20 的 Low 组，没有行名列）：不冻结；表 3.21 的 Small、2、3 和表 3.19 的「动量」「总市值」是行名
+  const t320 = parseBookTable('', '<table><tr><td colspan="4">Panel A: 等权重</td></tr><tr><td>Low</td><td>2</td><td>High</td><td>High-Low</td></tr><tr><td>1.19(1.60)</td><td>1.32(1.78)</td><td>1.14(1.73)</td><td>-0.04(-0.14)</td></tr><tr><td colspan="4">Panel B: 市值加权</td></tr><tr><td>0.87(1.21)</td><td>0.82(1.13)</td><td>0.95(1.49)</td><td>0.08(0.20)</td></tr></table>')!;
+  expect(freezableFirstColumn(t320)).toBe(false);
+  const t321 = parseBookTable('', '<table><tr><td></td><td>Low</td><td>High</td><td>High-Low</td></tr><tr><td>Small</td><td>1.94(2.56)</td><td>1.70(2.17)</td><td>-0.23(-0.91)</td></tr><tr><td>2</td><td>1.48(1.92)</td><td>1.39(1.91)</td><td>-0.09(-0.39)</td></tr></table>')!;
+  expect(freezableFirstColumn(t321)).toBe(true);
+  expect(freezableFirstColumn(parseBookTable('', '<table><tr><td></td><td>Low</td><td>High</td></tr><tr><td>动量</td><td>-26%</td><td>92%</td></tr><tr><td>总市值(亿元)</td><td>107.23</td><td>169.11</td></tr></table>')!)).toBe(true);
+  // 跨两行的表头：两行一起冻结
+  const tall = parseBookTable('', '<table><tr><th rowspan="2">市值</th><th colspan="2">动量</th></tr><tr><th>低</th><th>高</th></tr><tr><td>小</td><td>1</td><td>2</td></tr><tr><td>大</td><td>3</td><td>4</td></tr><tr><td>多空</td><td>5</td><td>6</td></tr></table>')!;
+  expect(headerRowCount(tall)).toBe(2);
+  // 表头占了一半以上：不冻结
+  expect(headerRowCount(parseBookTable('', '<table><tr><th rowspan="2">A</th><th>B</th></tr><tr><th>C</th></tr><tr><td>1</td><td>2</td></tr></table>')!)).toBe(0);
+});
+
+test('菜单里的小表只留前几行，跨过截断处的格子截短', () => {
+  const rows = ['<tr><th>组</th><th>收益</th></tr>', '<tr><td rowspan="3">A</td><td>1</td></tr>', ...Array.from({ length: 8 }, (_, i) => '<tr><td>' + i + '</td></tr>')];
+  const table = parseBookTable('', '<table>' + rows.join('') + '</table>')!;
+  const head = firstRows(table, 3);
+  expect(head.rows).toBe(3);
+  expect(head.cells.every(c => c.row < 3 && c.row + c.rowSpan <= 3)).toBe(true);
+  expect(head.cells.find(c => c.text === 'A')?.rowSpan).toBe(2);
+  expect(firstRows(table, 20)).toBe(table);
 });
 
 const fixture = process.env.QUANTWISE_READING_BLOCKS;

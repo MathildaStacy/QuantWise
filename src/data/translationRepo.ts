@@ -28,6 +28,21 @@ export async function loadTranslations(db: Db, bookId: string, blocks: BookBlock
   return out;
 }
 
+/** 这本书已保存的全部译文（原文没变的）：翻译时沿用以前的术语译法（study/glossary.ts 的 termHints）。 */
+export async function savedTexts(db: Db, bookId: string): Promise<{ seq: number; sectionId: string; text: string }[]> {
+  const rows = await db.all<{ block_seq: number; section_id: string; pairs: string }>(
+    `SELECT t.block_seq, b.section_id, t.pairs FROM book_translation t JOIN book_block b ON b.book_id = t.book_id AND b.seq = t.block_seq
+     WHERE t.book_id = ? AND t.target = 'zh-CN' AND t.source = b.text ORDER BY t.block_seq`, [bookId],
+  );
+  return rows.flatMap(r => {
+    try {
+      return [{ seq: r.block_seq, sectionId: r.section_id, text: (JSON.parse(r.pairs) as TranslationPair[]).map(p => p.translation).join('') }];
+    } catch {
+      return [];
+    }
+  });
+}
+
 export async function saveTranslation(db: Db, bookId: string, b: BookBlock, t: BlockTranslation): Promise<void> {
   // 生成期间若书被删掉或重新解析，不能把旧请求写到新内容上。
   const r = await db.run(`INSERT OR REPLACE INTO book_translation (book_id, block_seq, target, source, pairs, provider_id, model, updated_at)

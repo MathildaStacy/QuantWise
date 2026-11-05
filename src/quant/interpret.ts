@@ -27,7 +27,7 @@ export function snapshotQuestion(s: FactorSnapshot): string {
     rankIc: r.icMean, t: r.t, icir: r.icir, positiveIcFraction: r.icPositive,
     longShortAnnual: r.longShortAnnual, turnover: r.turnover, groupMeans: r.groupMeans,
     methodology: {
-      groupOrder: `Q1 因子值最低 → Q${r.input.groups} 最高；各组等权持有`,
+      groupOrder: `Q1 因子值最低 → Q${r.input.groups} 最高；各组${r.input.weight === 'cap' ? '按调仓日总市值加权' : '等权'}持有` + (r.input.control ? `；先按市值分 ${r.input.control.groups} 组、在每个市值组里再按因子分组，因子各组收益是各市值组的平均` : ''),
       groupMeans: '各组每个持有期的平均收益，未扣交易成本；数值用小数表示',
       longShortAnnual: `最高组减最低组；${r.input.costBp ? '已按两端换手扣除交易成本（换手比例 × 单边成本 × 2）' : '未扣交易成本'}；按每年 252 个交易日复利年化，数值用小数表示`,
       turnover: '最高组每次调仓的平均换手比例，不含首次建仓',

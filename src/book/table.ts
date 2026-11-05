@@ -75,3 +75,46 @@ export function tableRowHeights(table: BookTableData, measured: Record<number, n
   });
   return heights;
 }
+
+/** 像数据的格子：带小数或百分号的数，可以带括号里的 t 值（「1.19(1.60)」「-26%」「+0.05%」）。 */
+const VALUE = /^[-+−–]?\d[\d,]*(?:\.\d+%?|%)\s*(?:[（(][-+−–]?\d[\d,]*(?:\.\d+)?%?[）)])?$/;
+export const valueLike = (text: string) => VALUE.test(text.replace(/<[^>]+>|\*\*/g, '').trim());
+
+/** 第一列是行名，不是一组数（表 3.20 的第一列是 Low 组的收益）：一半以上的非空格子不像数据。 */
+export const labelColumn = (texts: string[]) => {
+  const xs = texts.map(t => t.trim()).filter(Boolean);
+  return xs.length > 0 && xs.filter(valueLike).length * 2 < xs.length;
+};
+
+/**
+ * 行名列能不能冻结（PM 走查第 1 项：宽表横滑后行名跟着滑走）：至少两列数据，第一列是行名，第一列的格子都不跨到第二列；
+ * 占满整行的格子（「Panel A：等权」这类小标题）除外，冻结时单独铺满可见宽度。
+ */
+export function freezableFirstColumn(table: BookTableData): boolean {
+  return (
+    table.columns >= 3 &&
+    table.cells.every(c => c.col > 0 || c.colSpan === 1 || c.colSpan === table.columns) &&
+    labelColumn(table.cells.filter(c => c.col === 0 && c.colSpan === 1).map(c => c.text))
+  );
+}
+
+/** 第一列里占满整行的小标题格：冻结第一列时不放进行名列。 */
+export const spansRow = (table: BookTableData, c: BookCell) => c.col === 0 && c.colSpan === table.columns && table.columns > 1;
+
+/**
+ * 表头占几行（全屏看表时上下滑动也冻结）：从第 0 行起，全是表头格、或被上面的格子跨行占着的那几行。
+ * 占到一半以上时不冻结，返回 0。
+ */
+export function headerRowCount(table: BookTableData): number {
+  const crosses = (n: number) => table.cells.some(c => c.row < n && c.row + c.rowSpan > n);
+  const header = (r: number) => table.cells.filter(c => c.row === r).every(c => c.header);
+  let n = 1;
+  while (n < table.rows && (crosses(n) || header(n))) n++;
+  return n * 2 > table.rows ? 0 : n;
+}
+
+/** 只留前 n 行（段落菜单里的小表预览）；跨过第 n 行的格子截短。 */
+export function firstRows(table: BookTableData, n: number): BookTableData {
+  if (table.rows <= n) return table;
+  return { rows: n, columns: table.columns, cells: table.cells.filter(c => c.row < n).map(c => ({ ...c, rowSpan: Math.min(c.rowSpan, n - c.row) })) };
+}

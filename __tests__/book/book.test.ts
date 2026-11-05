@@ -11,6 +11,7 @@ import {
   inlineParts,
   parseStudyText,
   plainStudyText,
+  stepNamesIn,
   type CiteCheck,
 } from '../../src/book/markup';
 import { addDays, dueToday, rateCard } from '../../src/book/review';
@@ -157,6 +158,18 @@ describe('AI 标记', () => {
       { t: 'callout', kind: 'example', segs: [{ t: 'md', text: '比如' }] },
     ]);
     expect(plainStudyText('a [[b:3.1#2]] [[real]]b[[/real]]')).toBe('a  b');
+  });
+
+  it('步骤名块：不显示，流式时没收尾也藏起来；个数、长度、中文不对就不用', () => {
+    expect(parseStudyText('讲完了。\n\n[[steps]]已有方向|标签变成 0 和 1[[/steps]]', check)).toEqual([{ t: 'md', text: '讲完了。' }]);
+    expect(parseStudyText('讲完了。\n[[steps]]已有方', check, true)).toEqual([{ t: 'md', text: '讲完了。' }]);
+    expect(parseStudyText('讲完了。\n[[steps]]已有方向|标签[[/st', check, true)).toEqual([{ t: 'md', text: '讲完了。' }]);
+    expect(plainStudyText('讲完了。[[steps]]a|b[[/steps]]')).toBe('讲完了。');
+    expect(stepNamesIn('……\n[[steps]]1. 已有方向，只学下多大|Snippet 3.6 扩展 getEvents[[/steps]]', 2)).toEqual(['已有方向，只学下多大', 'Snippet 3.6 扩展 getEvents']);
+    expect(stepNamesIn('[[steps]]3.6 节的标签|标签[[/steps]]', 2)).toEqual(['3.6 节的标签', '标签']);
+    expect(stepNamesIn('[[steps]]已有方向|标签[[/steps]]', 3)).toBeNull();
+    expect(stepNamesIn('[[steps]]Meta labeling|标签[[/steps]]', 2)).toBeNull();
+    expect(stepNamesIn('[[steps]]已有方向|标签', 2)).toBeNull();
   });
 });
 

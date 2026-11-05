@@ -41,7 +41,9 @@ export const BookBlockView = memo(function BlockView({
       );
     case 'table':
       return <BookTable text={b.text} html={b.html} />;
-    case 'img':
+    case 'img': {
+      // 图注紧贴在图下面，重绘的状态写在图注下面（PM 走查第 2 项）
+      const note = b.text ? <BlockInline text={b.text} style={caption} /> : null;
       return (
         <View style={s.fig}>
           {b.image && dir ? <ScannedFigure
@@ -49,10 +51,11 @@ export const BookBlockView = memo(function BlockView({
             b={b}
             uri={(/^\w+:/.test(b.image) ? '' : 'file://' + dir.replace(/\/$/, '') + '/') + b.image}
             compact={compact}
-          /> : null}
-          {b.text ? <BlockInline text={b.text} style={caption} /> : null}
+            caption={note}
+          /> : note}
         </View>
       );
+    }
     default:
       return <BlockInline text={b.text} style={compact ? s.small : undefined} />;
   }

@@ -32,13 +32,20 @@ export const rc = {
   /** 均线：紫色，在白底和黄色区间上都看得清。 */
   maLine: '#7B4FC4',
   bandLine: '#8FA8D0',
+  /** 各组收益图上书里的数（空心点）：暗琥珀色，和蓝色的柱子、锈红的多空分得开。 */
+  book: '#9A6400',
+  /** 元标签图的慢均线：橙色虚线，和紫色的快线分得开。 */
+  slowLine: '#E08A1E',
 } as const;
 
 /** 原书正文：Android 的 serif 是思源宋体 / Noto Serif CJK（系统有就用）。 */
 export const serif = Platform.select({ ios: 'Songti SC', default: 'serif' });
 
-/** 分组净值从浅到深：Q1（因子最低）最浅，最高组最深；最深一档不到黑色，5 组时 Q4、Q5 还分得清。 */
-export const GROUP_COLORS = ['#6688B3', '#5E80AE', '#5578A8', '#4C70A3', '#43689D', '#3A6097', '#315790', '#284D85', '#1D3F75', '#102E63'];
+/**
+ * 分组净值从浅到深：Q1（因子最低）最浅，最高组最深。深浅拉开（浅端仍有 3:1 以上的对比度），
+ * 中间几组的色相也从青蓝慢慢转到靛蓝，5 组时 Q2、Q3、Q4 分得开；默认只画最高、最低两组。
+ */
+export const GROUP_COLORS = ['#4A98BC', '#448BB8', '#407EB3', '#3D70AC', '#3A63A4', '#38569B', '#374990', '#363D84', '#353177', '#34266A'];
 
 export const groupColor = (g: number, n: number) =>
   GROUP_COLORS[Math.round((g * 9) / Math.max(1, n - 1))];

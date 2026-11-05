@@ -6,7 +6,8 @@ export interface ReaderPreferences {
   size: 16 | 18 | 20 | 22;
   leading: 'normal' | 'relaxed';
   face: 'serif' | 'sans';
-  parallel: 'paragraph' | 'sentence';
+  /** 中文对照的排法：按段（原文后接中文）、逐句、中文为主（只显示译文，段旁「原文」展开英文）。 */
+  parallel: 'paragraph' | 'sentence' | 'zh';
 }
 
 export const DEFAULT_READER: ReaderPreferences = {
@@ -19,7 +20,7 @@ export async function loadReaderPreferences(db: Db): Promise<ReaderPreferences> 
     size: saved?.size && [16, 18, 20, 22].includes(saved.size) ? saved.size : DEFAULT_READER.size,
     leading: saved?.leading === 'relaxed' ? 'relaxed' : 'normal',
     face: saved?.face === 'sans' ? 'sans' : 'serif',
-    parallel: saved?.parallel === 'sentence' ? 'sentence' : 'paragraph',
+    parallel: saved?.parallel === 'sentence' || saved?.parallel === 'zh' ? saved.parallel : 'paragraph',
   };
 }
 

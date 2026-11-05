@@ -3,6 +3,7 @@
  * - [[b:3.1#2]] 引用 → 「3.1 ¶2」按钮；所在小节本轮没读过、或块不存在 → 「未核实」
  * - [[derive]] / [[example]] / [[real]] / [[web]] … [[/…]] → 带标签的底色块（web 是联网搜索来的网页资料）
  * - $$…$$ / \[…\] → 独立公式；$…$ → 转成 Unicode 文字（转不了的保留原文、等宽）
+ * - [[steps]]名1|名2[[/steps]] → 不显示：英文书第一次讲解时模型给的中文步骤名（PM 走查第 3 项），存进进度
  * 其余交给 AShareSim 的 Markdown 组件（段落、列表、表格、加粗）。流式时半截的标记先藏起来。
  */
 import { texToText } from './tex';
@@ -26,6 +27,23 @@ export const CALLOUT_LABEL: Record<CalloutKind, string> = {
 
 const CITE = /\[\[b:([\w.-]+)[#¶](\d+)\]\]/g;
 const CALLOUT = /\[\[(derive|example|real|web)\]\]([\s\S]*?)(\[\[\/\1\]\]|$)/g;
+/** 步骤名块：只存不显示；流式时还没收到结尾也先藏起来。 */
+const STEPS = /\[\[steps\]\]([\s\S]*?)(?:\[\[\/steps\]\]|$)/g;
+
+/** 去掉回答里的步骤名块。 */
+export const withoutStepNames = (text: string) => (text.includes('[[steps]]') ? text.replace(STEPS, '').replace(/\s+$/, '') : text);
+
+/** 回答里模型给的中文步骤名：个数要和路线图一样，每个带中文、不超过 24 个字符（「Snippet 3.6 扩展 getEvents」）；不合格返回 null。 */
+export function stepNamesIn(text: string, count: number): string[] | null {
+  const all = [...text.matchAll(STEPS)].filter(m => m[0].endsWith('[[/steps]]'));
+  const body = all[all.length - 1]?.[1];
+  if (body == null) return null;
+  const names = body
+    .split(/[|｜\n]/)
+    .map(x => x.replace(/^\s*(?:\d+[.、．)）](?!\d)|[-•*])\s*/, '').replace(/[。；;，,]+$/, '').trim())
+    .filter(Boolean);
+  return names.length === count && names.every(x => x.length <= 24 && /\p{Script=Han}/u.test(x)) ? names : null;
+}
 
 /** 流式输出停在半截标记上（「[[b:3.」「[[der」「$$」）时先去掉，等下一段到了再显示。 */
 function trimPartial(s: string): string {
@@ -81,7 +99,7 @@ export function parseStudyText(
   check: CiteCheck,
   streaming = false,
 ): Seg[] {
-  const src = streaming ? trimPartial(text) : text;
+  const src = withoutStepNames(streaming ? trimPartial(text) : text);
   const out: Seg[] = [];
   let last = 0;
   for (const m of src.matchAll(CALLOUT)) {
@@ -112,7 +130,7 @@ export function citationsOf(text: string): { sectionId: string; no: number }[] {
 
 /** 去掉全部标记，给笔记和朗读用。 */
 export function plainStudyText(text: string): string {
-  return text
+  return withoutStepNames(text)
     .replace(CITE, '')
     .replace(/\[\[\/?[a-z]+(?::[^\]]*)?\]\]/g, '')
     .replace(/\s+\n/g, '\n')

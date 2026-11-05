@@ -32,7 +32,7 @@ export function ReaderSettings({ value, onChange, bilingual, onClose }: {
     {choices('face', '字体', [['serif', '宋体'], ['sans', '黑体']])}
     {choices('size', '字号', [[16, '16'], [18, '18'], [20, '20'], [22, '22']])}
     {choices('leading', '行距', [['normal', '标准'], ['relaxed', '宽松']])}
-    {bilingual ? choices('parallel', '对照', [['paragraph', '按段阅读'], ['sentence', '逐句核对']]) : null}
+    {bilingual ? choices('parallel', '对照', [['paragraph', '按段阅读'], ['sentence', '逐句核对'], ['zh', '中文为主']]) : null}
     </ScrollView>
     <Pressable style={s.done} accessibilityRole="button" onPress={onClose}><Text style={s.doneText}>完成</Text></Pressable>
   </AiSheet>;

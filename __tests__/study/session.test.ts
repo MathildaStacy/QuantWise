@@ -9,7 +9,7 @@ import { setAiDeps, useChat } from '../../src/ai/chat';
 import type { FetchLike } from '../../src/ai/http';
 import { loadProviders, saveProviders, saveServices, type KeyStore } from '../../src/ai/services';
 import type { AiService } from '../../src/ai/types';
-import { runQuantTool } from '../../src/ai/tools/quant';
+import { QUANT_TOOL_DEFS, runQuantTool } from '../../src/ai/tools/quant';
 import type { AppCore } from '../../src/app/boot';
 import { SAMPLE_BOOK_ID } from '../../src/book/sample';
 import { openMemoryDb } from '../../src/data/drivers/nodeSqlite';
@@ -20,7 +20,7 @@ import type { MarketClient } from '../../src/market/client';
 import { parseQuotes, type KBar } from '../../src/market/tencent';
 import { DEFAULT_REFRESH, type Refresher } from '../../src/sim/refresher';
 import { Simulator } from '../../src/sim/simulator';
-import { ensureSample } from '../../src/study/library';
+import { ensureSample, importMarkdownText } from '../../src/study/library';
 import {
   askStudy,
   backToMain,
@@ -107,7 +107,7 @@ test('伴读一节：请求结构、真实行情图、岔路、因子检验、�
   expect(body.tools.map((t: any) => t.name)).toEqual(STUDY_TOOL_DEFS.map(t => t.name));
   expect(STUDY_TOOL_DEFS.map(t => t.name)).toEqual([
     'ask_quiz', 'factor_test', 'get_benchmark', 'get_company_profile', 'get_factor_values', 'get_financials', 'get_kline', 'get_notes',
-    'get_quote', 'load_section', 'mark_stuck', 'plot_chart', 'propose_section_wrapup', 'query_local_db', 'screen', 'search_book',
+    'get_quote', 'load_section', 'mark_stuck', 'meta_label_test', 'plot_chart', 'propose_section_wrapup', 'query_local_db', 'screen', 'search_book',
   ]);
   expect(lastUser(body)).toContain('现在讲：1. 动量是过去一段时间的累计收益（¶1–2）');
   expect(s().messages.find(m => m.role === 'user')?.ui?.question).toBe('开始讲第 1 步');
@@ -497,6 +497,34 @@ test('load_section 可以从指定块接着读；search_book 只给命中处前�
   await core.db.close();
 });
 
+test('讲解里的 factor_test 带书中分组表：App 从表格单元格取数，摘要写两边的形状，各组收益图叠书里的数；取不到时照常出结果', async () => {
+  const core = await setup();
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  const last = await core.db.get<{ seq: number; no: number }>('SELECT MAX(seq) AS seq, MAX(no) AS no FROM book_block WHERE book_id = ? AND section_id = ?', [SAMPLE_BOOK_ID, '3.1']);
+  const no = last!.no + 1;
+  const html = '<table><tr><td>Low</td><td>2</td><td>3</td><td>4</td><td>High</td><td>High-Low</td></tr>' +
+    '<tr><td>1.20(1.60)</td><td>1.50(2.00)</td><td>1.40(1.90)</td><td>1.30(1.80)</td><td>1.10(1.40)</td><td>-0.10(-0.30)</td></tr></table>';
+  await core.db.run('INSERT INTO book_block (book_id, seq, section_id, no, type, text, page, mark, image, html) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)',
+    [SAMPLE_BOOK_ID, 100000, '3.1', no, 'table', '表3.9 动量分组月均收益率（%）\nLow | 2 | 3 | 4 | High | High-Low', html]);
+  const env = { core, threadId: 0, bookId: SAMPLE_BOOK_ID, sectionId: '3.1', sections: s().sections };
+  const out = await runStudyTool(env, 'x', 'factor_test', JSON.stringify({ factor: 'mom20', universe: 'sample', book_table: '3.1#' + no }));
+  expect(out.output).toContain('书中 表3.9（App 从书里的表格单元格读出，3.1#' + no + '）月均，5 组从低到高：+1.20%，+1.50%，+1.40%，+1.30%，+1.10%；多空 -0.10%（t -0.30）');
+  expect(out.output).toMatch(/分组收益的形状（组序和各组收益的秩相关，App 算）：书中 -0\.400（5 组）· 本次 -?\d\.\d{3}（5 组）/);
+  expect(out.output).toMatch(/折成月度（每期 × 21 \/ 20/);
+  const groups = out.ui.charts?.find(c => c.kind === 'groups');
+  expect(groups).toMatchObject({ book: { label: '表3.9', unit: 'monthly', values: [1.2, 1.5, 1.4, 1.3, 1.1] } });
+  expect(out.ui.label).toContain('对照表3.9');
+  // 块号不是表格：照常检验，原因写给模型
+  const bad = await runStudyTool(env, 'x', 'factor_test', JSON.stringify({ factor: 'mom20', universe: 'sample', book_table: '3.1#1' }));
+  expect(bad.output).toContain('书中的表（3.1#1）没读出来：3.1#1 不是表格。这次没有叠画书里的数');
+  expect(bad.ui.charts?.find(c => c.kind === 'groups')).not.toHaveProperty('book');
+  // 只有讲解里的 factor_test 有 book_table；AI 助手的定义不变
+  const def = (list: typeof STUDY_TOOL_DEFS) => JSON.stringify(list.find(t => t.name === 'factor_test')!.schema);
+  expect(def(STUDY_TOOL_DEFS)).toContain('book_table');
+  expect(def(QUANT_TOOL_DEFS)).not.toContain('book_table');
+  await core.db.close();
+});
+
 test('OpenAI Responses（Codex）：讲解带 reasoning、-study 缓存 key；整理用 tool_choice none 不破坏前缀，保留加密推理', async () => {
   const core = await setup();
   const ps = await loadProviders(core.db);
@@ -611,5 +639,48 @@ test('没问成的提问（401）重试后不再发给模型，对话里折叠�
   const turns = turnsOf(s().messages);
   expect(turns.filter(failedTurn)).toHaveLength(2);
   expect(failedTurn(turns[turns.length - 1])).toBe(false);
+  await core.db.close();
+});
+
+test('英文书第一次讲解顺带请模型给中文步骤名：个数不对不用；存进进度、换掉路线图后不再要；中文书不要', async () => {
+  const core = await setup();
+  const { bookId } = await importMarkdownText(core.db, [
+    '# 3 Labeling',
+    '## 3.6 Meta-Labeling',
+    'Suppose that you have a model for setting the side of the bet (long or short). You just need to learn the size of that bet, which includes the possibility of no bet at all.',
+    'Rather than writing an entirely new getEvents function, we will make some adjustments to the previous code, in order to handle meta-labeling.',
+    'SNIPPET 3.6 EXPANDING getEvents TO INCORPORATE META-LABELING',
+    '```python\ndef getEvents(close, tEvents, ptSl, trgt, minRet, numThreads, t1=False, side=None):\n    return events\n```',
+    'Now the possible values for labels are 0 and 1, as opposed to the previous feasible values of -1, 0 and 1.',
+  ].join('\n\n'), 'meta.md', 'meta-labeling', '2026-11-05T10:00:00+08:00');
+  await openSection(core, bookId, '3.6');
+  expect(s().language).toBe('en');
+  expect(s().steps.map(x => x.title)).toEqual(['Suppose that you have a…', 'Rather than writing an…', 'Snippet 3.6 getEvents', 'The possible values for…']);
+  const names = ['已有方向，只学下多大', '改 getEvents 处理元标签', 'Snippet 3.6 扩展 getEvents', '标签变成 0 和 1'];
+
+  replies = [text('先讲第 1 步 [[b:3.6#1]]。\n[[steps]]已有方向|改 getEvents|标签[[/steps]]')];
+  await askStudy(core, quickAsk(s(), 'start'));
+  expect(lastUser(sent[sent.length - 1])).toContain('[[steps]]名1|名2|…[[/steps]]，按顺序给上面 4 步各起一个中文名');
+  expect(s().steps[0].title).toBe('Suppose that you have a…');
+  expect(progressNow(s()).names).toBeUndefined();
+
+  replies = [text('第 2 步……\n\n[[steps]]' + names.join('|') + '[[/steps]]')];
+  await askStudy(core, quickAsk(s(), 'next'));
+  expect(lastUser(sent[sent.length - 1])).toContain('按顺序给上面 4 步各起一个中文名');
+  expect(s().steps.map(x => x.title)).toEqual(names);
+  expect(progressNow(s()).names).toEqual({ key: '1-1,2-2,3-4,5-5', titles: names });
+
+  replies = [text('第 3 步……')];
+  await askStudy(core, quickAsk(s(), 'next'));
+  const third = lastUser(sent[sent.length - 1]);
+  expect(third).not.toContain('[[steps]]');
+  expect(third).toContain('3. Snippet 3.6 扩展 getEvents（¶3–4）');
+  await openSection(core, bookId, '3.6');
+  expect(s().steps[1].title).toBe('改 getEvents 处理元标签');
+
+  await openSection(core, SAMPLE_BOOK_ID, '3.1');
+  replies = [text('动量……')];
+  await askStudy(core, quickAsk(s(), 'start'));
+  expect(lastUser(sent[sent.length - 1])).not.toContain('[[steps]]');
   await core.db.close();
 });

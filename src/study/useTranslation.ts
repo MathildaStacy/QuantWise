@@ -4,6 +4,7 @@ import type { AppCore } from '../app/boot';
 import type { Book, BookBlock, BookSection } from '../book/types';
 import { loadTranslations, type BlockTranslation } from '../data/translationRepo';
 import { translateBlocks } from './translate';
+import { sectionTargets } from './translation';
 
 /** 每个读书页拥有自己的请求，失焦/卸载即停止，迟到响应不污染下一节。 */
 export function useTranslation(core: AppCore, book: Book, section: BookSection, blocks: BookBlock[], active: boolean) {
@@ -33,7 +34,8 @@ export function useTranslation(core: AppCore, book: Book, section: BookSection, 
   const stop = useCallback(() => { task.current?.abort(); }, []);
   useEffect(() => { if (!active) stop(); }, [active, stop]);
 
-  const run = async (selected: BookBlock[] = blocks) => {
+  // 「翻译本节」只译要译的段（不含脚注；中文为主的一节没有）；单段的「翻译此段」照常
+  const run = async (selected: BookBlock[] = sectionTargets(section, blocks)) => {
     if (!active || task.current || loading || cacheError) return;
     const controller = new AbortController();
     task.current = controller;

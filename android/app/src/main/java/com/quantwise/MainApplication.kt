@@ -7,6 +7,7 @@ import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.quantwise.files.DocumentStorePackage
+import com.quantwise.screen.ScreenOrientationPackage
 import com.quantwise.tracker.TrackerPackage
 
 class MainApplication : Application(), ReactApplication {
@@ -18,6 +19,7 @@ class MainApplication : Application(), ReactApplication {
         PackageList(this).packages.apply {
           add(TrackerPackage())
           add(DocumentStorePackage())
+          add(ScreenOrientationPackage())
         },
     )
   }

@@ -8,8 +8,11 @@ import { join } from 'node:path';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { compareChart, fmtSub, md, pct, priceChart, type ChartData, type PriceChart, type SubKind } from '../../src/quant/charts';
+import { Rect } from 'react-native-svg';
+import { compareChart, findEpisode, fmtSub, focusStats, liveStale, md, pct, priceChart, redrawAsk, type ChartData, type PriceChart, type SubKind } from '../../src/quant/charts';
 import type { KBar } from '../../src/market/tencent';
+import { rc } from '../../src/ui/readTheme';
+import { color } from '../../src/ui/theme';
 import { ChartCard } from '../../src/ui/charts/ChartCard';
 import { ChartPin, pinOf, relevance, type PinSpot } from '../../src/ui/charts/ChartPin';
 import { QuantChart } from '../../src/ui/charts/QuantChart';
@@ -30,7 +33,7 @@ const barsOf = (code: string): KBar[] =>
 const SEP = [{ from: '2026-09-01', to: '2026-09-30', label: '9 月' }];
 const Stack = createNativeStackNavigator();
 
-async function mount(node: React.ReactElement) {
+async function mount(node: React.ReactElement, width = 360) {
   let tree!: ReactTestRenderer.ReactTestRenderer;
   await act(async () => {
     tree = ReactTestRenderer.create(
@@ -44,7 +47,7 @@ async function mount(node: React.ReactElement) {
   const charts = tree.root.findAll(n => n.props.accessibilityRole === 'image' && typeof n.props.onLayout === 'function');
   for (const v of charts) {
     await act(async () => {
-      v.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 300 } } });
+      v.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 300 } } });
     });
   }
   return { tree, charts };
@@ -351,6 +354,69 @@ describe('卡片里按住拖动看每一天', () => {
   });
 });
 
+test('区间最高、最低收盘标在卡片上（日期 + 价格），读数里也有；区间终点是最后一根时终点价只写在刻度栏、按涨跌着色', async () => {
+  // 走查里的例子：宁德时代近三个月，最高 8/5 403.80、最低 10/22 220.41，末日 10/26 239.52。
+  // Jest 里字号是 2 倍、图高也跟着 2 倍：宽 720 和手机上 1 倍字号、360 宽的卡片是同一个版面
+  const c = priceChart({ code: 'sz300750', name: '宁德时代', bars: barsOf('sz300750'), focus: [{ from: '2026-08-01', to: '2026-10-26', label: '近三个月' }] }).chart as PriceChart;
+  const { tree } = await mount(<ChartCard data={c} />, 720);
+  const json = JSON.stringify(tree.toJSON());
+  // 图上的标签描边一遍、正文一遍
+  expect(json.split('"8/5 403.80"').length - 1).toBe(2);
+  expect(json.split('"10/22 220.41"').length - 1).toBe(2);
+  expect(json).toContain('区间最高收盘 403.80（8/5）· 最低 220.41（10/22）');
+  // 末日价只在刻度栏写一次（不在线上另写），刻度栏的底色是跌的绿色
+  expect(json.split('"239.52"').length - 1).toBe(1);
+  const fills = tree.root.findAll(n => n.type === Rect).map(n => n.props.fill);
+  expect(fills).toContain(color.downText);
+  expect(fills).not.toContain(rc.main);
+  await act(async () => tree.unmount());
+  // 大字号、窄卡片：前收标签挪到点的右边，8/5 的标签放不下，不硬挤（点也不画），数在图下的读数里
+  const narrow = await drawn(<ChartCard data={c} />);
+  expect(narrow).not.toContain('"8/5 403.80"');
+  expect(narrow).toContain('"10/22 220.41"');
+  expect(narrow).toContain('区间最高收盘 403.80（8/5）');
+  // 区间没到最后一根：终点价照常写在线上，刻度栏是平常的蓝色
+  const sep = priceChart({ code: 'sz300750', name: '宁德时代', bars: barsOf('sz300750'), focus: SEP }).chart;
+  const m = await mount(<ChartCard data={sep} />);
+  expect(JSON.stringify(m.tree.toJSON()).split('"291.11"').length - 1).toBe(2);
+  expect(m.tree.root.findAll(n => n.type === Rect).map(n => n.props.fill)).toContain(rc.main);
+  await act(async () => m.tree.unmount());
+});
+
+test('盘中画的图：图脚写画图时刻、之后没有更新；收盘后或隔天给「用最新行情重画」，同样的参数再问一次，原图不动', async () => {
+  const c = priceChart({ code: 'sz300750', name: '宁德时代', bars: barsOf('sz300750'), ma: 20, focus: SEP, today: '2026-10-26', at: '2026-10-26T10:32:07+08:00' }).chart as PriceChart;
+  expect(c.drawnAt).toBe('2026-10-26T10:32');
+  const redraw = jest.fn();
+  const card = (now: { date: string; t: number }) => mount(<ChartCard data={c} onRedraw={redraw} now={now} />);
+  const button = (t: ReactTestRenderer.ReactTestRenderer) => t.root.findAll(n => n.props.accessibilityLabel === '用最新行情重画这张图' && typeof n.props.onPress === 'function')[0];
+  // 当天盘中再看：还是最新的，不给重画
+  const same = await card({ date: '2026-10-26', t: 14 * 3600 });
+  expect(JSON.stringify(same.tree.toJSON())).toContain('10/26 10:32 盘中画，之后没有更新');
+  expect(button(same.tree)).toBeUndefined();
+  await act(async () => same.tree.unmount());
+  // 收盘后、隔天：给重画；点了把这张图交出去（发新的一问），这张卡片不变
+  const after = await card({ date: '2026-10-26', t: 15 * 3600 });
+  expect(button(after.tree)).toBeDefined();
+  await act(async () => after.tree.unmount());
+  const next = await card({ date: '2026-10-27', t: 9 * 3600 });
+  await act(async () => button(next.tree).props.onPress());
+  expect(redraw).toHaveBeenCalledWith(c);
+  expect(JSON.stringify(next.tree.toJSON())).toContain('10/26 10:32 盘中画，之后没有更新');
+  await act(async () => next.tree.unmount());
+  const q = redrawAsk(c);
+  expect(q).toContain('宁德时代（sz300750）');
+  expect(q).toContain('10/26 10:32 盘中画的');
+  expect(q).toContain('区间「9 月」2026-09-01 到 2026-09-30');
+  expect(q).toContain('MA20');
+  expect(q).toContain('原来那张不动');
+  // 收盘后画的图不是盘中图：没有画图时刻，也不给重画
+  const closed = priceChart({ code: 'sz300750', name: '宁德时代', bars: barsOf('sz300750'), focus: SEP, today: null, at: '2026-10-26T15:20:00+08:00' }).chart;
+  expect(liveStale(closed, { date: '2026-10-27', t: 9 * 3600 })).toBe(false);
+  expect('drawnAt' in closed).toBe(false);
+  // 旧的盘中图只记了日期：图脚只写日期
+  expect(await drawn(<ChartCard data={{ ...c, drawnAt: undefined }} />)).toContain('10/26 为盘中价，之后没有更新');
+});
+
 test('没有区间的旧图照常画：最新价标签、月份横轴，没有区间标签', async () => {
   const c = priceChart({ code: 'sz300750', name: '宁德时代', bars: barsOf('sz300750'), n: 250 }).chart;
   const json = await drawn(<ChartCard data={c} />);
@@ -463,6 +529,21 @@ describe('图文同屏：钉住的小图', () => {
     const close = tree.root.findAll(n => n.props.accessibilityLabel === '收起钉住的图' && typeof n.props.onPress === 'function')[0];
     await act(async () => close.props.onPress());
     expect(closed).toEqual([1]);
+    await act(async () => tree.unmount());
+  });
+
+  it('回撤副图：标题行的区间涨跌和下一行的回撤是同一个数，都写两位小数', async () => {
+    // 和 find: drawdown 一样找峰到谷：区间前一天就是此前最高的收盘，区间涨跌 = 谷底那天的回撤
+    const all = priceChart({ code: 'sz300750', name: '宁德时代', bars: barsOf('sz300750'), sub: 'dd' }).chart as PriceChart;
+    const ep = findEpisode(all.close, 'drawdown')!;
+    const c = priceChart({ code: 'sz300750', name: '宁德时代', bars: barsOf('sz300750'), sub: 'dd', focus: [{ from: all.dates[ep.a], to: all.dates[ep.b], label: '最大回撤' }] }).chart as PriceChart;
+    const st = focusStats(c, c.focus![0])!;
+    const deep = c.sub!.values[c.dates.indexOf(st.to)]!;
+    expect(fmtSub('dd', deep)).toBe(pct(st.change, 2));
+    const { tree } = await mount(<ChartPin data={c} onClose={() => undefined} />);
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain('"' + pct(st.change, 2) + ' "');
+    expect(json).toContain('"' + fmtSub('dd', deep) + '"');
     await act(async () => tree.unmount());
   });
 
