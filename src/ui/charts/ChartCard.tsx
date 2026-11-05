@@ -13,12 +13,14 @@ import {
   chartTitle,
   compareFocus,
   dateRange,
+  drawnTime,
   factorBasis,
   factorStatsLine,
   fmtSub,
   focusStats,
   groupScale,
   icSummary,
+  liveStale,
   md,
   pct,
   shapeRho,
@@ -31,6 +33,7 @@ import {
   type LabelsChart,
   type PriceChart,
 } from '../../quant/charts';
+import { beijingNow, type BeijingNow } from '../../market/clock';
 import { FACTORS } from '../../quant/factors';
 import { eventLine, labelVerdict, MIN_TRAIN, type LabelHit } from '../../quant/labels';
 import { UNIVERSE_NAME, type UniverseId } from '../../quant/universe';
@@ -103,12 +106,16 @@ export function legendOf(c: ChartData, extremes = false): LegendItem[] {
 export const poolShort = (c: { universe: string; stats?: FactorStats }) =>
   (UNIVERSE_NAME[c.universe as UniverseId] ?? c.stats?.universe ?? c.universe).replace(/（.*）$/, '');
 
+/** 盘中画的图：写画图时刻、注明之后没有更新（旧图只记了日期）。 */
+const liveFoot = (c: PriceChart | CompareChart) =>
+  c.live ? (c.drawnAt ? ' · ' + drawnTime(c) + ' 盘中画，之后没有更新' : ' · ' + md(c.live) + ' 为盘中价，之后没有更新') : '';
+
 export function chartFoot(c: ChartData): string {
   switch (c.kind) {
     case 'price':
-      return c.code + ' · ' + dateRange(c.dates) + ' · 前复权日线 · 腾讯行情' + (c.live ? ' · ' + md(c.live) + ' 为盘中价，未收盘' : '');
+      return c.code + ' · ' + dateRange(c.dates) + ' · 前复权日线 · 腾讯行情' + liveFoot(c);
     case 'compare':
-      return (c.base ? md(c.base) + ' 收盘 = 100' : '起点 = 100') + ' · ' + dateRange(c.dates) + ' · 前复权日线' + (c.live ? ' · ' + md(c.live) + ' 为盘中价' : '');
+      return (c.base ? md(c.base) + ' 收盘 = 100' : '起点 = 100') + ' · ' + dateRange(c.dates) + ' · 前复权日线' + liveFoot(c);
     case 'factor':
       return [
         poolShort(c),
@@ -225,8 +232,11 @@ export function GroupExtras({ data, width }: { data: GroupsChart; width: number 
 const tone = (v: number) => ({ color: v > 0 ? color.upText : v < 0 ? color.downText : rc.ink });
 const span = (f: Focus) => (f.from === f.to ? md(f.from) : md(f.from) + '–' + md(f.to));
 
-/** 一段重点区间的读数：区间名、日期、交易日数、区间涨跌；收盘从哪到哪；副图从哪到哪。full 时加区间最高最低。 */
-function PriceFocus({ c, f, full }: { c: PriceChart; f: Focus; full: boolean }) {
+/**
+ * 一段重点区间的读数：区间名、日期、交易日数、区间涨跌；收盘从哪到哪；副图从哪到哪；区间最高最低（图上也标着）。
+ * 卡片和全屏一样：回答里讲区间最高最低时，卡片上就读得到。
+ */
+function PriceFocus({ c, f }: { c: PriceChart; f: Focus }) {
   const st = focusStats(c, f);
   if (!st) {
     return null;
@@ -241,7 +251,7 @@ function PriceFocus({ c, f, full }: { c: PriceChart; f: Focus; full: boolean }) 
         <Text style={[s.focusV, num, tone(st.change)]}>{pct(st.change, 2)}</Text>
       </View>
       <Text style={[s.focusL, num]}>
-        {(st.k < st.a ? '收盘 ' : '首日收盘 ') + st.base.toFixed(2) + '（' + md(st.baseDate) + (st.k < st.a ? '' : '，图里最早一天') + '）→ ' + st.last.toFixed(2) + '（' + md(st.to) + (c.live === st.to ? '，盘中' : '') + '）'}
+        {(st.k < st.a ? '收盘 ' : '首日收盘 ') + st.base.toFixed(2) + '（' + md(st.baseDate) + (st.k < st.a ? '' : '，图里最早一天') + '）→ ' + st.last.toFixed(2) + '（' + md(st.to) + (c.live === st.to ? (c.drawnAt ? ' ' + c.drawnAt.slice(11, 16) : '') + '，盘中' : '') + '）'}
       </Text>
       {sub ? <Text style={[s.focusL, num]}>{sub}</Text> : null}
       {b != null && excess != null ? (
@@ -249,11 +259,9 @@ function PriceFocus({ c, f, full }: { c: PriceChart; f: Focus; full: boolean }) 
           {'同期' + c.bench!.name + ' '}<Text style={tone(b)}>{pct(b, 2)}</Text>{' · 超额 '}<Text style={tone(excess)}>{(excess >= 0 ? '+' : '') + excess.toFixed(2) + ' 个百分点'}</Text>
         </Text>
       ) : null}
-      {full ? (
-        <Text style={[s.focusL, num]}>
-          {'区间最高收盘 ' + st.hi.toFixed(2) + '（' + md(st.hiDate) + '）· 最低 ' + st.lo.toFixed(2) + '（' + md(st.loDate) + '）'}
-        </Text>
-      ) : null}
+      <Text style={[s.focusL, num]}>
+        {'区间最高收盘 ' + st.hi.toFixed(2) + '（' + md(st.hiDate) + '）· 最低 ' + st.lo.toFixed(2) + '（' + md(st.loDate) + '）'}
+      </Text>
     </View>
   );
 }
@@ -279,9 +287,9 @@ function CompareFocus({ c, f }: { c: CompareChart; f: Focus }) {
 }
 
 /** 图下面的区间读数（卡片和全屏共用）。 */
-export function FocusReadout({ data, full = false }: { data: ChartData; full?: boolean }) {
+export function FocusReadout({ data }: { data: ChartData }) {
   if (data.kind === 'price' && data.focus?.length) {
-    return <View style={s.focusBox}>{data.focus.map(f => <PriceFocus key={f.from + f.to} c={data} f={f} full={full} />)}</View>;
+    return <View style={s.focusBox}>{data.focus.map(f => <PriceFocus key={f.from + f.to} c={data} f={f} />)}</View>;
   }
   if (data.kind === 'compare' && data.focus?.length) {
     return <View style={s.focusBox}>{data.focus.map(f => <CompareFocus key={f.from + f.to} c={data} f={f} />)}</View>;
@@ -365,13 +373,17 @@ export function ChartFoot({ data, text }: { data: ChartData; text?: string }) {
   );
 }
 
-export function ChartCard({ data, onBox, onAsk, onSave, hint = true }: {
+export function ChartCard({ data, onBox, onAsk, onSave, onRedraw, now, hint = true }: {
   data: ChartData;
   onBox?: (box: { y: number; h: number } | null) => void;
   /** 讲解里：把点中的那一天（图名 + 读数）带到输入框，接着写问题。 */
   onAsk?: (text: string) => void;
   /** 讲解里的因子检验：存进研究手记（书里的结论、检验口径和结果预先填好）。 */
   onSave?: () => void;
+  /** 盘中画的图收盘后或隔天再看：「用最新行情重画」，让 AI 用同样的参数再画一张（新图在新的一问里，这张不改）。 */
+  onRedraw?: (c: PriceChart | CompareChart) => void;
+  /** 现在的北京时间（测试用），默认取当前时刻。 */
+  now?: BeijingNow;
   /** 「点一下或按住拖动」的提示：一问只在第一张能点的图下写。 */
   hint?: boolean;
 }) {
@@ -389,6 +401,7 @@ export function ChartCard({ data, onBox, onAsk, onSave, hint = true }: {
   const report = () => at.current.card >= 0 && at.current.plot >= 0 && boxRef.current?.({ y: at.current.card + at.current.plot, h: at.current.h });
   const stats = chartStats(data);
   const unit = data.kind === 'labels' ? '一次信号' : '一天';
+  const stale = onRedraw && (data.kind === 'price' || data.kind === 'compare') && liveStale(data, now ?? beijingNow()) ? data : null;
   return (
     <View style={s.card} onLayout={onBox ? e => { at.current.card = e.nativeEvent.layout.y; report(); } : undefined}>
       <View style={s.head}>
@@ -430,6 +443,13 @@ export function ChartCard({ data, onBox, onAsk, onSave, hint = true }: {
       </View> : null}
       <FocusReadout data={data} />
       <Legend items={legendOf(data, extremes)} />
+      {stale ? (
+        <View style={s.factorRow}>
+          <Pressable style={s.focusBtn} onPress={() => onRedraw!(stale)} accessibilityRole="button" accessibilityLabel="用最新行情重画这张图">
+            <Text style={s.fullT}>用最新行情重画</Text>
+          </Pressable>
+        </View>
+      ) : null}
       <ChartFoot data={data} />
     </View>
   );

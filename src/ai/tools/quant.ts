@@ -250,10 +250,12 @@ export async function runQuantTool(
       (c.kind === 'price' || c.kind === 'compare') && c.focus ? ' · 标出' + c.focus.map(f => '「' + f.label + '」').join('') : '';
     const compare = Array.isArray(args.compare) ? args.compare.slice(0, 4) : [];
     const today = openToday();
+    // 画图时刻：盘中画的图记下来，图脚写「11/4 10:32 盘中画」
+    const at = beijingIso();
     if (compare.length) {
       const all = [r, ...(await Promise.all(compare.map(c => needCode(core, c))))];
       const bars = await Promise.all(all.map(fetch));
-      const c = compareChart(all.map((x, i) => ({ code: x.code, name: x.name, bars: bars[i] })), { n, end, focus, takeaway, today });
+      const c = compareChart(all.map((x, i) => ({ code: x.code, name: x.name, bars: bars[i] })), { n, end, focus, takeaway, today, at });
       return { output: c.text, label: '画图：' + all.map(x => x.name).join(' / ') + ' 对比' + what(c.chart), charts: [c.chart] };
     }
     const sub = Object.keys(SUB_NAME).includes(String(args.sub)) ? (args.sub as SubKind) : undefined;
@@ -276,7 +278,7 @@ export async function runQuantTool(
         found.push(ep ? 'find：已经有 2 段重点区间，没有再找' : 'find：这段数据太短，没找到');
       }
     }
-    const c = priceChart({ code: r.code, name: r.name, bars, n, end, ma, band: args.band === true, sub, marks: args.marks === true, focus, points, takeaway, today });
+    const c = priceChart({ code: r.code, name: r.name, bars, n, end, ma, band: args.band === true, sub, marks: args.marks === true, focus, points, takeaway, today, at });
     const chart = c.chart as PriceChart;
     // 同期沪深 300：分清「跟着大盘」还是「自己的」涨跌（取不到就不写，不影响画图）
     const benchLines: string[] = [];

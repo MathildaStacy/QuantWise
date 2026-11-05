@@ -36,6 +36,7 @@ import {
   type StudySession,
 } from '../../study/session';
 import { notesOf, stuckOf } from '../../data/studyRepo';
+import { chartTitle, redrawAsk } from '../../quant/charts';
 import { INDEX_POOLS } from '../../quant/universe';
 import { ChartPin, FactorPin, factorRows, pinnable, pinOf, type PinSpot } from '../charts/ChartPin';
 import { usePoolPrepare } from '../charts/PoolPrepare';
@@ -480,7 +481,7 @@ export function StudyScreen({ route }: RootScreenProps<'Study'>) {
             <StudyThread
               onTurnLayout={(id, box) => { if (box) turnLayouts.current.set(id, box); else turnLayouts.current.delete(id); restoreThread(); updatePin(); }}
               onChartBox={(key, spot) => { if (spot) chartSpots.current.set(key, spot); else chartSpots.current.delete(key); updatePin(); }}
-              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread, onAskChart: askChart, onSaveResearch: (chart, claim, answer) => nav.navigate('ResearchEdit', { draft: researchFromFactor({ chart, book: s.book, section: s.section, claim, answer }) }), onPrepare: id => { pool.start(id).catch(fail); }, onStopPrepare: pool.stop, prep: pool.prep }} />
+              s={s} busy={busy} a={{ onLink, onPick: (m, t, k) => pickQuiz(core, m, t, k), onWrapup: () => nav.navigate('SectionDone', { bookId }), onStuck: q => markStuck(core, q).then(() => toast.show('已记成卡点', 'learn')), onSearch: q => { searchAgain(q).catch(fail); }, onSummary: () => setCtx(true), onDisclosure: holdThread, onAskChart: askChart, onRedrawChart: chart => send({ label: '用最新行情重画：' + chartTitle(chart), question: redrawAsk(chart) }), onSaveResearch: (chart, claim, answer) => nav.navigate('ResearchEdit', { draft: researchFromFactor({ chart, book: s.book, section: s.section, claim, answer }) }), onPrepare: id => { pool.start(id).catch(fail); }, onStopPrepare: pool.stop, prep: pool.prep }} />
             </View>
             {ask && reading.pending && !busy ? <Button title={askLabel ?? '发送刚才的问题'} onPress={() => { nav.setParams({ ask: undefined, askLabel: undefined, askSnapshot: undefined }); send({ label: askLabel ?? ask, question: ask, snapshot: askSnapshot }); }} /> : null}
             {reading.pending && !busy ? <View style={st.retry}>

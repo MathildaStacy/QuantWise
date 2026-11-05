@@ -107,7 +107,7 @@ import { LockScroll } from '../charts/scrub';
 import { ChatProcess, conversationTurns } from '../components/ChatProcess';
 import { Button } from '../components/ui';
 import { useCore } from '../hooks';
-import type { ChartData } from '../../quant/charts';
+import { redrawAsk, type ChartData } from '../../quant/charts';
 import type { RootStackParamList } from '../navigation/types';
 import { color, num } from '../theme';
 import { aiColor as c } from '../aiTheme';
@@ -727,7 +727,7 @@ export function AiScreen() {
                       return it.kind === 'factor' ? (
                         <FactorResult key={'chart' + x.id + ':' + k} runs={it.runs} hint={showHint} />
                       ) : (
-                        <ChartCard key={'chart' + x.id + ':' + k} data={it.data} hint={showHint} />
+                        <ChartCard key={'chart' + x.id + ':' + k} data={it.data} hint={showHint} onRedraw={busy ? undefined : chart => send(redrawAsk(chart))} />
                       );
                     });
                   })}

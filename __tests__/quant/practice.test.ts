@@ -76,6 +76,11 @@ describe('盘中数据和接口重试', () => {
     const live = priceChart({ code: 'sz300750', name: '宁德时代', bars: CATL, today: '2026-10-26' });
     expect((live.chart as PriceChart).live).toBe('2026-10-26');
     expect(live.text.split('\n')[0]).toContain('最后一根 2026-10-26 是今天的盘中数据');
+    // 记下画图时刻：摘要和图脚写同一个时分
+    const at = priceChart({ code: 'sz300750', name: '宁德时代', bars: CATL, today: '2026-10-26', at: '2026-10-26T10:32:07+08:00' });
+    expect((at.chart as PriceChart).drawnAt).toBe('2026-10-26T10:32');
+    expect(at.text.split('\n')[0]).toContain('最后一根 2026-10-26 是今天的盘中数据（取于 10:32）');
+    expect(at.text.split('\n')[0]).toContain('「截至今天 10:32 盘中」');
     expect((priceChart({ code: 'sz300750', name: '宁德时代', bars: CATL, today: '2026-10-27' }).chart as PriceChart).live).toBeUndefined();
     const cmp = compareChart([{ code: 'sz300750', name: '宁德时代', bars: CATL }, { code: 'sh600519', name: '贵州茅台', bars: barsOf('sh600519') }], { today: '2026-10-26' });
     expect(cmp.text).toContain('盘中数据');

@@ -67,6 +67,8 @@ export type ChartData =
       takeaway?: string;
       /** 最后一根是今天的盘中数据（还没收盘）时是那天的日期。 */
       live?: DateStr;
+      /** 盘中画的图：画图时刻（北京时间「2026-11-04T10:32」）。之后不更新，图脚写这个时刻；旧图没有。 */
+      drawnAt?: string;
       /** 同期沪深 300 在每段重点区间的涨跌（和 focus 对齐，取不到的是 null）。 */
       bench?: { name: string; changes: (number | null)[] };
     }
@@ -79,6 +81,7 @@ export type ChartData =
       focus?: Focus[];
       takeaway?: string;
       live?: DateStr;
+      drawnAt?: string;
     }
   | {
       kind: 'factor'; factor: FactorId; universe: string; dates: DateStr[]; groups: number[][]; bench: number[]; longShort: number[];
@@ -454,11 +457,46 @@ export function compareFocus(c: CompareChart, f: Focus): { span: { a: number; b:
   return span ? { span, series: c.series.map(s => ({ name: s.name, change: s.values[span.b] / s.values[span.k] - 1 })) } : null;
 }
 
-/** 区间那一行的开头：「9 月」2026-09-01 到 2026-09-30，21 个交易日。 */
-/** 最后一根是盘中数据时给模型的提醒（放在摘要第一行）。 */
-const liveNote = (d: DateStr) =>
-  '注意：最后一根 ' + d + ' 是今天的盘中数据，还没收盘；摘要里这一天的「收盘」「末日收盘」「最新」都是盘中价，讲的时候说「截至今天盘中」，不要说成收盘价。';
+/** 最后一根是盘中数据时给模型的提醒（放在摘要第一行）；知道画图时刻时写上，和图脚对得上。 */
+const liveNote = (d: DateStr, at?: string) => {
+  const hm = at ? ' ' + at.slice(11, 16) : '';
+  return '注意：最后一根 ' + d + ' 是今天的盘中数据' + (hm ? '（取于' + hm + '）' : '') + '，还没收盘；摘要里这一天的「收盘」「末日收盘」「最新」都是盘中价，讲的时候说「截至今天' + hm + ' 盘中」，不要说成收盘价。';
+};
 
+/** 盘中画的图记下画图时刻（到分钟）：最后一根是今天的盘中价时才记，收盘后的图数不会再变。 */
+const liveOf = (last: DateStr, today?: DateStr | null, at?: string) =>
+  today && last === today ? { live: today, ...(at ? { drawnAt: at.slice(0, 16) } : {}) } : {};
+
+/**
+ * 盘中画的图过时了：收盘（北京时间 15:00）以后或者隔天再看，图里最后一根还是当时的盘中价。
+ * 这时卡片上给「用最新行情重画」：重画出一张新图放在下面，原图不改，回答里的数和它说的那张图对得上。
+ */
+export function liveStale(c: ChartData, now: { date: DateStr; t: number }): boolean {
+  if ((c.kind !== 'price' && c.kind !== 'compare') || !c.live) {
+    return false;
+  }
+  return now.date !== c.live || now.t >= 15 * 3600;
+}
+
+/** 画图时刻「11/4 10:32」；旧图没记时刻时只有日期「11/4」。 */
+export const drawnTime = (c: { live?: DateStr; drawnAt?: string }) =>
+  c.drawnAt ? md(c.drawnAt.slice(0, 10)) + ' ' + c.drawnAt.slice(11, 16) : c.live ? md(c.live) : '';
+
+/** 「用最新行情重画」发给 AI 的话：同一张图（证券、区间、均线、副图都不变）用最新行情再画一张。 */
+export function redrawAsk(c: PriceChart | CompareChart): string {
+  const who = c.kind === 'price' ? c.name + '（' + c.code + '）' : c.series.map(s => s.name + '（' + s.code + '）').join('、') + '的对比图';
+  const keep = [
+    ...(c.focus ?? []).map(f => '区间「' + f.label + '」' + f.from + ' 到 ' + f.to),
+    ...(c.kind === 'price' ? [c.ma ? 'MA' + c.ma.n : '', c.band ? '布林带' : '', c.sub ? '副图「' + SUB_NAME[c.sub.kind] + '」' : ''] : []),
+  ].filter(Boolean);
+  return (
+    '用最新行情重画' + who + '：原来那张是 ' + drawnTime(c) + ' 盘中画的，最后一根是当时的盘中价。按原来的参数' +
+    (keep.length ? '（' + keep.join('，') + '）' : '') +
+    '再画一张，新图放在这一问里，原来那张不动；先说最新价（还没收盘就说截至现在盘中），再说和原来那张比有什么变化。'
+  );
+}
+
+/** 区间那一行的开头：「9 月」2026-09-01 到 2026-09-30，21 个交易日。 */
 const focusHead = (f: { label: string; from: DateStr; to: DateStr }, days: number) =>
   '重点区间「' + f.label + '」' + f.from + (f.to !== f.from ? ' 到 ' + f.to : '') + '，' + days + ' 个交易日';
 
@@ -486,8 +524,9 @@ function subSeries(kind: SubKind, close: number[], bars: KBar[]): Series {
   }
 }
 
+/** 副图值的写法。回撤写两位小数：和区间涨跌（峰到谷那段的「−20.15%」）是同一个数，精度也一样。 */
 export const fmtSub = (kind: SubKind, v: number) =>
-  kind === 'rsi14' ? v.toFixed(1) : kind === 'volume' ? (v / 1e4).toFixed(0) + ' 万股' : pct(v);
+  kind === 'rsi14' ? v.toFixed(1) : kind === 'volume' ? (v / 1e4).toFixed(0) + ' 万股' : pct(v, kind === 'dd' ? 2 : 1);
 
 export function priceChart(o: {
   code: string;
@@ -506,6 +545,8 @@ export function priceChart(o: {
   takeaway?: string;
   /** 今天（北京时间）还没收盘：最后一根是今天时标成盘中。 */
   today?: DateStr | null;
+  /** 画图时刻（北京时间 ISO）：盘中画的图记下来，图脚写「11/4 10:32 盘中画」。 */
+  at?: string;
 }): { chart: ChartData; text: string } {
   const all = o.bars.map(b => b.close / 1000);
   const view = resolveView(o.bars.map(b => b.date), { n: o.n, end: o.end, focus: o.focus, points: o.points });
@@ -563,9 +604,9 @@ export function priceChart(o: {
     ...(marks.length ? { marks } : {}),
     ...(focus.length ? { focus } : {}),
     ...(takeaway ? { takeaway } : {}),
-    ...(o.today && dates[dates.length - 1] === o.today ? { live: o.today } : {}),
+    ...liveOf(dates[dates.length - 1], o.today, o.at),
   };
-  if (chart.live) lines.unshift(liveNote(chart.live));
+  if (chart.live) lines.unshift(liveNote(chart.live, chart.drawnAt));
   // 区间读数用存下来的图算（和界面显示的是同一份数）
   for (const f of focus) {
     const st = focusStats(chart, f)!;
@@ -596,7 +637,7 @@ export function priceChart(o: {
  */
 export function compareChart(
   list: { code: string; name: string; bars: KBar[] }[],
-  o: { n?: number; end?: DateStr | null; focus?: FocusReq[]; takeaway?: string; today?: DateStr | null } = {},
+  o: { n?: number; end?: DateStr | null; focus?: FocusReq[]; takeaway?: string; today?: DateStr | null; at?: string } = {},
 ): { chart: ChartData; text: string } {
   const sets = list.map(x => new Map(x.bars.map(b => [b.date, b.close / 1000])));
   const all = [...sets[0].keys()].filter(d => sets.every(s => s.has(d))).sort();
@@ -620,7 +661,7 @@ export function compareChart(
     ...(base !== common[0] ? { base } : {}),
     ...(focus.length ? { focus } : {}),
     ...(takeaway ? { takeaway } : {}),
-    ...(o.today && common[common.length - 1] === o.today ? { live: o.today } : {}),
+    ...liveOf(common[common.length - 1], o.today, o.at),
   };
   const lines = [
     (chart.base ? '以 ' + base + ' 收盘 = 100（第一段重点区间的前一个交易日）' : '起点 = 100') + '，' + common[0] + ' 到 ' + common[common.length - 1] + '，' + common.length + ' 个共同交易日',
@@ -630,7 +671,7 @@ export function compareChart(
     const r = compareFocus(chart, f)!;
     lines.push(focusHead(f, r.span.b - r.span.a + 1) + '（以 ' + common[r.span.k] + ' 收盘为基数）：' + r.series.map(s => s.name + ' ' + pct(s.change, 2)).join('，'));
   }
-  if (chart.live) lines.unshift(liveNote(chart.live));
+  if (chart.live) lines.unshift(liveNote(chart.live, chart.drawnAt));
   lines.push(...view.notes);
   return { chart, text: lines.join('\n') };
 }

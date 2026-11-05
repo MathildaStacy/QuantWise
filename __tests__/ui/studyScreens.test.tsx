@@ -600,7 +600,7 @@ test('关闭对照即停止：迟到响应不显示、不缓存，保留继续�
   } finally { setAiDeps({ fetch: fetchMock }); }
 });
 
-test('讲到某一段行情：图紧跟在调用的地方、讲解之前；黄色区间、前收、横轴日期、区间读数和看点；全屏有区间最高最低', async () => {
+test('讲到某一段行情：图紧跟在调用的地方、讲解之前；黄色区间、前收、横轴日期、区间读数和看点；卡片和全屏都有区间最高最低', async () => {
   const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '1.3' });
   replies = [
     { model: 'm', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tf', name: 'plot_chart', input: { code: 'sz300750', sub: 'dd', focus: [{ from: '2026-09', to: '2026-09' }], points: [{ date: '2026-09-15', label: '放量急跌' }], takeaway: '9 月一路走低，回撤加深' } }], usage },
@@ -612,6 +612,7 @@ test('讲到某一段行情：图紧跟在调用的地方、讲解之前；黄�
   expect(page).toContain('9 月 · 9/1–9/30 · 21 个交易日');
   expect(page).toContain('-19.93%');
   expect(page).toContain('收盘 363.55（8/31）→ 291.11（9/30）');
+  expect(page).toContain('区间最高收盘 358.10（9/1）· 最低 286.80（9/29）');
   expect(page).toContain('2026-07-27 至 10-26');
   // 图在讲这张图的文字之前
   expect(page.indexOf('宁德时代 · 回撤')).toBeGreaterThan(0);

@@ -11,7 +11,7 @@ import { prettyModel } from '../../ai/models';
 import { addUsage, ZERO_USAGE } from '../../ai/prompt';
 import type { SearchSource, StoredMessage, ToolUi, Usage } from '../../ai/types';
 import { secLabel } from '../../book/book';
-import type { ChartData } from '../../quant/charts';
+import type { ChartData, CompareChart, PriceChart } from '../../quant/charts';
 import type { CiteCheck } from '../../book/markup';
 import { citeCheck, progressNow, type StudySession } from '../../study/session';
 import { MARKET_TOOLS } from '../../study/tools';
@@ -120,6 +120,8 @@ export interface ThreadActions {
   onDisclosure?: () => void;
   /** 图上点中某一天后「问这一天」：把这一天的读数带到输入框。 */
   onAskChart?: (text: string) => void;
+  /** 盘中画的图过时了：「用最新行情重画」，新的一问里再画一张，原图不改。 */
+  onRedrawChart?: (chart: PriceChart | CompareChart) => void;
   /** 因子检验的图「存进研究手记」：这张图、这一问的提问原文（或问题）和讲解。 */
   onSaveResearch?: (chart: Extract<ChartData, { kind: 'factor' }>, claim: string, answer: string) => void;
   /** factor_test 说指数池数据没准备（或过期）时的「准备数据」：准备好后接着重做那次检验。 */
@@ -234,7 +236,7 @@ function TurnView({ t, detour, a, check, streaming, realOk, onChartBox, prepare 
             }
             const c = it.data;
             const box = onChartBox && pinnable(c) ? (b: { y: number; h: number } | null) => onChartBox(key, b && { turn: t.first, ...b, data: c }) : undefined;
-            return <ChartCard key={'c' + key} data={c} onBox={box} onAsk={a.onAskChart} hint={showHint} />;
+            return <ChartCard key={'c' + key} data={c} onBox={box} onAsk={a.onAskChart} onRedraw={streaming ? undefined : a.onRedrawChart} hint={showHint} />;
           });
         }
         const m = x.m;

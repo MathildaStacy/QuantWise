@@ -220,7 +220,7 @@ export function ChartFullScreen({ route }: RootScreenProps<'ChartFull'>) {
           <Takeaway data={c} />
           <QuantChart data={c} full onPick={setI} />
           <Text style={[st.readout, num]}>{i == null ? fullHint(c) : readout(c, i)}</Text>
-          <FocusReadout data={c} full />
+          <FocusReadout data={c} />
           {c.kind === 'labels' ? (
             <>
               <LabelExtras data={c} pick={i} />

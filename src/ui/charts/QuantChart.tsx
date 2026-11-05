@@ -803,7 +803,29 @@ function drawGroups(c: GroupsChart, w: number, h: number, fontScale: number): (R
  * 区间的量程：前收那一点（空心）和「前收 363.55」、从前收高度沿区间画一条虚线、在区间右缘画箭头指到区间最后一天收盘，
  * 箭头尖写最后一天收盘价。涨红跌绿。两段区间首尾相接时（ends 里有基数那天），那一点和价格前一段已经画了，不再写「前收」。
  */
-function measure(c: PriceChart, b: Band, k: number, X: (i: number) => number, Y: (v: number) => number, top: number, bottom: number, R: number, tag: number, ends: Set<string>): ReactElement[] {
+/** 图上一个文字标签占的地方（基线在 y1 + 字号处附近），给后面的标签让位。 */
+interface LabelBox {
+  x1: number;
+  x2: number;
+  y1: number;
+  y2: number;
+}
+
+/** 按锚点和基线算出标签占的框（字的上沿约在基线上方一个字号，下沿留两像素给降部）。 */
+function boxOf(x: number, baseline: number, text: string, anchor: 'start' | 'end', size: number, bold = false): LabelBox {
+  const w = labelWidth(text, size) * (bold ? 1.06 : 1);
+  const x1 = anchor === 'end' ? x - w : x;
+  return { x1, x2: x1 + w, y1: baseline - size, y2: baseline + 2 };
+}
+
+const hits = (a: LabelBox, taken: LabelBox[]) => taken.some(b => a.x1 < b.x2 + 2 && b.x1 < a.x2 + 2 && a.y1 < b.y2 && b.y1 < a.y2);
+
+/**
+ * 区间两端：前收（基数那天）和区间最后一天各一个空心点，前收写数，终点写区间末价、按涨跌着色。
+ * merged：区间最后一天就是图的最后一根时，终点价和刻度栏里的最新价是同一个数，只在刻度栏里写一次（标签按涨跌着色）。
+ * 写下的标签记进 taken，后面的区间最高最低绕开它们。
+ */
+function measure(c: PriceChart, b: Band, k: number, X: (i: number) => number, Y: (v: number) => number, top: number, bottom: number, R: number, tag: number, ends: Set<string>, taken: LabelBox[], merged: boolean): ReactElement[] {
   const st = focusStats(c, b.f);
   if (!st) {
     return [];
@@ -836,17 +858,77 @@ function measure(c: PriceChart, b: Band, k: number, X: (i: number) => number, Y:
   if (!shared) {
     const baseText = (hasBase ? '前收 ' : '起点 ') + st.base.toFixed(2);
     const bw = labelWidth(baseText, tag);
-    out.push(
-      xb - 7 - bw >= L
-        ? label(xb - 7, y0 + tag * 0.36, baseText, 'end', rc.secondary)
-        : label(xb + 6, Math.max(top + tag, y0 - 8), baseText, 'start', rc.secondary),
-    );
+    const left = xb - 7 - bw >= L;
+    const bx = left ? xb - 7 : xb + 6;
+    const by = left ? y0 + tag * 0.36 : Math.max(top + tag, y0 - 8);
+    taken.push(boxOf(bx, by, baseText, left ? 'end' : 'start', tag));
+    out.push(label(bx, by, baseText, left ? 'end' : 'start', rc.secondary));
+  }
+  if (merged) {
+    return out;
   }
   // 终点价格放在箭头尖的外侧（跌了放下面、涨了放上面），不压住进来的线
   const endText = st.last.toFixed(2);
   const ey = y1 > y0 ? Math.min(bottom - 2, y1 + tag + 4) : Math.max(top + tag, y1 - 8);
   const ew = labelWidth(endText, tag);
-  out.push(label(Math.max(L + ew, Math.min(R - 2, ax)), ey, endText, 'end', tone, true));
+  const ex = Math.max(L + ew, Math.min(R - 2, ax));
+  taken.push(boxOf(ex, ey, endText, 'end', tag, true));
+  out.push(label(ex, ey, endText, 'end', tone, true));
+  return out;
+}
+
+/**
+ * 区间里的最高、最低收盘：小空心点，旁边写「8/5 403.80」（和区间两端同一套画法），讲解说「区间最高 8/5 的 403.80」时图上找得到。
+ * 和前收、终点、标注点是同一天的不再画；最高放在点上方、最低放在点下方，放不下就放点的右边、左边，
+ * 和已经写下的标签挤在一起时这个点不画（数在图下的区间读数里）。
+ */
+function focusExtremes(c: PriceChart, bands: Band[], X: (i: number) => number, Y: (v: number) => number, top: number, bottom: number, R: number, tag: number, taken: LabelBox[]): ReactElement[] {
+  const busy = new Set<number>();
+  for (const b of bands) {
+    const st = focusStats(c, b.f);
+    if (st) {
+      busy.add(st.k).add(st.b);
+    }
+  }
+  for (const m of c.marks ?? []) {
+    busy.add(c.dates.indexOf(m.date));
+  }
+  const out: ReactElement[] = [];
+  for (const b of bands) {
+    const st = focusStats(c, b.f);
+    if (!st) {
+      continue;
+    }
+    const pts = [
+      { i: c.dates.indexOf(st.hiDate), v: st.hi, up: true },
+      { i: c.dates.indexOf(st.loDate), v: st.lo, up: false },
+    ];
+    for (const p of pts) {
+      if (p.i < 0 || busy.has(p.i)) {
+        continue;
+      }
+      busy.add(p.i);
+      const x = X(p.i);
+      const y = Y(p.v);
+      const text = md(c.dates[p.i]) + ' ' + p.v.toFixed(2);
+      const w = labelWidth(text, tag);
+      const mid = Math.max(L, Math.min(R - 2 - w, x - w / 2));
+      const over = { x: mid, y: p.up ? y - 7 : y + tag + 5 };
+      const right = { x: x + 7, y: y + tag * 0.36 };
+      const left = { x: x - 7 - w, y: y + tag * 0.36 };
+      const spot = [over, right, left]
+        .map(q => ({ ...q, box: boxOf(q.x, q.y, text, 'start', tag) }))
+        .find(q => q.box.x1 >= L && q.box.x2 <= R - 1 && q.box.y1 >= top && q.box.y2 <= bottom && !hits(q.box, taken));
+      if (!spot) {
+        continue;
+      }
+      taken.push(spot.box);
+      out.push(
+        <Circle key={'fx' + p.i} cx={x} cy={y} r={3} fill={rc.paper} stroke={rc.main} strokeWidth={1.6} />,
+        label(spot.x, spot.y, text, 'start', rc.secondary),
+      );
+    }
+  }
   return out;
 }
 
@@ -968,7 +1050,11 @@ function drawPrice(c: PriceChart, w: number, h: number, fontScale: number, clipI
       ...bands.flatMap((b, k) => subMeasure(c, b, k, X, S, subTop, axisY, R, tag, ends)),
     );
   }
-  out.push(...bands.flatMap((b, k) => measure(c, b, k, X, Y, top, mainB, R, tag, ends)));
+  // 区间最后一天就是最后一根：终点价只写在刻度栏的最新价标签里，标签按这段的涨跌着色
+  const endBand = bands.find(b => b.f.to === c.dates[n - 1]);
+  const endChange = endBand ? focusStats(c, endBand.f)?.change ?? null : null;
+  const taken: LabelBox[] = [];
+  out.push(...bands.flatMap((b, k) => measure(c, b, k, X, Y, top, mainB, R, tag, ends, taken, b === endBand)));
   // 标注点：标注日只写事件（日期在横轴上），极值写数值；挨得近的上下错开
   const placed: { x1: number; x2: number; y: number }[] = [];
   for (const m of c.marks ?? []) {
@@ -988,16 +1074,21 @@ function drawPrice(c: PriceChart, w: number, h: number, fontScale: number, clipI
       below = !below;
     }
     placed.push({ x1: lx1, x2: lx1 + lw, y: at(below) });
+    if (text) {
+      taken.push(boxOf(lx1, at(below), text, 'start', tag, m.kind === 'point'));
+    }
     out.push(
       <Circle key={'m' + m.date + m.label} cx={x} cy={y} r={3.6} fill={rc.accent} stroke={rc.paper} strokeWidth={1.4} />,
       ...(text ? [label(right ? x - 7 : x + 7, at(below), text, right ? 'end' : 'start', rc.accent, m.kind === 'point')] : []),
     );
   }
-  // 刻度栏：价格刻度（和最新价标签挤的不写）、最新价
+  out.push(...focusExtremes(c, bands, X, Y, top, mainB, R, tag, taken));
+  // 刻度栏：价格刻度（和最新价标签挤的不写）、最新价（区间终点就是最后一根时按区间涨跌着色）
+  const lastFill = endChange == null ? rc.main : endChange >= 0 ? color.upText : color.downText;
   out.push(
     ...main.ticks.filter(t => Math.abs(Y(t) - (tagY + th / 2)) >= th * 0.9).map(t => yLabel('y' + t, w, Y(t), t.toFixed(main.dp), tick)),
     <Circle key="lastDot" cx={X(n - 1)} cy={lastY} r={2.6} fill={rc.main} />,
-    <Rect key="lastBg" x={R + 3} y={tagY} width={w - R - 4} height={th} rx={3} fill={rc.main} />,
+    <Rect key="lastBg" x={R + 3} y={tagY} width={w - R - 4} height={th} rx={3} fill={lastFill} />,
     yLabel('lastT', w, tagY + th / 2, last.toFixed(2), tick, '#FFFFFF'),
     ...timeAxis(c.dates, X, R, axisY, w, tick, bands, pinnedOf(c.dates, c.focus, c.marks, X)),
     ...pills(bands, w, top, tag, f => focusStats(c, f)?.change ?? null),
