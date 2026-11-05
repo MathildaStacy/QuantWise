@@ -76,7 +76,10 @@ export async function klineSince(
   }
   return bars;
 }
-/** 每只个股要取两段（见 klineSince）。验收时并发 6 取沪深 300，两百多只后被行情接口限流，一个多小时都取不到；并发 3 时约每秒 1 只，没有再被拦。 */
+/**
+ * 每只个股要取两段（见 klineSince）。验收时并发 6 取沪深 300，两百多只后被行情接口限流，一个多小时都取不到；
+ * 并发 3 约每秒 1 只，补齐了沪深 300，但中证 1000 取到 158 只又被限流。大池子可能要分几次准备，所以停下时只留已取到的、下次只补没取到的。
+ */
 const CONCURRENCY = 3;
 /** 连续这么多只取不到（接口限流、断网）就停下，不把剩下的都试一遍；下次准备只补没取到的。 */
 const HALT_AFTER = 12;
@@ -210,8 +213,10 @@ export async function prepareBars(
       } catch (e) {
         prog.failed.push(c);
         if (++streak >= HALT_AFTER) {
-          const why = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').slice(0, 60);
-          prog.halted = '连续 ' + streak + ' 只没取到（' + (why ? '最后一只：' + why : '行情接口限流或断网') + '），先停下；已取到的照常用。断网的话恢复后再点一次；被行情接口限流可能要等一两个小时。再点只补没取到的';
+          const why = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').slice(0, 60) || '原因不明';
+          // 腾讯限流时返回 501（验收时看到的）；换成验证网页时 JSON 解析失败
+          const limited = /返回 (?:429|501)|JSON/i.test(why);
+          prog.halted = '连续 ' + streak + ' 只没取到（' + (limited ? '行情接口限流，' : '') + '最后一只：' + why + '），先停下；已取到的照常用。' + (limited ? '限流一般要隔一两个小时' : '网络恢复后') + '再点，只补没取到的';
         }
       }
       prog.done++;

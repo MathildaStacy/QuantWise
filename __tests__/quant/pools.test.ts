@@ -185,7 +185,12 @@ describe('准备数据和按批组面板', () => {
     expect(p.halted).toContain('只补没取到的');
     // 写出最后一只的原因，用户（和排查的人）能分清是限流、断网还是别的
     expect(p.halted).toContain('最后一只：行情接口返回 501');
+    expect(p.halted).toContain('行情接口限流，最后一只');
     expect(p.halted).toContain('一两个小时');
+    // 断网不说限流
+    const off = await prepareBars(await env({ klineRange: async () => { throw new Error('网络错误'); } }), fakeCodes(30));
+    expect(off.halted).toContain('（最后一只：网络错误）');
+    expect(off.halted).toContain('网络恢复后再点');
     expect(n).toBeLessThan(30);
     expect(p.failed).toHaveLength(n);
   });
