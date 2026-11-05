@@ -1,18 +1,22 @@
 /**
  * 读书模式（QUANTWISE_DESIGN.md §6.6）：重排显示当前小节的块。讲过的块左侧细线，当前这一步浅色底，
- * 高亮浅黄，问过的段落下面贴便签。点一段出菜单：解释、从这里开始讲、用真实行情举例、高亮。
+ * 高亮浅黄，问过的段落下面贴便签。点一段出菜单：解释、从这里开始讲、用真实行情举例、高亮；
+ * 图、表、代码的菜单按块类型给，标题写图表编号，表格可以全屏看。
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, ChevronDown, FileText, List, SlidersHorizontal } from 'lucide-react-native';
 import { Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance } from 'react-native';
 import { citeLabel, leavesOf, secLabel } from '../../book/book';
+import { blockNumber, blockTitle } from '../../book/blockTitle';
+import { parseBookTable } from '../../book/table';
 import type { BookBlock } from '../../book/types';
 import { marksOf, toggleHighlight, type Mark } from '../../data/studyRepo';
 import { beijingIso } from '../../market/clock';
-import { empirical, type QuickKind } from '../../study/quick';
+import { chartable, empirical, factorish, labeling, type QuickKind } from '../../study/quick';
 import { progressNow, useStudy, type StudySession } from '../../study/session';
 import { AiSheet } from '../components/AiOptions';
 import { BlockInline, BookBlockView } from '../components/BookBlock';
+import { BookTable, TableScreen, canTurnScreen } from '../components/BookTable';
 import { PdfSourceSheet } from '../components/PdfSourceSheet';
 import { StudyContents } from '../components/StudyContents';
 import { useCore } from '../hooks';
@@ -26,12 +30,56 @@ import { color } from '../theme';
 import { DEFAULT_READER, loadReaderPreferences, saveReaderPreferences, type ReaderPreferences } from '../../study/readerPreferences';
 import { ReaderAppearance, useBookTypography } from '../readerTypography';
 import { ReaderSettings } from '../components/ReaderSettings';
-import { ReaderFigures } from '../components/ScannedFigure';
+import { ReaderFigures, type FigureControl } from '../components/ScannedFigure';
 import { redrawFigure } from '../../study/redrawFigure';
 import { toast } from '../toast';
 
 const PARALLEL_NAME: Record<ReaderPreferences['parallel'], string> = { paragraph: '按段阅读', sentence: '逐句核对', zh: '中文为主' };
 const clip320 = (x: string) => (x.length > 320 ? x.slice(0, 320) + '…' : x);
+
+type Action = [QuickKind, string, string];
+
+/**
+ * 段落菜单的动作按块类型给（PM 走查第 2 项）：表、图、代码各有自己的讲法，不再都是「解释这一段」；
+ * 讲横截面结论的段落只给一项「在 A 股复现」（以前和「用真实行情举例」是同一件事的两个入口）。
+ */
+function blockActions(b: BookBlock, caption: string, sentence: string | null): Action[] {
+  const what = b.type === 'table' ? '张表' : b.type === 'img' ? '张图' : b.type === 'code' ? '段代码' : '一段';
+  const from: Action = ['fromBlock', '从这里开始讲', '切到听讲，从这' + what + '所在的那一步讲起'];
+  const topic = caption + '\n' + b.text;
+  if (b.type === 'table') {
+    return [
+      ['explainBlock', '解释这张表', '行、列各是什么，最值得看的几个数说明了什么'],
+      ...(empirical(topic) ? [['replicateBlock', '在 A 股复现这张表', '按表里的口径跑分组回测，App 从这张表取数逐组对照'] as Action] : []),
+      from,
+    ];
+  }
+  if (b.type === 'img') {
+    return [
+      ['explainBlock', '解释这张图', '横轴、纵轴和每条线是什么，看点和这一节的结论'],
+      ...(chartable(topic) ? [['realBlock', '用 A 股数据画同类图', labeling(topic) ? '在一只真实证券的日线上跑主信号、三重屏障和元标签'
+        : empirical(topic) ? '用因子检验在 A 股跑一次，结果卡里的图和书里这张同类'
+        : factorish(topic) ? '按图注选因子检验或行情图，用真实数据画一张同类的' : '画一张真实行情图，标出讲到的那段'] as Action] : []),
+      from,
+    ];
+  }
+  if (b.type === 'code') {
+    return [
+      ['linesBlock', '逐行讲解', '每一两行在做什么，变量对应书里的哪个概念'],
+      ['ioBlock', '这段代码的输入输出', '参数和返回值的类型、形状，配一个手写的小例子'],
+      ...(labeling(b.text) ? [['realBlock', '在真实日线上跑一遍', '用元标签检验在一只真实证券上做这段代码做的事'] as Action] : []),
+      from,
+    ];
+  }
+  return [
+    sentence ? ['explainBlock', '解释这一句', '150 字以内，结合整段和前后文讲']
+      : b.type === 'eq' ? ['explainBlock', '解释这个公式', '每个符号是什么，整个式子在算什么'] : ['explainBlock', '解释这一段', '200 字以内，在听讲里答'],
+    ...(sentence ? [] : [from]),
+    empirical(b.text) || (sentence != null && empirical(sentence))
+      ? ['replicateBlock', '在 A 股复现', '按书里的口径跑分组回测，逐项对照多空收益、t 值和 IC']
+      : ['realBlock', '用真实行情举例', labeling(b.text) ? '在一只真实证券的日线上跑主信号、三重屏障和元标签' : '画图标出讲到的那段行情，数字从日线现算'],
+  ];
+}
 
 type StudyReaderProps = {
   s: StudySession;
@@ -105,6 +153,9 @@ function ReaderBody({
   };
   const [marks, setMarks] = useState<Mark[]>([]);
   const [menu, setMenu] = useState<BookBlock | null>(null);
+  // 全屏看表（PM 走查第 1 项）；能重绘的图在这里登记，「图表操作」里的「AI 清晰重绘」用
+  const [fullTable, setFullTable] = useState<{ block: BookBlock; title: string } | null>(null);
+  const figureControls = useRef(new Map<number, () => FigureControl>());
   // 段落菜单里点选的一句（只问这一句）；换段时清掉
   const [sentence, setSentence] = useState<string | null>(null);
   const [sentencesOpen, setSentencesOpen] = useState(false);
@@ -114,6 +165,11 @@ function ReaderBody({
   const menuPairs = menu && bilingual && canTranslate(menu) ? tr.entries[menu.seq]?.pairs : undefined;
   const menuZh = menuPairs ? menuPairs.map(x => x.translation.trim()).join('') : null;
   const zhOf = (x: string) => menuPairs?.find(p => p.source.trim() === x)?.translation.trim();
+  // 图、表、代码、公式的菜单标题写编号（「表 3.19」），没有编号再写页码
+  const menuNumber = menu ? blockNumber(menu, s.blocks) : null;
+  const menuTitle = menu ? menuNumber?.label ?? citeLabel(s.section, menu) : '';
+  const menuTable = menu?.type === 'table' && parseBookTable(menu.text, menu.html) != null;
+  const menuFigure = menu?.type === 'img' ? figureControls.current.get(menu.seq)?.() : undefined;
   const [guide, setGuide] = useState(false);
   const [contentsOpen, setContentsOpen] = useState(false);
   const lecturing = !!useStudy(x => x.busy);
@@ -252,7 +308,7 @@ function ReaderBody({
           {!tr.loading && !tr.cacheError && !tr.error ? <Text style={st.translationDetail}>{!eligible.length ? (chinese || !s.blocks.some(canTranslate) ? '原文保留展示，中文内容无需重复翻译。' : '参考文献和脚注不用翻译；要看某一条，点那一段选「翻译这一段」。') :!remaining ? '本节译文已保存在本机，可离线阅读。' : tr.busy ? '完整译文逐段保存，停止后可继续。' : `还剩 ${remaining} 段待译${done ? '，已译内容可离线阅读。' : '，点击「翻译本节」开始。'}`}</Text> : null}
           {tr.error ? <Text accessibilityRole="alert" style={st.translationError}>{tr.error}</Text> : null}
       </View> : null}
-      <ReaderFigures.Provider value={{ book: s.book, blocks: s.blocks, active, onConfigure, redraw: (b, signal) => redrawFigure(core, s.book, s.section, b, s.blocks, signal, undefined, true) }}>
+      <ReaderFigures.Provider value={{ book: s.book, blocks: s.blocks, active, onConfigure, controls: figureControls.current, redraw: (b, signal) => redrawFigure(core, s.book, s.section, b, s.blocks, signal, undefined, true) }}>
       <ScrollView ref={scroll} contentContainerStyle={st.page} scrollEventThrottle={200}
         maintainVisibleContentPosition={nativePresentation === presentation ? { minIndexForVisible: 1 } : undefined}
         onScrollBeginDrag={() => { userMoved.current = true; restored.current = true; reflowAnchor.current = null; setNativePresentation(presentation); }}
@@ -299,7 +355,7 @@ function ReaderBody({
                     restore();
                   }} /> : <BookBlockView b={b} dir={s.book.body.dir} />}
                 </View>
-                {figure ? <Pressable style={st.figureAction} accessibilityRole="button" accessibilityLabel={citeLabel(s.section, b) + ' 图表操作'} onPress={() => setMenu(b)}>
+                {figure ? <Pressable style={st.figureAction} accessibilityRole="button" accessibilityLabel={(blockTitle(b, s.blocks) ?? citeLabel(s.section, b)) + ' 图表操作'} onPress={() => setMenu(b)}>
                   <Text style={st.toolText}>图表操作</Text>
                 </Pressable> : null}
               </Frame>
@@ -351,10 +407,13 @@ function ReaderBody({
             changeAppearance({ ...prefs, parallel: value }); setParallelOpen(false);
           }}><Text style={[st.itemT, prefs.parallel === value && st.selectedMode]}>{label}</Text><Text style={st.itemD}>{detail}</Text></Pressable>)}
       </AiSheet>
-      <AiSheet title={menu ? citeLabel(s.section, menu) : ''} visible={!!menu} onClose={() => setMenu(null)}>
+      <AiSheet title={menuTitle} visible={!!menu} onClose={() => setMenu(null)}>
         {menu ? (
           <ScrollView style={st.menuContent} keyboardShouldPersistTaps="handled">
-            <View style={st.quote}>{menu.type === 'eq' ? <BookBlockView b={menu} compact /> : menuZh ? <>
+            <View style={st.quote}>{menu.type === 'eq' ? <BookBlockView b={menu} compact /> : menuTable ? <>
+              {menuNumber?.caption ? <Text style={st.quoteText}>{menuNumber.caption}</Text> : null}
+              <BookTable text={menu.text} html={menu.html} preview />
+            </> : menuZh ? <>
               <BlockInline text={clip320(sentence ? zhOf(sentence) ?? sentence : menuZh)} style={st.quoteText} />
               <BlockInline text={clip320(sentence ?? menu.text)} style={st.quoteSource} />
             </> : <BlockInline text={clip320(sentence ?? menu.text)} style={st.quoteText} />}</View>
@@ -385,19 +444,27 @@ function ReaderBody({
                 else tr.run([b]);
               }}><Text style={st.itemT}>{tr.entries[menu.seq] ? '查看中文译文' : tr.loading ? '正在读取译文…' : tr.cacheError ? '重读译文' : tr.busy ? '正在翻译，请稍候' : tr.needsConfig ? '配置 AI' : '翻译这一段'}</Text><Text style={st.itemD}>简体中文，可按段阅读、逐句核对或中文为主</Text></Pressable> : null}
             {s.book.format === 'pdf' && s.book.body.dir && menu.page != null ? <Pressable style={st.item} accessibilityRole="button" onPress={() => { setSourcePage(menu.page); setMenu(null); }}><Text style={st.itemT}>查看 PDF 第 {menu.page} 页</Text><Text style={st.itemD}>放大核对公式、图表和跨页内容</Text></Pressable> : null}
-            {(
-              [
-                sentence ? ['explainBlock', '解释这一句', '150 字以内，结合整段和前后文讲'] : ['explainBlock', '解释这一段', '200 字以内，在听讲里答'],
-                ...(sentence ? [] : [['fromBlock', '从这里开始讲', '切到听讲，从这一段所在的那一步讲起']]),
-                ['realBlock', '用真实行情举例', empirical(sentence ?? menu.text) ? '用因子检验在 A 股跑一次，和书里的数字对照' : '画图标出讲到的那段行情，数字从日线现算'],
-                ...(empirical(menu.text) ? [['replicateBlock', '在 A 股复现这个结论', '按书里的口径跑分组回测，逐项对照多空收益、t 值和 IC']] : []),
-              ] as [QuickKind, string, string][]
-            ).map(([k, l, d]) => (
+            {blockActions(menu, menuNumber?.caption ?? '', sentence).map(([k, l, d]) => (
               <Pressable key={k} style={st.item} onPress={() => pick(k)} accessibilityRole="button">
                 <Text style={st.itemT}>{l}</Text>
                 <Text style={st.itemD}>{d}</Text>
               </Pressable>
             ))}
+            {menuTable ? <Pressable style={st.item} accessibilityRole="button" onPress={() => {
+              setFullTable({ block: menu, title: menuNumber ? menuNumber.label + (menuNumber.caption ? ' ' + menuNumber.caption : '') : citeLabel(s.section, menu) });
+              setMenu(null);
+            }}>
+              <Text style={st.itemT}>全屏看表</Text>
+              <Text style={st.itemD}>表头和行名固定，上下左右都能滑{canTurnScreen() ? '，可以切横屏' : ''}</Text>
+            </Pressable> : null}
+            {menuFigure ? <Pressable style={st.item} accessibilityRole="button" onPress={() => {
+              setMenu(null);
+              if (menuFigure.busy) menuFigure.stop();
+              else menuFigure.run();
+            }}>
+              <Text style={st.itemT}>{menuFigure.busy ? '停止识别' : menuFigure.needsConfig ? '配置 AI' : menuFigure.redone ? '重新识别重绘' : 'AI 清晰重绘'}</Text>
+              <Text style={st.itemD}>发给本节的 AI 模型识别这张图，重绘成清晰的图表、流程图或表格，结果存在本机</Text>
+            </Pressable> : null}
             <Pressable
               style={st.item}
               onPress={() => {
@@ -413,6 +480,7 @@ function ReaderBody({
         ) : null}
       </AiSheet>
       {sourcePage != null ? <PdfSourceSheet book={s.book} initialPage={sourcePage} onClose={() => setSourcePage(null)} /> : null}
+      {fullTable ? <TableScreen title={fullTable.title} text={fullTable.block.text} html={fullTable.block.html} onClose={() => setFullTable(null)} /> : null}
     </>
   );
 }

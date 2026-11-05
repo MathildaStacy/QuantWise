@@ -89,3 +89,42 @@ test('流式增量形成新段落和表格时，已收到的中文和代码仍�
       .some(n => n.props.accessibilityLabel === '表格，可横向滚动'),
   ).toBe(true);
 });
+
+test('讲解里的宽表第一列固定：行名不跟着横滑，两边同一行按较高的那边对齐（PM 走查第 1 项）', async () => {
+  const wide = '| 指标 | 1 | 2 | 3 | 4 | 多空 |\n|---|---|---|---|---|---|\n| 月均收益 | 0.1 | 0.2 | 0.3 | 0.4 | 0.5 |\n| t 值 | 1.1 | 1.2 | 1.3 | 1.4 | 1.5 |';
+  await act(async () => {
+    tree = create(<Markdown text={wide} onLink={jest.fn()} />);
+  });
+  const words = (n: ReturnType<typeof tree.root.find>) =>
+    n.findAll(x => typeof x.props.text === 'string').map(x => x.props.text as string);
+  const scroller = tree.root
+    .findAllByType(ScrollView)
+    .find(n => n.props.accessibilityLabel === '表格，第一列固定，其余列可横向滚动')!;
+  expect(words(scroller)).toEqual(expect.arrayContaining(['1', '多空', '0.5', '1.5']));
+  for (const name of ['指标', '月均收益', 't 值']) {
+    expect(words(scroller)).not.toContain(name);
+    expect(words(tree.root)).toContain(name);
+  }
+  // 只取原生节点（组件节点和原生节点 props 一样，会重复）
+  const natural = () =>
+    tree.root.findAll(
+      n =>
+        typeof n.type === 'string' &&
+        typeof n.props.onLayout === 'function' &&
+        StyleSheet.flatten(n.props.style)?.alignSelf === 'flex-start',
+    );
+  // 左边 3 行在前，右边 3 行在后：第 2 行左边排出 40 高，右边 66 高
+  await act(async () => {
+    natural()[1].props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 224, height: 40 } } });
+    natural()[4].props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1120, height: 66 } } });
+  });
+  const height = (i: number) => {
+    let row = natural()[i].parent;
+    while (row && !(typeof row.type === 'string' && StyleSheet.flatten(row.props.style)?.borderBottomColor)) row = row.parent;
+    return StyleSheet.flatten(row!.props.style).height;
+  };
+  expect(height(1)).toBe(66 + StyleSheet.hairlineWidth);
+  expect(height(4)).toBe(66 + StyleSheet.hairlineWidth);
+  // 只量到一边的行先不定高
+  expect(height(0)).toBeUndefined();
+});

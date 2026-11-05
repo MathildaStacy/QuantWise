@@ -328,19 +328,21 @@ test('从原文发起讲解：对话保留引用片段，点开回到原文', as
   const block = r.tree.root.findAll(n => typeof n.props.onPress === 'function' && String(n.props.accessibilityLabel).startsWith('3.1 ¶2：'))[0];
   await act(async () => { block.props.onPress(); });
   replies = [{ model: 'm', stop_reason: 'end_turn', content: [{ type: 'text', text: '这一段讲动量怎么算。' }], usage }];
-  await r.press('解释这一段');
+  // 3.1 ¶2 是公式：菜单按块类型写「解释这个公式」（PM 走查第 2 项）
+  await r.press('解释这个公式');
   expect(r.text()).toContain('这一段讲动量怎么算。');
   expect(r.text()).toContain('提问原文 · 3.1 ¶2');
   await r.press('查看提问原文 3.1 ¶2');
   expect(r.text()).toContain('原文 · 3.1 动量因子 ¶2');
 });
 
-test('段落菜单：只问其中一句；讲横截面结论的段落多一个「在 A 股复现这个结论」', async () => {
+test('段落菜单：只问其中一句；讲横截面结论的段落只有一项「在 A 股复现」（PM 走查第 2 项）', async () => {
   const r = await render('Study', StudyScreen, { bookId: SAMPLE_BOOK_ID, sectionId: '2.1', mode: 'read' });
   const open = (label: string) => r.tree.root.findAll(n => typeof n.props.onPress === 'function' && String(n.props.accessibilityLabel).startsWith(label))[0];
   await act(async () => { open('2.1 ¶2：').props.onPress(); });
   expect(r.text()).toContain('只问其中一句（共 2 句）');
-  expect(r.text()).toContain('在 A 股复现这个结论');
+  expect(r.text()).toContain('"在 A 股复现"');
+  expect(r.text()).not.toContain('用真实行情举例');
   await r.press('只问其中一句（共 2 句）');
   const sentence = r.tree.root.findAll(n => n.props.accessibilityRole === 'radio' && typeof n.props.onPress === 'function')[1];
   await act(async () => { sentence.props.onPress(); });
