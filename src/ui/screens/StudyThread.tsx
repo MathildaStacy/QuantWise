@@ -148,8 +148,10 @@ export function StudyThread({ s, busy, a, onTurnLayout, onChartBox }: {
   const folds = p.folds ?? [];
   const turns = turnsOf(s.messages);
   const checked = realChecked(turns);
-  // 「准备数据」只放在最近一次提到要准备的那一问下面：准备好后重做的那一问会成为新的最近一问
-  const prepTurn = [...turns].reverse().find(t => t.tools.some(x => x.prepare))?.first;
+  // 「准备数据」只放在最近一次因子检验（或说要准备数据）的那一问下面，而且那一问要准备才出：
+  // 取全后重做、换了池子又算过以后，上一问「还没取全」「准备数据」的卡不再留着；中间只聊别的、只取因子值，卡还在
+  const lastTest = [...turns].reverse().find(t => t.tools.some(x => x.prepare || (x.name === 'factor_test' && !x.error)));
+  const prepTurn = lastTest?.tools.some(x => x.prepare) ? lastTest.first : undefined;
   const out: { id: number; node: ReactElement }[] = [];
   const compacted = turns.filter(t => t.compacted && t.question != null).length;
   for (let i = 0; i < turns.length; i++) {

@@ -4,6 +4,7 @@
  */
 import type { LessonStep } from '../book/steps';
 import type { BlockType } from '../book/types';
+import type { IndexPoolId } from '../quant/universe';
 
 export type QuickKind =
   | 'start'
@@ -211,4 +212,14 @@ export function quickBar(o: {
     'example',
     ...(o.step + 2 < o.steps.length ? (['skip'] as const) : []),
   ];
+}
+
+/**
+ * 讲解里「准备数据并重做这次检验」准备好后自动发的那一问（name 是池子的简称，如「中证 1000」）：取全了用全部成分重做；
+ * 被限流没取全时用随机样本先重做（只数够、比上次多才会来），问题里写明是随机样本。
+ */
+export function redoAfterPrepare(id: IndexPoolId, name: string, n: number, sample?: boolean): { label: string; question: string } {
+  return sample
+    ? { label: name + ' 取到随机 ' + n + ' 只：用样本重做这次检验', question: name + ' 被行情接口限流，还没取全，按固定随机顺序已取全 ' + n + ' 只（' + name + ' 当前成分的随机样本）。请用 universe = ' + id + ' 重做刚才那次因子检验，口径（因子、分组、调仓、加权、控制变量）不变；工具会用这个随机样本算。和书里的数字对照时说明这是随机 ' + n + ' 只，不是全部成分：只数少，噪声更大，检验通常更弱，这次不显著也不说明全部成分不显著。' }
+    : { label: '数据准备好了：用' + name + ' 重做这次检验', question: name + ' 的数据准备好了（' + n + ' 只当前成分）。请用 universe = ' + id + ' 重做刚才那次因子检验，口径（因子、分组、调仓、加权、控制变量）不变，再和书里的数字逐项对照。' };
 }
