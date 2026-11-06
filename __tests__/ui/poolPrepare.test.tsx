@@ -3,6 +3,7 @@
  * busy 变回 false 不会清掉原来的「busy」，下载停下后按钮一直读「busy」（v1.10.0 验收时在模拟器上看到）。
  */
 import ReactTestRenderer, { act } from 'react-test-renderer';
+import { redoAfterPrepare } from '../../src/study/quick';
 import { PrepareCard, type PrepState } from '../../src/ui/charts/PoolPrepare';
 
 test('准备数据卡：下载中、停下、过期三种状态，按钮的读屏文字和按钮上的字一致', async () => {
@@ -28,4 +29,14 @@ test('准备数据卡：下载中、停下、过期三种状态，按钮的读�
   expect(text).toContain('这次先用了按固定随机顺序取全的 252 只（随机样本，不是全部成分；只数少，噪声更大）');
   expect(text).toContain('取全 150 只以上就先用这个随机样本算');
   expect(main().accessibilityLabel).toBe('接着取数据并重做这次检验');
+});
+
+test('准备好后自动发的那一问：池子简称前后按中文排版留空格（汉字和数字之间有、汉字之间没有）', () => {
+  const ready = redoAfterPrepare('zz1000', '中证 1000', 1000);
+  expect(ready.label).toBe('数据准备好了：用中证 1000 重做这次检验');
+  expect(ready.question).toMatch(/^中证 1000 的数据准备好了（1000 只当前成分）。请用 universe = zz1000 重做刚才那次因子检验，口径（因子、分组、调仓、加权、控制变量）不变/);
+  const sample = redoAfterPrepare('zz500', '中证 500', 300, true);
+  expect(sample.label).toBe('中证 500 取到随机 300 只：用样本重做这次检验');
+  expect(sample.question).toContain('按固定随机顺序已取全 300 只（中证 500 当前成分的随机样本）。请用 universe = zz500 重做刚才那次因子检验');
+  expect(sample.question).toContain('说明这是随机 300 只，不是全部成分');
 });

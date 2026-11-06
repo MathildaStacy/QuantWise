@@ -15,7 +15,7 @@ import { translationUnits } from '../../src/study/translation';
 import { StudyReader } from '../../src/ui/screens/StudyReader';
 import { CiteSheet, ContextSheet } from '../../src/ui/screens/StudySheets';
 import { StudyThread } from '../../src/ui/screens/StudyThread';
-import type { StoredMessage } from '../../src/ai/types';
+import type { StoredMessage, ToolUi } from '../../src/ai/types';
 import { citeLabel } from '../../src/book/book';
 
 jest.mock('../../src/data/drivers/opSqlite', () => ({ openDeviceDb: jest.fn() }));
@@ -315,4 +315,32 @@ test('因子检验用了随机样本（没取全）：结果下面出「接着�
   expect(onPrepare).toHaveBeenCalledWith('zz1000');
   const { realChecked, turnsOf } = require('../../src/ui/screens/StudyThread');
   expect([...realChecked(turnsOf(s.messages)).values()]).toEqual([true]);
+});
+
+test('准备卡跟着最近一次因子检验：取全后重做过、换了池子又算过就不再出；中间只聊别的、只取因子值、检验报错，卡还在', async () => {
+  const msg = (id: number, role: StoredMessage['role'], parts: StoredMessage['parts'], ui: StoredMessage['ui']): StoredMessage => ({ id, threadId: 1, role, parts, ui, raw: null, compacted: false, createdAt: now });
+  const turn = (id: number, question: string, tools: ToolUi[]) => [msg(id, 'user', [], { question }), msg(id + 1, 'tool', [], { tools }), msg(id + 2, 'assistant', [{ t: 'text', text: '好的。' }], null)];
+  const first = turn(1, '用中证 1000 复现表 3.20', [{ id: 'a', name: 'factor_test', label: '因子检验：12-1 月动量 · 中证 1000 随机 190 只', prepare: { pool: 'zz1000', pending: false, sample: 190 } }]);
+  const cards = () => tree!.root.findAll(n => n.props.children === '接着取数据并重做这次检验' && typeof n.type === 'string').length;
+  const show = async (...later: StoredMessage[][]) => {
+    await act(async () => { tree = create(<StudyThread s={{ ...session, messages: [...first, ...later.flat()] }} busy={null} a={{ onLink() {}, onPick() {}, onWrapup() {}, onStuck() {}, onPrepare() {}, prep: null }} />); });
+  };
+  await show(
+    turn(4, '什么是反转', []),
+    turn(7, '看看排名', [{ id: 'v', name: 'get_factor_values', label: '读取 12-1 月动量 排名 · 示例池' }]),
+    turn(10, '换成 10 组', [{ id: 'e', name: 'factor_test', label: 'factor_test 出错：组数不对', error: true }]),
+  );
+  expect(cards()).toBe(1);
+  // 取全后重做：这一问不用准备，前面那问「还没取全」的卡也不再出
+  await show(turn(4, '数据准备好了：用中证 1000 重做这次检验', [{ id: 'b', name: 'factor_test', label: '因子检验：12-1 月动量 · 中证 1000（当前成分）' }]));
+  expect(cards()).toBe(0);
+  expect(text()).not.toContain('中证 1000 还没取全');
+  // 换了池子又算过：同样不再出
+  await show(turn(4, '用沪深 300 再算一次', [{ id: 'c', name: 'factor_test', label: '因子检验：12-1 月动量 · 沪深 300（当前成分）' }]));
+  expect(cards()).toBe(0);
+  // 重做时还是随机样本：卡跟到重做的那一问下面，只出一张
+  await show(turn(4, '中证 1000 取到随机 400 只：用样本重做这次检验', [{ id: 'd', name: 'factor_test', label: '因子检验：12-1 月动量 · 中证 1000 随机 400 只', prepare: { pool: 'zz1000', pending: false, sample: 400 } }]));
+  expect(cards()).toBe(1);
+  expect(text()).toContain('按固定随机顺序取全的 400 只');
+  expect(text()).not.toContain('按固定随机顺序取全的 190 只');
 });
